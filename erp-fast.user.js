@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.1
+// @version      2.2
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -29,6 +29,7 @@
   const limit = () => { try { return localStorage.getItem(KEY) || "500"; } catch { return "500"; } };
 
   const realFetch = window.fetch;
+  let lastAuth = null; // the page's latest sign-in header (memory only)
   window.fetch = async function (input, init) {
     let url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     const u = new URL(url, location.href);
@@ -36,6 +37,7 @@
     // fast search: the page's own sign-in and which month it shows (see fastSearch below)
     if (u.pathname.startsWith("/api/")) {
       const auth = init?.headers ? new Headers(init.headers).get("authorization") : input instanceof Request ? input.headers.get("authorization") : null;
+      if (auth) lastAuth = auth;
       for (const seen of searches) seen(u, auth);
     }
 
@@ -541,8 +543,8 @@
 
   // ---------- the Dock: a floating button (Alt+K) with customer lookup, pages and tools ----------
   // Everything here reads what this script already keeps in the browser (the LDN customer list, this month's invoices)
-  // and pages you've seen in the sidebar; it never asks the server on its own. "Open in …" goes to the page and fills
-  // that page's own search box when it arrives.
+  // and pages you've seen in the sidebar; it never asks the server on its own, except Bulk Lunas when you press its
+  // buttons. "Open in …" goes to the page and fills that page's own search box when it arrives.
   (() => {
     const RECENT = "erpDock.recent", PAGES = "erpDock.pages", PENDING = "erpDock.pending";
     const ls = { get: (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } }, set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
@@ -720,6 +722,38 @@
       .erp-dock .rise { animation: erp-dock-rise .45s var(--soft) both; animation-delay: calc(var(--i, 0) * 30ms); }
       @keyframes erp-dock-rise { from { opacity: 0; transform: translateY(8px); filter: blur(2px); } }
       .erp-dock .foot { padding: 8px 14px; border-top: 1px solid var(--hair); font-size: 12px; color: var(--muted); display: flex; gap: 10px; flex-wrap: wrap; }
+      /* Bulk Lunas */
+      .erp-dock.wide { width: min(580px, calc(100vw - 32px)); max-height: min(780px, calc(100vh - 120px)); }
+      .erp-dock .bulk { padding: 0 6px; }
+      .erp-dock .bulk .head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+      .erp-dock .field { width: 100%; box-sizing: border-box; height: 36px; padding: 0 10px; border: 0; border-radius: 8px; background: var(--canvas); color: var(--paper);
+        font: inherit; font-size: 13px; box-shadow: inset 0 0 0 1px var(--edge); outline: 0; color-scheme: dark; }
+      .erp-dock textarea.field { height: auto; min-height: 92px; padding: 8px 10px; resize: vertical; font: 12px/1.5 "JetBrains Mono", ui-monospace, monospace; }
+      .erp-dock .field:focus { box-shadow: inset 0 0 0 1px #696a68, 0 0 0 2px var(--blue); }
+      .erp-dock .field:disabled { opacity: .5; }
+      .erp-dock .lbl { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
+      .erp-dock .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+      .erp-dock .brow { margin-top: 6px; padding: 10px 12px; border-radius: 8px; background: var(--canvas); box-shadow: inset 0 0 0 1px var(--hair); }
+      .erp-dock .brow.off { opacity: .6; }
+      .erp-dock .brow .h { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+      .erp-dock .brow .h b { min-width: 0; font-weight: 500; color: var(--paper); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .erp-dock .brow .h .mono { color: var(--muted); flex: none; }
+      .erp-dock .brow .sub { font-size: 12px; color: var(--muted); }
+      .erp-dock .mrow { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 2px 10px; align-items: center; margin-top: 8px; font-size: 13px; color: var(--paper); cursor: pointer; }
+      .erp-dock .mrow input { width: 16px; height: 16px; margin: 0; accent-color: var(--bone); cursor: pointer; }
+      .erp-dock .mrow .mono { color: var(--body); }
+      .erp-dock .mrow .x { grid-column: 2 / 4; display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 12px; color: var(--muted); }
+      .erp-dock .mrow .x label { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; } .erp-dock .mrow .x input { width: 13px; height: 13px; }
+      .erp-dock .late, .erp-dock .brow .late { color: #ff6a5c; } .erp-dock .good, .erp-dock .brow .good { color: var(--green); } .erp-dock .warn, .erp-dock .brow .warn, .erp-dock .brow .h .warn { color: #e0b252; }
+      .erp-dock .picks { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; } .erp-dock .picks .btn { height: 28px; font: 12px "JetBrains Mono", ui-monospace, monospace; }
+      .erp-dock .bform { display: grid; gap: 8px; margin-top: 10px; } .erp-dock .bform:empty { display: none; }
+      .erp-dock .bpay { position: sticky; bottom: -10px; display: grid; gap: 8px; margin: 10px -6px -10px; padding: 10px 12px 12px; border-top: 1px solid var(--hair); background: var(--card); }
+      .erp-dock .sum { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; } .erp-dock .sum b { color: var(--paper); font-weight: 500; }
+      .erp-dock .btn.wide { width: 100%; height: 40px; justify-content: center; }
+      .erp-dock .btn.arm { background: var(--green); color: var(--canvas); box-shadow: 0 1px 3px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.35); }
+      .erp-dock .btn:disabled { opacity: .45; cursor: default; }
+      .erp-dock .bar { height: 2px; border-radius: 2px; background: var(--hair); overflow: hidden; } .erp-dock .bar i { display: block; height: 100%; background: var(--bone); transition: width .3s var(--out); }
+      @media (max-width: 760px) { .erp-dock .row2 { grid-template-columns: 1fr; } .erp-dock .mrow { min-height: 36px; } }
       @media (max-width: 760px) { .erp-dock .top kbd { display: none; } .erp-dock .shut { width: 40px; height: 40px; } .erp-dock .item { min-height: 44px; } .erp-dock { left: 8px !important; right: 8px !important; width: auto; bottom: 8px !important; top: auto !important; max-height: 80vh; transform-origin: bottom center; } }
       @media (prefers-reduced-motion: reduce) { .erp-dock, .erp-dock *, .erp-dock-fab, .erp-dock-fab * { animation: none !important; transition: none !important; } }`;
     const svg = (d, cls = "") => { const n = "http://www.w3.org/2000/svg", s = document.createElementNS(n, "svg"); s.setAttribute("viewBox", "0 0 24 24"); s.setAttribute("fill", "none");
@@ -750,7 +784,7 @@
       if (panel) return;
       panel = el("div", "erp-dock"); panel.setAttribute("role", "dialog"); panel.setAttribute("aria-label", "Dock");
       document.body.append(panel); fab.setAttribute("aria-expanded", "true"); place();
-      view = { q: "", sel: 0, card: null, radius: view.radius };
+      view = { q: "", sel: 0, card: null, radius: view.radius, mode: bulk && bulk.phase !== "input" ? "bulk" : null }; // a bulk run in progress comes back
       draw(); panel.querySelector("input")?.focus();
       await data(); draw();
     }
@@ -771,15 +805,234 @@
       b.onclick = () => { view.card = r; view.sel = 0; remember(r); draw(); };
       return b;
     }
+    function toolItem(i) {
+      const b = el("button", "item rise"); b.type = "button"; b.style.setProperty("--i", String(i));
+      b.append(svg("M9 11l3 3 8-8M4 6h5M4 12h3M4 18h9"), el("span", "t", "Bulk Lunas"), el("span", "r", "paste a list"), el("span", "s", "Paste usernames, check each one's unpaid months, mark them paid"));
+      b.onclick = () => openBulk(); return b;
+    }
     function pageItem(p, i) {
       const b = el("button", "item rise"); b.type = "button"; b.style.setProperty("--i", String(i));
       b.append(svg(ICON.page), el("span", "t", p.t), el("span", "r", p.h)); b.onclick = () => go(p.h); return b;
     }
 
+    // ---- Bulk Lunas: paste usernames, check each one's unpaid months, mark them paid ----
+    // The same request as the ERP's own Tandai Lunas Manual: one invoice at a time, oldest first, with its RADIUS recharge
+    // and the server's oldest-first rule. Nothing is sent until you press the button twice.
+    const METHODS = ["Tunai", "Transfer Bank", "Setor Reseller", "Setor Teknisi"];
+    const UNPAID = new Set(["Belum Lunas", "Jatuh Tempo"]);
+    const todayIso = () => { const d = new Date(); return new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
+    let bulk = null;
+    // a fresh sign-in token: Firebase's own copy while it's valid, else the last one the page used
+    async function token() {
+      try {
+        const db = await new Promise((ok, no) => { const q = indexedDB.open("firebaseLocalStorageDb"); q.onupgradeneeded = () => q.transaction.abort(); q.onsuccess = () => ok(q.result); q.onerror = no; });
+        const all = await new Promise((ok, no) => { const q = db.transaction("firebaseLocalStorage").objectStore("firebaseLocalStorage").getAll(); q.onsuccess = () => ok(q.result); q.onerror = no; });
+        db.close();
+        const t = all.map((x) => x.value?.stsTokenManager).find((m) => m?.accessToken && m.expirationTime > Date.now() + 60000);
+        if (t) return `Bearer ${t.accessToken}`;
+      } catch {}
+      return lastAuth;
+    }
+    async function api(path, body) {
+      const auth = await token(); if (!auth) throw new Error("Not signed in yet: let the page load, then try again");
+      const r = await realFetch(path, body ? { method: "POST", headers: { authorization: auth, "content-type": "application/json" }, body: JSON.stringify(body) } : { headers: { authorization: auth } });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j.success === false) throw new Error(j.error || j.message || `HTTP ${r.status}`);
+      return j;
+    }
+    const newBulk = () => ({ phase: "input", rows: [], method: METHODS[0], date: todayIso(), note: "", armed: 0, stop: false, el: null });
+    function openBulk(text) {
+      if (!bulk || (bulk.phase !== "paying" && text)) bulk = newBulk();
+      view.mode = "bulk"; view.card = null; drawBody();
+      const ta = bulk.el.querySelector("textarea");
+      if (text) { ta.value = text.trim(); find(); } else if (bulk.phase === "input") ta.focus();
+    }
+    async function find() {
+      const lines = bulk.el.querySelector("textarea").value.split(/[\n,;]+/).map((x) => x.trim()).filter(Boolean);
+      const seen = new Set(); bulk.rows = [];
+      for (const t of lines) { const k = t.toLowerCase(); if (seen.has(k)) continue; seen.add(k); bulk.rows.push({ token: t, state: "looking", invs: [] }); }
+      if (!bulk.rows.length) return;
+      bulk.phase = "looking"; bulk.armed = 0; bulkDraw();
+      const queue = [...bulk.rows];
+      await Promise.all([0, 1, 2, 3, 4].map(async () => { while (queue.length) await lookup(queue.shift()); }));
+      // one customer listed twice: keep the first
+      const users = new Set();
+      for (const r of bulk.rows) if (r.state === "found") { if (users.has(r.user)) { r.state = "dupe"; r.invs = []; } else users.add(r.user); }
+      await radius(bulk.rows.flatMap((r) => r.invs));
+      bulk.phase = "review"; bulkDraw();
+    }
+    async function lookup(row) {
+      row.state = "looking"; row.err = "";
+      try {
+        // every month of that customer in one request (with month=all the server ignores the year); ~3 s each
+        const q = row.pick || row.token, low = q.toLowerCase();
+        const get = (text) => api(`/api/finance/invoices/list?month=all&year=${new Date().getFullYear()}&page=1&pageSize=200&q=${encodeURIComponent(text)}`).then((j) => j.invoices || []);
+        const all = [...new Map((await get(q)).map((v) => [v.invoiceNumber, v])).values()];
+        const mine = all.filter((v) => String(v.radiusUsername || "").toLowerCase() === low);
+        if (!mine.length && !row.pick) {
+          // not an exact username: one that starts with it (yudianto0904 → yudianto0904a) is taken but left unticked;
+          // otherwise look the name up (liani0904 → "liani") and offer the closest, same area code first
+          const starts = [...new Set(all.map((v) => v.radiusUsername).filter((u) => u && u.toLowerCase().startsWith(low)))];
+          if (starts.length === 1) { row.pick = starts[0]; row.guess = true; return await lookup(row); }
+          let cands = starts;
+          if (!cands.length) {
+            const letters = low.replace(/[^a-z]+/g, ""), tail = low.match(/\d+[a-z]?$/)?.[0] ?? "";
+            const near = letters.length >= 3 ? await get(letters) : [], score = new Map();
+            for (const v of near) { const u = String(v.radiusUsername || ""); if (!u) continue;
+              const n = (tail && u.toLowerCase().endsWith(tail.replace(/[a-z]$/, "")) || u.toLowerCase().replace(/[a-z]$/, "").endsWith(tail) ? 2 : 0)
+                + (u.toLowerCase().startsWith(letters.slice(0, 4)) ? 1 : 0) + (fold(v.customerName).split(" ").some((w) => w === letters || (letters.length >= 5 && w.startsWith(letters.slice(0, -1)))) ? 1 : 0);
+              if (n >= 2) score.set(u, Math.max(score.get(u) ?? 0, n)); }
+            cands = [...score].sort((a, b) => b[1] - a[1]).map(([u]) => u);
+            for (const r of findCustomers(q, 3)) if (!cands.includes(r.username)) cands.push(r.username);
+          }
+          row.state = cands.length ? "pick" : "none"; row.cands = cands.slice(0, 6); return;
+        }
+        if (!mine.length) { row.state = "none"; return; }
+        mine.sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
+        const last = mine[mine.length - 1];
+        row.user = last.radiusUsername; row.name = last.customerName; row.where = [last.desa, last.paket].filter(Boolean).join(" · ");
+        row.paidTo = [...mine].reverse().find((v) => v.status === "Lunas")?.period || "";
+        row.invs = mine.filter((v) => UNPAID.has(v.status)).map((v, i) => ({ no: v.invoiceNumber, period: v.period, amount: Number(v.amount) || 0, status: v.status,
+          hutang: v.dihutangiSampai || "", on: i === 0 && !row.guess, recharge: false, radius: null, result: null }));
+        row.state = "found";
+      } catch (e) { row.state = "error"; row.err = e.message; }
+      finally { bulkDraw(); }
+    }
+    // what paying would do in RADIUS (the ERP's own preview): recharge on where it can and isn't already covered
+    async function radius(invs) {
+      for (let i = 0; i < invs.length; i += 20) {
+        const part = invs.slice(i, i + 20);
+        try {
+          const j = await api("/api/finance/invoices/mark-paid-radius-preview", { invoiceNumbers: part.map((v) => v.no) });
+          for (const it of j.items || []) { const v = part.find((x) => x.no === it.invoiceNumber); if (v) { v.radius = it; v.recharge = !!it.canRecharge && !it.alreadyCovered; } }
+        } catch { for (const v of part) v.radius = { failed: true }; }
+      }
+    }
+    // ticking a month ticks the older ones too (the server pays oldest first); unticking clears the newer ones
+    function tickMonth(row, i, on) { row.invs.forEach((v, j) => { if (on ? j <= i : j >= i) v.on = on; }); bulk.armed = 0; bulkDraw(); }
+    const chosen = () => bulk.rows.filter((r) => r.state === "found").flatMap((r) => r.invs.filter((v) => v.on && !v.result?.ok).map((v) => [r, v]));
+    async function pay() {
+      const queue = chosen(); if (!queue.length) return;
+      bulk.phase = "paying"; bulk.stop = false; bulk.armed = 0; bulk.done = 0; bulk.total = queue.length; bulkDraw();
+      for (const [, v] of queue) {
+        if (bulk.stop) break;
+        v.result = { busy: true }; bulkDraw();
+        try {
+          const j = await api("/api/finance/invoices/bulk-mark-paid", { invoiceNumbers: [v.no], paymentMethod: bulk.method, notes: bulk.note.trim() || "Bulk Lunas (Dock)",
+            paymentDate: bulk.date || undefined, rechargeMap: v.recharge ? { [v.no]: true } : {} });
+          const sum = j.summary || {}, older = (j.tertuaDulu || [])[0], waiting = (j.results || []).find((x) => x?.belumDiproses), failed = (j.rechargeGagal || [])[0];
+          const skip = (j.results || []).find((x) => x?.status === "skip" || x?.status === "error");
+          v.result = sum.marked ? { ok: true, text: sum.recharged ? "Lunas · recharged" : "Lunas", warn: failed ? `RADIUS recharge failed: ${failed.reason}` : "" }
+            : older ? { text: `Skipped: ${older.reason}` } : waiting ? { text: "Not processed yet (server restarting): try again" } : { text: `Skipped${skip?.reason ? `: ${skip.reason}` : ""}` };
+        } catch (e) { v.result = { text: e.message || "Failed" }; }
+        bulk.done++; bulkDraw();
+      }
+      bulk.phase = "done"; bulkDraw();
+    }
+    function bulkView() {
+      if (bulk.el) return bulk.el;
+      const wrap = el("div", "bulk");
+      const head = el("div", "head"), e = el("div", "eyebrow"); e.append("Bulk Lunas");
+      const back = el("button", "back", "← Back"); back.type = "button"; back.onclick = () => { view.mode = null; drawBody(); panel.querySelector("input")?.focus(); };
+      head.append(e, back);
+      const ta = el("textarea", "field"); ta.placeholder = "Paste usernames, one per line"; ta.setAttribute("aria-label", "Usernames"); ta.spellcheck = false;
+      ta.onpaste = () => setTimeout(() => bulk.phase !== "paying" && find(), 0);
+      ta.onkeydown = (ev) => { if (ev.key === "Enter" && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); find(); } };
+      const go = el("button", "btn", "Find them"); go.type = "button"; go.onclick = () => find(); go.style.marginTop = "8px"; go.dataset.k = "find";
+      wrap.append(head, ta, go, el("div", "bform"), el("div", "blist"), el("div", "bpay"));
+      return (bulk.el = wrap);
+    }
+    function bulkDraw() {
+      if (!bulk?.el) return;
+      const list = bulk.el.querySelector(".blist"), form = bulk.el.querySelector(".bform"), foot = bulk.el.querySelector(".bpay"), focus = document.activeElement?.dataset?.k;
+      const busy = bulk.phase === "paying" || bulk.phase === "looking";
+      bulk.el.querySelector("textarea").disabled = bulk.phase === "paying";
+      const findBtn = bulk.el.querySelector('[data-k="find"]'); findBtn.disabled = busy;
+      findBtn.textContent = bulk.phase === "looking" ? `Looking… ${bulk.rows.filter((r) => r.state !== "looking").length}/${bulk.rows.length}` : bulk.rows.length ? "Find again" : "Find them";
+      const rows = [];
+      for (const [ri, r] of bulk.rows.entries()) {
+        const box = el("div", `brow${r.shown ? "" : " rise"}${r.state === "found" && r.invs.length ? "" : " off"}`); box.style.setProperty("--i", String(Math.min(ri, 12))); r.shown = true;
+        const h = el("div", "h");
+        if (r.state === "found") {
+          h.append(el("b", null, r.name || r.user), el("span", `mono${r.guess ? " warn" : ""}`, r.user.toLowerCase() !== r.token.toLowerCase() ? `${r.token} → ${r.user}` : r.user)); box.append(h);
+          if (r.guess && r.invs.length) box.append(el("div", "sub warn", "Not the exact username you pasted: tick it if this is the right customer"));
+          box.append(el("div", "sub", [r.where, r.paidTo ? `paid to ${r.paidTo}` : "nothing paid yet"].filter(Boolean).join(" · ")));
+          if (!r.invs.length) box.append(el("div", "sub good", "Nothing unpaid"));
+          for (const [i, v] of r.invs.entries()) {
+            const m = el("label", "mrow"), cb = el("input"); cb.type = "checkbox"; cb.checked = v.on; cb.disabled = busy || v.result?.ok; cb.dataset.k = `${ri}-${i}`;
+            cb.onchange = () => tickMonth(r, i, cb.checked);
+            const t = el("span"); t.append(v.period || v.no, " ", el("span", v.status === "Jatuh Tempo" ? "late" : "sub", v.status === "Jatuh Tempo" ? "· overdue" : ""));
+            m.append(cb, t, el("span", "mono", rupiah(v.amount)));
+            const x = el("span", "x");
+            if (v.radius?.canRecharge) {
+              const l = el("label"), rc = el("input"); rc.type = "checkbox"; rc.checked = v.recharge; rc.disabled = busy || v.result?.ok; rc.dataset.k = `${ri}-${i}-r`;
+              rc.onchange = () => { v.recharge = rc.checked; bulk.armed = 0; bulkDraw(); }; rc.onclick = (ev) => ev.stopPropagation();
+              l.append(rc, v.radius.alreadyCovered ? "recharge (already covered)" : `recharge RADIUS (expires ${v.radius.expiryDate || "?"})`); x.append(l);
+            } else if (v.radius) x.append(el("span", null, v.radius.failed ? "RADIUS preview failed: pays without recharge" : "no RADIUS account linked"));
+            if (v.hutang) x.append(el("span", "warn", `promised to pay by ${String(v.hutang).slice(0, 10)}`));
+            if (v.result?.busy) x.append(el("span", null, "Paying…"));
+            else if (v.result) { x.append(el("span", v.result.ok ? "good" : "late", v.result.text)); if (v.result.warn) x.append(el("span", "warn", v.result.warn)); }
+            m.append(x); box.append(m);
+          }
+        } else {
+          h.append(el("b", null, r.token), el("span", "mono", { looking: "looking…", none: "not found", pick: "which one?", dupe: "listed twice", error: "failed" }[r.state])); box.append(h);
+          if (r.state === "error") box.append(el("div", "sub late", r.err));
+          if (r.state === "dupe") box.append(el("div", "sub", "Same customer as a line above: shown once"));
+          if (r.state === "none") box.append(el("div", "sub", "No invoice has this username or anything close. Check the spelling."));
+          if (r.state === "pick") box.append(el("div", "sub", "No exact username: is it one of these?"));
+          if (r.state === "pick" || r.state === "error") {
+            const p = el("div", "picks");
+            for (const c of r.state === "pick" ? r.cands : [r.pick || r.token]) { const b = el("button", "btn", c); b.type = "button"; b.disabled = busy;
+              b.onclick = async () => { r.pick = c; r.guess = false; await lookup(r); await radius(r.invs); bulkDraw(); }; p.append(b); }
+            box.append(p);
+          }
+        }
+        rows.push(box);
+      }
+      list.replaceChildren(...rows);
+      // the pay bar
+      const ch = chosen(), people = new Set(ch.map(([r]) => r.user)).size, total = ch.reduce((a, [, v]) => a + v.amount, 0), recharges = ch.filter(([, v]) => v.recharge).length;
+      const parts = [], fields = [];
+      if (bulk.rows.length && bulk.phase !== "looking") {
+        const found = bulk.rows.filter((r) => r.state === "found").length, open = bulk.rows.length - found - bulk.rows.filter((r) => r.state === "dupe").length;
+        const sum = el("div", "sum"); sum.append(el("span", null, `${found} of ${bulk.rows.length} found${open ? ` · ${open} need a look` : ""}`), el("b", null, `${ch.length} invoices · ${rupiah(total)}`));
+        const method = el("select", "field"); method.disabled = busy; method.dataset.k = "method";
+        for (const m of METHODS) { const o = el("option", null, m); o.value = m; o.selected = m === bulk.method; method.append(o); }
+        method.onchange = () => { bulk.method = method.value; bulk.armed = 0; bulkDraw(); };
+        const date = el("input", "field"); date.type = "date"; date.value = bulk.date; date.max = todayIso(); date.disabled = busy; date.dataset.k = "date";
+        date.onchange = () => { bulk.date = date.value; bulk.armed = 0; bulkDraw(); };
+        const note = el("input", "field"); note.placeholder = "Bulk Lunas (Dock)"; note.value = bulk.note; note.disabled = busy; note.dataset.k = "note";
+        note.oninput = () => { bulk.note = note.value; bulk.armed = 0; };
+        const lab = (t, f) => { const l = el("label", "lbl"); l.append(t, f); return l; };
+        const two = el("div", "row2"); two.append(lab("Method", method), lab("Payment date", date));
+        fields.push(two, lab("Note", note)); parts.push(sum);
+        if (bulk.phase === "paying") {
+          const bar = el("div", "bar"), i = el("i"); i.style.width = `${(bulk.done / bulk.total) * 100}%`; bar.append(i);
+          const stop = el("button", "btn wide", bulk.stop ? "Stopping after this one…" : `Paying ${bulk.done + 1} of ${bulk.total} · Stop`); stop.type = "button"; stop.disabled = bulk.stop;
+          stop.onclick = () => { bulk.stop = true; bulkDraw(); }; stop.dataset.k = "pay";
+          parts.push(bar, stop, el("div", "sub", "Keep this tab open until it's done."));
+        } else {
+          if (bulk.phase === "done") {
+            const all = bulk.rows.flatMap((r) => r.invs.filter((v) => v.result)), ok = all.filter((v) => v.result.ok).length;
+            parts.push(el("div", `sum ${ok === all.length ? "good" : "warn"}`, `${ok} marked Lunas${all.length - ok ? ` · ${all.length - ok} not: see the red lines` : ""}`));
+          }
+          const armed = bulk.armed > Date.now();
+          const btn = el("button", `btn wide ${armed ? "arm" : "primary"}`, !ch.length ? "Tick the months to pay" : armed
+            ? `Click again: mark ${ch.length} paid (${people} customers, ${rupiah(total)})` : `Mark ${ch.length} Lunas · ${rupiah(total)}${recharges ? ` · ${recharges} recharge` : ""}`);
+          btn.type = "button"; btn.disabled = !ch.length; btn.dataset.k = "pay";
+          btn.onclick = () => { if (bulk.armed > Date.now()) pay(); else { bulk.armed = Date.now() + 5000; bulkDraw(); setTimeout(() => bulk?.armed && bulk.armed <= Date.now() && (bulk.armed = 0, bulkDraw()), 5100); } };
+          parts.push(btn);
+        }
+      }
+      form.replaceChildren(...fields); foot.replaceChildren(...parts); foot.hidden = !parts.length;
+      if (focus) bulk.el.querySelector(`[data-k="${focus}"]`)?.focus();
+    }
+
     function draw() {
       if (!panel) return;
       const top = el("div", "top"), input = el("input"); input.placeholder = "Customer, page or tool…"; input.value = view.q; input.setAttribute("aria-label", "Search the Dock");
-      input.oninput = () => { view.q = input.value; view.sel = 0; view.card = null; drawBody(); };
+      input.oninput = () => { view.q = input.value; view.sel = 0; view.card = null; view.mode = null; drawBody(); };
+      input.onpaste = (e) => { const t = e.clipboardData?.getData("text") || ""; if (t.split("\n").filter((x) => x.trim()).length >= 2) { e.preventDefault(); openBulk(t); } }; // a pasted list: Bulk Lunas
       const shut = el("button", "shut"); shut.type = "button"; shut.setAttribute("aria-label", "Close the Dock"); shut.title = "Close (Esc)"; shut.append(svg(ICON.x)); shut.onclick = () => { close(); fab?.focus(); };
       top.append(svg(ICON.search), input, el("kbd", null, "Esc"), shut);
       const body = el("div", "scroll"), foot = el("div", "foot");
@@ -787,11 +1040,14 @@
       const was = document.activeElement, keep = was === document.body || !was || panel.contains(was); // focus was in the Dock: the new box takes it
       panel.replaceChildren(top, body, foot);
       drawBody();
-      if (keep) { input.focus(); input.setSelectionRange(input.value.length, input.value.length); }
+      if (keep && bulk?.el?.contains(was) && was.isConnected) was.focus();
+      else if (keep) { input.focus(); input.setSelectionRange(input.value.length, input.value.length); }
     }
     function drawBody() {
       const body = panel?.querySelector(".scroll"); if (!body) return;
       items = []; const parts = [];
+      panel.classList.toggle("wide", view.mode === "bulk");
+      if (view.mode === "bulk") { parts.push(bulkView()); body.replaceChildren(...parts); items = []; return bulkDraw(); }
       if (view.card) parts.push(cardView(view.card));
       else if (!view.q.trim()) parts.push(...homeView());
       else parts.push(...resultsView(view.q));
@@ -812,6 +1068,7 @@
       const g = el("div", "grid");
       SHORTCUTS.forEach(([label, path, icon], i) => { const t = el("button", "tile rise"); t.type = "button"; t.style.setProperty("--i", String(i)); t.append(svg(icon), label); t.onclick = () => go(path); g.append(t); });
       out.push(g);
+      const e4 = el("div", "eyebrow"); e4.append("Tools"); out.push(e4, toolItem(0));
       const recent = ls.get(RECENT, []).map((u) => customers?.find((r) => r.username === u)).filter(Boolean);
       if (recent.length) { const e3 = el("div", "eyebrow"); e3.append("Recent customers"); out.push(e3, ...recent.slice(0, 5).map(custItem)); }
       if (!customers) out.push(el("p", "note", "To look customers up here, open LDN Radius → Pelanggan once: its fast search keeps the list in this browser."));
@@ -821,7 +1078,9 @@
       const out = [], cs = findCustomers(q), ps = findPages(q);
       if (cs.length) { const e = el("div", "eyebrow"); e.append("Customers"); out.push(e, ...cs.map(custItem)); }
       if (ps.length) { const e = el("div", "eyebrow"); e.append("Pages"); out.push(e, ...ps.map(pageItem)); }
-      if (!cs.length && !ps.length) out.push(el("p", "note", customers ? "Nothing matches all of those words." : "No customer list yet: open LDN Radius → Pelanggan once."));
+      const tool = /^(bul|lun|bay|tan|pay|mas|mar)/.test(fold(q));
+      if (tool) { const e = el("div", "eyebrow"); e.append("Tools"); out.push(e, toolItem(0)); }
+      if (!cs.length && !ps.length && !tool) out.push(el("p", "note", customers ? "Nothing matches all of those words." : "No customer list yet: open LDN Radius → Pelanggan once."));
       return out;
     }
     function cardView(r) {
@@ -890,11 +1149,11 @@
       if (e.altKey && !e.ctrlKey && !e.metaKey && e.key.toLowerCase() === "k") { e.preventDefault(); panel ? close() : open(); return; }
       if (!panel || !panel.contains(document.activeElement) && document.activeElement !== document.body) return;
       // typing anywhere in the open Dock goes to its search box, no click needed
-      if (/^\S$/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName ?? "") && !document.activeElement?.isContentEditable) {
+      if (view.mode !== "bulk" && /^\S$/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName ?? "") && !document.activeElement?.isContentEditable) {
         if (view.card) { view.card = null; drawBody(); }
         panel.querySelector("input")?.focus(); return; // the key then lands in the box
       }
-      if (e.key === "Escape") { e.preventDefault(); if (view.card) { view.card = null; drawBody(); panel.querySelector("input")?.focus(); } else { close(); fab?.focus(); } }
+      if (e.key === "Escape") { e.preventDefault(); if (view.mode === "bulk" && bulk?.phase !== "paying") { view.mode = null; drawBody(); panel.querySelector("input")?.focus(); } else if (view.card) { view.card = null; drawBody(); panel.querySelector("input")?.focus(); } else { close(); fab?.focus(); } }
       else if ((e.key === "ArrowDown" || e.key === "ArrowUp") && items.length) { e.preventDefault(); view.sel = (view.sel + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
         items.forEach((x, i) => x.setAttribute("aria-selected", String(i === view.sel))); items[view.sel].scrollIntoView({ block: "nearest" }); }
       else if (e.key === "Enter" && document.activeElement?.tagName === "INPUT" && items[view.sel]) { e.preventDefault(); items[view.sel].click(); }

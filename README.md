@@ -23,8 +23,9 @@ A floating button above the site's own corner button (or **Alt+K**, anywhere in 
 - **Nearby**: everyone within 100 m, 300 m or 1 km of the customer, counted online / offline / isolir, on a small dot map, nearest first. For checking an area when someone reports an outage.
 - **Pages**: any ERP page by name, learned from the sidebar as you browse.
 - **Home**: customers, online and isolir counts from the kept list, shortcuts, and your recent customers.
+- **Bulk Lunas**: paste a list of usernames (into the Dock's search, or Tools → Bulk Lunas). Each one is looked up on the server (all months, about 3 s each, five at a time) and shows the customer, what's paid and every unpaid month with its amount, the oldest ticked. Ticking a month ticks the older ones too, since the ERP pays oldest first. A username that isn't exact gets the closest match (left unticked, in amber) or a choice of likely ones; a customer listed twice is shown once. RADIUS recharge is checked with the ERP's own preview and on where it can be. Pick the method (Tunai, Transfer Bank, Setor Reseller, Setor Teknisi), the payment date and a note, then press **Mark … Lunas** twice. It sends the same request as the ERP's Tandai Lunas Manual, one invoice at a time, oldest first, and shows the result on each line (Lunas, recharged, or why the server skipped it). It can be stopped part way.
 
-It never asks the server on its own: it reads what's kept in this browser. Open LDN Radius → Pelanggan once to fill the customer list (the first time takes about 2 minutes), and Invoices once for invoices.
+Apart from Bulk Lunas, it never asks the server on its own: it reads what's kept in this browser. Open LDN Radius → Pelanggan once to fill the customer list (the first time takes about 2 minutes), and Invoices once for invoices.
 
 ## Install
 
