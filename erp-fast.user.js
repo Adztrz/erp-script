@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.13
+// @version      2.14
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -719,7 +719,12 @@
       .erp-dock .near .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
       .erp-dock canvas { display: block; width: 100%; height: 170px; margin: 10px 0 6px; }
       .erp-dock .map { position: relative; height: 240px; margin: 10px 0 6px; border-radius: 8px; overflow: hidden; background: #0f1214; box-shadow: inset 0 0 0 1px var(--hair); }
-      .erp-dock .map .tiles img { position: absolute; width: 256px; height: 256px; max-width: none; filter: brightness(.8) saturate(.9); pointer-events: none; user-select: none; }
+      .erp-dock .map .tiles img { position: absolute; width: 256px; height: 256px; max-width: none; pointer-events: none; user-select: none; }
+      .erp-dock .map.sat .tiles img { filter: brightness(.8) saturate(.9); }
+      .erp-dock .mdot.pon { box-shadow: 0 0 0 2px var(--bone); }
+      .erp-dock .map .basemap { position: absolute; top: 8px; left: 8px; z-index: 4; background: rgba(9,11,12,.88); }
+      .erp-dock .ponbox { margin: 2px 0 8px; } .erp-dock .ponbox .note { margin: 4px 10px 8px; }
+      .erp-dock .ponrow { margin-top: 4px; box-shadow: inset 0 0 0 1px var(--hair); }
       .erp-dock .map .ring { position: absolute; border-radius: 50%; box-shadow: inset 0 0 0 1.5px rgba(233,225,220,.7); pointer-events: none; }
       .erp-dock .map .ring.half { box-shadow: none; border: 1px dashed rgba(233,225,220,.45); }
       .erp-dock .mdot { position: absolute; width: 11px; height: 11px; margin: -5.5px 0 0 -5.5px; padding: 0; border: 1.5px solid rgba(7,9,11,.9); border-radius: 50%; background: var(--green); cursor: pointer;
@@ -1677,28 +1682,35 @@
       const counts = el("div", "counts"); counts.style.marginTop = "10px";
       for (const [key, label] of [["on", "online"], ["off", "offline"], ["iso", "isolir"]]) { const s = el("span"); s.append(el("b", null, String(cnt[key])), ` ${label}`); counts.append(s); }
       const map = el("div", "map"); map.setAttribute("role", "group"); map.setAttribute("aria-label", `Map of ${n.list.length} customers within ${view.radius} metres`);
-      box.append(counts, map);
+      const pon = el("div", "ponbox");
+      box.append(counts, map, pon);
       const rows = [];
       for (const [i, x] of n.list.slice(0, 8).entries()) { const it = custItem(x.r, i); it.querySelector(".r").textContent = `${Math.round(x.d)} m`;
         it.addEventListener("mouseenter", () => map.hl?.(i, true)); it.addEventListener("mouseleave", () => map.hl?.(i, false)); rows.push(it); box.append(it); }
-      setTimeout(() => tileMap(map, r, n, view.radius, rows), 0); // once the card is on the page (a frame may not come while the tab is hidden)
+      setTimeout(() => { tileMap(map, r, n, view.radius, rows); ponLine(pon, r, map); }, 0); // once the card is on the page (a frame may not come while the tab is hidden)
       if (n.list.length > 8) box.append(el("p", "note", `and ${n.list.length - 8} more within ${view.radius < 1000 ? `${view.radius} m` : "1 km"}`));
       return box;
     }
-    // the map Peta Terpadu uses (Google hybrid tiles), drawn here without a map library: this customer in the middle,
-    // rings at half and full radius, every neighbour a dot. A dot and its row in the list light up together; a dot opens
-    // that customer.
-    const gtile = (x, y, z) => `https://mt${(x + y) % 4}.google.com/vt/lyrs=y&hl=id&x=${x}&y=${y}&z=${z}`;
+    // A tile map drawn without a map library: a dark street map (CARTO, OpenStreetMap data) where the status colours
+    // stand out, or the satellite view Peta Terpadu uses (Google hybrid) for finding the house. This customer in the
+    // middle, rings at half and full radius, every neighbour a dot; a dot and its row in the list light up together,
+    // a dot opens that customer, and customers on the same PON port are outlined.
+    const BASEMAP = "erpDock.basemap";
+    const TILES = {
+      dark: { url: (x, y, z) => `https://${"abcd"[(x + y) % 4]}.basemaps.cartocdn.com/dark_all/${z}/${x}/${y}.png`, max: 19, attr: "© OpenStreetMap © CARTO" },
+      sat: { url: (x, y, z) => `https://mt${(x + y) % 4}.google.com/vt/lyrs=y&hl=id&x=${x}&y=${y}&z=${z}`, max: 20, attr: "Google" },
+    };
     function tileMap(box, r, n, radius, rows) {
       const w = box.clientWidth, h = box.clientHeight; if (!w) return;
       if (view.zoomFor !== r.username) { view.zoom = 0; view.zoomFor = r.username; }
       const mpp0 = 156543.03392 * Math.cos(n.c.lat * Math.PI / 180); // metres per pixel at zoom 0
-      const z = Math.max(12, Math.min(20, Math.floor(Math.log2((mpp0 * Math.min(w, h) * 0.46) / radius)) + (view.zoom || 0)));
+      const kind = ls.get(BASEMAP, "dark") === "sat" ? "sat" : "dark", T = TILES[kind];
+      const z = Math.max(12, Math.min(T.max, Math.floor(Math.log2((mpp0 * Math.min(w, h) * 0.46) / radius)) + (view.zoom || 0)));
       const size = 256 * 2 ** z, world = (p) => { const sin = Math.sin(p.lat * Math.PI / 180); return [((p.lng + 180) / 360) * size, (0.5 - Math.log((1 + sin) / (1 - sin)) / (4 * Math.PI)) * size]; };
       const [cx, cy] = world(n.c), left = cx - w / 2, top = cy - h / 2, mpp = mpp0 / 2 ** z;
       const tiles = el("div", "tiles");
       for (let tx = Math.floor(left / 256); tx * 256 < left + w; tx++) for (let ty = Math.floor(top / 256); ty * 256 < top + h; ty++) {
-        const img = el("img"); img.src = gtile(tx, ty, z); img.alt = ""; img.draggable = false; img.style.left = `${tx * 256 - left}px`; img.style.top = `${ty * 256 - top}px`; tiles.append(img); }
+        const img = el("img"); img.src = T.url(tx, ty, z); img.alt = ""; img.draggable = false; img.style.left = `${tx * 256 - left}px`; img.style.top = `${ty * 256 - top}px`; tiles.append(img); }
       const ring = (f, cls) => { const d = el("span", `ring ${cls}`), R = (radius * f) / mpp; d.style.cssText = `width:${2 * R}px;height:${2 * R}px;left:${w / 2 - R}px;top:${h / 2 - R}px`; return d; };
       const tip = el("span", "tip"); tip.hidden = true;
       const dots = n.list.map((x, i) => {
@@ -1715,11 +1727,49 @@
         tip.hidden = !on; if (on) { tip.textContent = `${x.r.nama || x.r.username} · ${Math.round(x.d)} m`; tip.style.left = d.style.left; tip.style.top = d.style.top; tip.classList.toggle("low", parseFloat(d.style.top) < 34); }
       }
       box.hl = hl;
+      box.pon = (set) => { box.ponSet = set; dots.forEach((d, i) => d.classList.toggle("pon", set.has(n.list[i].r.username))); };
+      if (box.ponSet) box.pon(box.ponSet);
+      const base = el("div", "seg basemap");
+      for (const [k, label] of [["dark", "Map"], ["sat", "Satellite"]]) { const b = el("button", null, label); b.type = "button"; b.setAttribute("aria-pressed", String(kind === k));
+        b.onclick = () => { ls.set(BASEMAP, k); tileMap(box, r, n, radius, rows); }; base.append(b); }
       const me = el("span", "mdot me"); me.style.left = `${w / 2}px`; me.style.top = `${h / 2}px`;
       const zoom = el("div", "zoom");
       for (const [t, dz, label] of [["+", 1, "Zoom in"], ["−", -1, "Zoom out"]]) { const b = el("button", null, t); b.type = "button"; b.setAttribute("aria-label", label);
-        b.disabled = (dz > 0 && z >= 20) || (dz < 0 && z <= 12); b.onclick = () => { view.zoom = (view.zoom || 0) + dz; tileMap(box, r, n, radius, rows); }; zoom.append(b); }
-      box.replaceChildren(tiles, ring(0.5, "half"), ring(1, ""), ...dots, me, tip, zoom, el("span", "attr", "Google"));
+        b.disabled = (dz > 0 && z >= T.max) || (dz < 0 && z <= 12); b.onclick = () => { view.zoom = (view.zoom || 0) + dz; tileMap(box, r, n, radius, rows); }; zoom.append(b); }
+      box.classList.toggle("sat", kind === "sat");
+      box.replaceChildren(tiles, ring(0.5, "half"), ring(1, ""), ...dots, me, tip, zoom, base, el("span", "attr", T.attr));
+    }
+    // the customers on the same OLT PON port: when many of them are down together it's the line (PON, splitter, ODP),
+    // not one house. Statuses come from the OLTs' cached ONT lists (kept 2 hours).
+    function ponLine(box, r, map) {
+      if (!onts) { box.replaceChildren(el("p", "note", "Finding this customer's PON port on the OLTs… (the first time takes ~6 s)"));
+        ontIndex().then(() => { if (box.isConnected) ponLine(box, r, map); }).catch(() => box.replaceChildren()); return; }
+      const ont = modemOf(r).ont;
+      if (!ont) { box.replaceChildren(el("p", "note", "This customer's modem isn't on any OLT's list, so there's no PON port to compare.")); return; }
+      const same = onts.rows.filter((o) => o.pid === ont.pid && o.pon === ont.pon), off = same.filter((o) => o.st !== "online");
+      const users = new Set(); for (const o of same) { const c = customerOf(o.sn, o, null); if (c) users.add(c.username); }
+      map.ponSet = users; map.pon?.(users);
+      const share = same.length ? off.length / same.length : 0, mine = ont.st !== "online";
+      const verdict = off.length >= 3 && share >= 0.25 ? ["late", `${off.length} of ${same.length} down on this port together: most likely the line (PON, splitter or ODP), not one house.`]
+        : mine && off.length <= 2 ? ["warn", "This modem is down but its PON is fine: most likely this house (power, modem, drop cable)."]
+        : ["good", "This PON port looks normal."];
+      const open = view.ponFor === r.username && view.ponOpen;
+      const head = el("button", "item ponrow"); head.type = "button"; head.setAttribute("aria-expanded", String(!!open));
+      head.append(el("span", `dot ${off.length >= 3 && share >= 0.25 ? "iso" : off.length ? "off" : "on"}`), el("span", "t", `Same PON · ${ont.olt} · ${ont.pon}`),
+        el("span", "r", `${off.length} / ${same.length} offline`), el("span", "s", `${same.length - off.length} online · ${users.size} matched to customers, outlined on the map · OLT list ${when(onts.at)}`));
+      head.onclick = () => { view.ponFor = r.username; view.ponOpen = !open; ponLine(box, r, map); };
+      const parts = [head, el("p", `note ${verdict[0]}`, verdict[1])];
+      if (open) {
+        if (!off.length) parts.push(el("p", "note", "Everyone on this port is online."));
+        off.sort((a, b) => a.id - b.id).slice(0, 40).forEach((o, i) => {
+          const c = customerOf(o.sn, o, null), b = el("button", "item rise"); b.type = "button"; b.style.setProperty("--i", String(i));
+          b.append(el("span", `dot ${o.st === "offline" ? "iso" : "off"}`), el("span", "t", c?.nama || o.name || o.raw), el("span", "r", `ONU ${o.id}`),
+            el("span", "s", [o.raw, o.st, o.seen ? `seen ${when(o.seen)}` : "", c ? c.username : "no customer linked"].filter(Boolean).join(" · ")));
+          b.onclick = () => { if (c) { view.card = c; remember(c); } else view.modem = o.sn; view.sel = 0; draw(); };
+          parts.push(b);
+        });
+      }
+      box.replaceChildren(...parts);
     }
 
     // keys: Alt+K opens and closes; in the Dock, arrows move, Enter picks, Esc goes back or closes
