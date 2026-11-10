@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         ERP — faster Work Orders, Planning and LDN search
+// @name         ERP — faster Work Orders, Planning, and LDN and invoice search
 // @namespace    adztrz
-// @version      1.4
-// @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes. LDN Radius → Pelanggan: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
+// @version      1.5
+// @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
 // @grant        none
@@ -33,10 +33,10 @@
     let url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     const u = new URL(url, location.href);
 
-    // LDN Radius: borrow the page's own sign-in for the fast search's list (kept in memory only, never saved)
-    if (u.pathname.startsWith("/api/admin/ldn-radius/")) {
+    // fast search: the page's own sign-in and which month it shows (see fastSearch below)
+    if (u.pathname.startsWith("/api/")) {
       const auth = init?.headers ? new Headers(init.headers).get("authorization") : input instanceof Request ? input.headers.get("authorization") : null;
-      if (auth) { const first = !ldnAuth; ldnAuth = auth; if (first && ldn.error) { ldn.error = ""; loadLdn(); } } // the search was waiting for it
+      for (const seen of searches) seen(u, auth);
     }
 
     // Work Orders: ask for fewer rows (only ever lower than what the page asked for)
@@ -130,22 +130,16 @@
     }
   }
 
-  // ---------- LDN Radius → Pelanggan: a fast search beside the site's own ----------
-  // Measured 10 Nov 2026: the site's search asks the server each time (1–4 s) and matches the typed text as one piece,
-  // so a double space, words in another order or a trailing "." find nobody. Here all customers are loaded once
-  // (500 per request, kept 30 minutes in this browser) and searched as you type: any word order, spacing and
-  // punctuation ignored, across name, username, phone, address, village and router. Picking one puts its username
-  // into the site's own search box, so the table shows that customer.
-  let ldnAuth = null;
-  const LDN_TTL = 30 * 60 * 1000, LDN_DB = "erp-fast", LDN_STORE = "ldn";
-  const KEEP = ["username", "nama", "phone", "address", "desa", "kecamatanErp", "district", "router", "paket", "isolir", "online", "expirasi", "isInactive"];
-  const fold = (s) => String(s ?? "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  // ---------- fast search: LDN Radius → Pelanggan, and Finance → Invoices ----------
+  // Measured 10 Nov 2026: both pages ask the server on every search (LDN 1–4 s, invoices ~2.8 s) and match the typed text
+  // as one piece, so a double space, words in another order or a trailing "." find nobody (0 of 5 in a test), and a
+  // misspelt name rarely does. Here each list is loaded once (kept 30 minutes in this browser, refreshed in the
+  // background) and searched as you type: any word order, spacing and punctuation ignored, forgiving of spelling.
+  // Picking a result puts its username / invoice number into the site's own search box, so the table shows it.
+  const SEARCH_TTL = 30 * 60 * 1000, IDB = "erp-fast", IDB_STORE = "ldn";
+  const fold = (s) => String(s ?? "").normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
   const digits = (s) => { let d = String(s ?? "").replace(/\D/g, ""); if (d.startsWith("62")) d = "0" + d.slice(2); return d; };
-  let ldn = { rows: null, at: 0, loading: null, done: 0, pages: 0, error: "", total: 0 };
-
-  const idb = () => new Promise((ok, no) => { const r = indexedDB.open(LDN_DB, 1); r.onupgradeneeded = () => r.result.createObjectStore(LDN_STORE); r.onsuccess = () => ok(r.result); r.onerror = () => no(r.error); });
-  async function idbGet() { try { const db = await idb(); return await new Promise((ok) => { const q = db.transaction(LDN_STORE).objectStore(LDN_STORE).get("all"); q.onsuccess = () => ok(q.result); q.onerror = () => ok(null); }); } catch { return null; } }
-  async function idbPut(v) { try { const db = await idb(); db.transaction(LDN_STORE, "readwrite").objectStore(LDN_STORE).put(v, "all"); } catch { /* the list just isn't kept */ } }
+  const rupiah = (n) => (Number.isFinite(Number(n)) ? `Rp ${Number(n).toLocaleString("id-ID")}` : "");
 
   // How a word sounds, roughly: old Indonesian spellings made modern (oe→u, dj→j, tj→c, sj→sy, ch→kh, ph→f)
   // and double letters made single, so WINNA = WINA, WELLY = WELY, SOEMARNO = SUMARNO.
@@ -166,112 +160,13 @@
     }
     return prev[b.length] <= max;
   }
-  // A typed word that's close to the start of a word in the record (so a half-typed word still counts)
-  // (only words starting with the same letter: a slip in the first letter is rare, and it skips most of the work)
+  // A typed word close to the start of a word in the record (a half-typed word still counts). Only words starting with
+  // the same letter: a slip in the first letter is rare, and it skips most of the work.
   const fuzzyHit = (w, words, max) => words.some((x) => x[0] === w[0] && (near(w, x.slice(0, w.length), max) || near(w, x.slice(0, w.length + 1), max) || near(w, x, max)));
 
-  function indexRows(rows) {
-    for (const r of rows) {
-      r._name = fold(r.nama);
-      r._hay = ` ${r._name} ${fold(r.username)} ${fold(r.address)} ${fold(r.desa)} ${fold(r.kecamatanErp)} ${fold(r.district)} ${fold(r.router)} ${fold(r.paket)} ${digits(r.phone)} `;
-      r._words = [...new Set(r._hay.trim().split(" ").filter((x) => x.length > 1 && !/^\d+$/.test(x)).map(sound))];
-      r._nameWords = [...new Set(r._name.split(" ").map(sound))];
-      r._sound = ` ${r._words.join(" ")} `;
-    }
-    return rows;
-  }
-
-  async function loadLdn(force = false) {
-    if (ldn.loading) return ldn.loading;
-    if (!force && ldn.rows && Date.now() - ldn.at < LDN_TTL) return;
-    if (!force && !ldn.rows) { const kept = await idbGet(); if (kept?.rows) { ldn.rows = indexRows(kept.rows); ldn.at = kept.at; ldn.total = kept.total || 0; drawLdn(); if (Date.now() - kept.at < LDN_TTL) return; } }
-    if (!ldnAuth) { ldn.error = "Open the Pelanggan list once so the search can sign in"; drawLdn(); return; }
-    ldn.loading = (async () => {
-      ldn.error = ""; ldn.done = 0;
-      const page = async (p) => {
-        const r = await realFetch(`/api/admin/ldn-radius/customers?page=${p}&pageSize=500`, { headers: { authorization: ldnAuth } });
-        if (!r.ok) throw new Error(`The server said ${r.status}`);
-        const j = await r.json(); ldn.done++; drawLdn();
-        return j;
-      };
-      try {
-        const first = await page(1);
-        ldn.pages = Math.max(1, Math.ceil((first.total || 0) / 500));
-        const out = [], rest = Array.from({ length: ldn.pages - 1 }, (_, i) => i + 2);
-        // three at a time, so the server isn't flooded
-        const got = new Map([[1, first.customers || []]]);
-        for (let i = 0; i < rest.length; i += 3) (await Promise.all(rest.slice(i, i + 3).map(async (p) => [p, (await page(p)).customers || []]))).forEach(([p, c]) => got.set(p, c));
-        // a page that came back short (the server was busy) is asked for again, one at a time
-        for (const p of rest) if (got.get(p).length < 500 && p < ldn.pages) got.set(p, (await page(p)).customers || []);
-        if (rest.length && !got.get(ldn.pages).length) got.set(ldn.pages, (await page(ldn.pages)).customers || []);
-        for (const p of [...got.keys()].sort((a, b) => a - b)) out.push(...got.get(p));
-        ldn.total = first.total || out.length;
-        const rows = out.map((c) => Object.fromEntries(KEEP.map((k) => [k, c[k]])));
-        ldn.rows = indexRows(rows); ldn.at = Date.now();
-        idbPut({ at: ldn.at, rows, total: ldn.total });
-      } catch (e) { ldn.error = `Couldn't load the list: ${e.message}`; }
-      ldn.loading = null; drawLdn();
-    })();
-    return ldn.loading;
-  }
-
-  function searchLdn(q) {
-    const words = fold(q).split(" ").filter(Boolean), num = digits(q);
-    if (!words.length || !ldn.rows) return [];
-    const sounds = words.map(sound);
-    // spelling-tolerant matching needs a real word: 4+ letters, matched at the start of a word in the record
-    const soft = (w) => w.length >= 4;
-    const soundHit = (r, i) => r._sound.includes(" " + sounds[i]);
-    const slack = (w) => (w.length >= 9 ? 2 : w.length >= 5 ? 1 : 0); // letters that may be off: 1 from 5 letters, 2 from 9
-    const out = [], seen = new Set();
-    for (const r of ldn.rows) {
-      let score;
-      if (num.length >= 6 && r._hay.includes(num)) score = 0;
-      // exact letters: name starts with what you typed, then every word in the name, then anywhere
-      else if (words.every((w) => r._hay.includes(w))) score = r._name.startsWith(words.join(" ")) ? 0 : words.every((w) => r._name.includes(w)) ? 1 : 2;
-      // spelled another way (winna / wina, soemarno / sumarno)
-      else if (words.every((w, i) => r._hay.includes(w) || (soft(w) && soundHit(r, i)))) score = sounds.every((w) => r._nameWords.some((x) => x.startsWith(w))) ? 3 : 4;
-      else continue;
-      out.push([score, r]); seen.add(r);
-    }
-    // a letter or two off, only when the passes above found few people (it's the slow part)
-    if (out.length < 30) for (const r of ldn.rows) {
-      if (seen.has(r)) continue;
-      const ok = words.every((w, i) => r._hay.includes(w) || (soft(w) && (soundHit(r, i) || (slack(w) && fuzzyHit(sounds[i], r._words, slack(w))))));
-      if (!ok) continue;
-      const inName = words.every((w, i) => r._name.includes(w) || (soft(w) && (r._nameWords.some((x) => x.startsWith(sounds[i])) || (slack(w) && fuzzyHit(sounds[i], r._nameWords, slack(w))))));
-      out.push([inName ? 5 : 6, r]);
-    }
-    return out.sort((a, b) => a[0] - b[0] || a[1]._name.localeCompare(b[1]._name)).slice(0, 30).map((x) => x[1]);
-  }
-
-  const LDN_INPUT = 'input[placeholder*="username PPPoE"]';
-  let ldnBox = null, ldnInput = null, ldnHits = [], ldnSel = 0, ldnQuery = "", ldnPicking = false;
-  const ldnCss = `
-    #erp-ldn { --card: #090b0c; --raised: #1a1d1e; --edge: #363738; --hair: #262727; --bone: #e9e1dc; --paper: #efefed; --body: #b3b0af; --muted: #8a8b8a; --green: #55bc82; --red: #f12614; --blue: #3e7edf;
-      position: fixed; z-index: 2147483001; max-height: min(460px, 60vh); display: flex; flex-direction: column; border-radius: 8px; background: var(--card); color: var(--body);
-      font: 400 14px/1.4 Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; font-feature-settings: "cv11", "tnum"; -webkit-font-smoothing: antialiased;
-      box-shadow: inset 0 0 0 1px var(--edge), 0 40px 32px rgba(0,0,0,.18), 0 22px 18px rgba(0,0,0,.2), 0 12px 10px rgba(0,0,0,.2), 0 6px 5px rgba(0,0,0,.18), 0 2px 2px rgba(0,0,0,.2);
-      animation: erp-fast-menu .25s cubic-bezier(.22, 1, .36, 1) both; transform-origin: top; }
-    @keyframes erp-fast-menu { from { opacity: 0; transform: scale(.98) translateY(-4px); } }
-    #erp-ldn .head { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--hair); font-size: 12px; font-weight: 500; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
-    #erp-ldn .head::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--bone); flex: none; }
-    #erp-ldn .head b { font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--paper); }
-    #erp-ldn .head button { margin-left: auto; border: 0; background: none; color: var(--muted); font: inherit; letter-spacing: 0; text-transform: none; cursor: pointer; padding: 2px 6px; border-radius: 6px; }
-    #erp-ldn .head button:hover { color: var(--paper); background: rgba(255,255,255,.04); }
-    #erp-ldn ul { list-style: none; margin: 0; padding: 4px; overflow: auto; }
-    #erp-ldn li { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; gap: 4px 12px; align-items: center; padding: 8px 10px; border-radius: 6px; cursor: pointer; }
-    #erp-ldn li[aria-selected="true"] { background: var(--raised); }
-    #erp-ldn .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
-    #erp-ldn .dot.on { background: var(--green); } #erp-ldn .dot.iso { background: var(--red); }
-    #erp-ldn .nm { color: var(--paper); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    #erp-ldn .nm mark { background: none; color: var(--bone); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: rgba(233,225,220,.4); }
-    #erp-ldn .us { font: 12px/1.4 "JetBrains Mono", ui-monospace, Menlo, monospace; color: var(--body); }
-    #erp-ldn .sub { grid-column: 2 / 4; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    #erp-ldn .empty { padding: 16px 14px; color: var(--muted); }
-    #erp-ldn .foot { padding: 8px 14px; border-top: 1px solid var(--hair); font-size: 12px; color: var(--muted); }
-    #erp-ldn kbd { font: 11px "JetBrains Mono", ui-monospace, monospace; padding: 1px 5px; border-radius: 4px; box-shadow: inset 0 0 0 1px var(--edge); color: var(--body); }
-    @media (prefers-reduced-motion: reduce) { #erp-ldn { animation: none; } }`;
+  const idb = () => new Promise((ok, no) => { const r = indexedDB.open(IDB, 1); r.onupgradeneeded = () => r.result.createObjectStore(IDB_STORE); r.onsuccess = () => ok(r.result); r.onerror = () => no(r.error); });
+  async function idbGet(key) { try { const db = await idb(); return await new Promise((ok) => { const q = db.transaction(IDB_STORE).objectStore(IDB_STORE).get(key); q.onsuccess = () => ok(q.result); q.onerror = () => ok(null); }); } catch { return null; } }
+  async function idbPut(key, v) { try { const db = await idb(); db.transaction(IDB_STORE, "readwrite").objectStore(IDB_STORE).put(v, key); } catch { /* the list just isn't kept */ } }
 
   const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
   function marked(name, words) {
@@ -284,69 +179,210 @@
     return span;
   }
 
-  function placeLdn() {
-    if (!ldnBox || !ldnInput?.isConnected) return;
-    // as wide as the search box, at least 460px, lined up with its right edge and kept inside the window
-    const r = ldnInput.getBoundingClientRect(), vw = document.documentElement.clientWidth, w = Math.min(Math.max(r.width, 460), vw - 16);
-    ldnBox.style.top = `${r.bottom + 6}px`;
-    ldnBox.style.left = `${Math.max(8, Math.min(r.right - w, vw - w - 8))}px`;
-    ldnBox.style.width = `${w}px`;
+  /** One fast search: where it shows, how its list is loaded, what each row says. */
+  function fastSearch(cfg) {
+    const st = { auth: null, key: cfg.key({}), rows: null, at: 0, loading: null, done: 0, pages: 0, error: "", total: 0, box: null, input: null, hits: [], sel: 0, query: "", picking: false };
+
+    function index(rows) {
+      for (const r of rows) {
+        r._name = fold(cfg.name(r));
+        r._hay = ` ${r._name} ${cfg.hay(r).map(fold).join(" ")} ${cfg.numbers(r).map(digits).join(" ")} `;
+        r._words = [...new Set(r._hay.trim().split(" ").filter((x) => x.length > 1 && !/^\d+$/.test(x)).map(sound))];
+        r._nameWords = [...new Set(r._name.split(" ").map(sound))];
+        r._sound = ` ${r._words.join(" ")} `;
+      }
+      return rows;
+    }
+
+    async function load(force = false) {
+      if (st.loading) return st.loading;
+      if (!force && st.rows && Date.now() - st.at < SEARCH_TTL) return;
+      const key = st.key;
+      if (!force && !st.rows) { const kept = await idbGet(key); if (kept?.rows && key === st.key) { st.rows = index(kept.rows); st.at = kept.at; st.total = kept.total || 0; draw(); if (Date.now() - kept.at < SEARCH_TTL) return; } }
+      if (!st.auth) { st.error = "Open this list once so the search can sign in"; draw(); return; }
+      st.loading = (async () => {
+        st.error = ""; st.done = 0;
+        const size = cfg.pageSize;
+        const page = async (p) => {
+          const r = await realFetch(cfg.url(key, p, size), { headers: { authorization: st.auth } });
+          if (!r.ok) throw new Error(`The server said ${r.status}`);
+          const j = await r.json(); st.done++; draw();
+          return j;
+        };
+        try {
+          const first = await page(1), total = cfg.total(first);
+          st.pages = Math.max(1, Math.ceil(total / size));
+          const got = new Map([[1, cfg.items(first)]]), rest = Array.from({ length: st.pages - 1 }, (_, i) => i + 2);
+          // three at a time, so the server isn't flooded
+          for (let i = 0; i < rest.length; i += 3) (await Promise.all(rest.slice(i, i + 3).map(async (p) => [p, cfg.items(await page(p))]))).forEach(([p, c]) => got.set(p, c));
+          // a page that came back short (the server was busy) is asked for again, one at a time
+          for (const p of rest) if (got.get(p).length < size && p < st.pages) got.set(p, cfg.items(await page(p)));
+          if (rest.length && !got.get(st.pages).length) got.set(st.pages, cfg.items(await page(st.pages)));
+          const rows = [...got.keys()].sort((a, b) => a - b).flatMap((p) => got.get(p)).map((c) => Object.fromEntries(cfg.keep.map((k) => [k, c[k]])));
+          if (key === st.key) { st.rows = index(rows); st.at = Date.now(); st.total = total || rows.length; }
+          idbPut(key, { at: Date.now(), rows, total });
+        } catch (e) { st.error = `Couldn't load the list: ${e.message}`; }
+        st.loading = null; draw();
+      })();
+      return st.loading;
+    }
+
+    function search(q) {
+      const words = fold(q).split(" ").filter(Boolean), num = digits(q);
+      if (!words.length || !st.rows) return [];
+      const sounds = words.map(sound);
+      // spelling-tolerant matching needs a real word: 4+ letters, matched at the start of a word in the record
+      const soft = (w) => w.length >= 4;
+      const soundHit = (r, i) => r._sound.includes(" " + sounds[i]);
+      const slack = (w) => (w.length >= 9 ? 2 : w.length >= 5 ? 1 : 0); // letters that may be off: 1 from 5 letters, 2 from 9
+      const out = [], seen = new Set();
+      for (const r of st.rows) {
+        let score;
+        if (num.length >= 6 && r._hay.includes(num)) score = 0;
+        // exact letters: name starts with what you typed, then every word in the name, then anywhere
+        else if (words.every((w) => r._hay.includes(w))) score = r._name.startsWith(words.join(" ")) ? 0 : words.every((w) => r._name.includes(w)) ? 1 : 2;
+        // spelled another way (winna / wina, soemarno / sumarno)
+        else if (words.every((w, i) => r._hay.includes(w) || (soft(w) && soundHit(r, i)))) score = sounds.every((w) => r._nameWords.some((x) => x.startsWith(w))) ? 3 : 4;
+        else continue;
+        out.push([score, r]); seen.add(r);
+      }
+      // a letter or two off, only when the passes above found few (it's the slow part)
+      if (out.length < 30) for (const r of st.rows) {
+        if (seen.has(r)) continue;
+        if (!words.every((w, i) => r._hay.includes(w) || (soft(w) && (soundHit(r, i) || (slack(w) && fuzzyHit(sounds[i], r._words, slack(w))))))) continue;
+        const inName = words.every((w, i) => r._name.includes(w) || (soft(w) && (r._nameWords.some((x) => x.startsWith(sounds[i])) || (slack(w) && fuzzyHit(sounds[i], r._nameWords, slack(w))))));
+        out.push([inName ? 5 : 6, r]);
+      }
+      return out.sort((a, b) => a[0] - b[0] || a[1]._name.localeCompare(b[1]._name)).slice(0, 30).map((x) => x[1]);
+    }
+
+    function place() {
+      if (!st.box || !st.input?.isConnected) return;
+      // as wide as the search box, at least 460px, lined up with its right edge and kept inside the window
+      const r = st.input.getBoundingClientRect(), vw = document.documentElement.clientWidth, w = Math.min(Math.max(r.width, 460), vw - 16);
+      st.box.style.top = `${r.bottom + 6}px`;
+      st.box.style.left = `${Math.max(8, Math.min(r.right - w, vw - w - 8))}px`;
+      st.box.style.width = `${w}px`;
+    }
+    function close() { st.box?.remove(); st.box = null; }
+    function pick(r) {
+      if (!r || !st.input) return;
+      close();
+      const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+      st.picking = true; set.call(st.input, cfg.pick(r)); st.input.dispatchEvent(new Event("input", { bubbles: true })); st.picking = false; st.query = cfg.pick(r);
+    }
+
+    function draw() {
+      if (!st.input || !st.input.isConnected || !st.query.trim() || document.activeElement !== st.input) { if (st.box && document.activeElement !== st.input) close(); return; }
+      if (!document.getElementById("erp-fs-css")) { const s = el("style"); s.id = "erp-fs-css"; s.textContent = fsCss; document.head.append(s); }
+      if (!st.box) { st.box = el("div", "erp-fs"); st.box.setAttribute("role", "listbox"); st.box.setAttribute("aria-label", "Fast search"); document.body.append(st.box);
+        st.box.addEventListener("mousedown", (e) => e.preventDefault()); } // keep focus in the search box
+      const words = fold(st.query).split(" ").filter(Boolean);
+      st.hits = search(st.query); st.sel = Math.min(st.sel, Math.max(0, st.hits.length - 1));
+      const head = el("div", "head");
+      if (st.rows) {
+        const mins = Math.floor((Date.now() - st.at) / 60000), missing = st.total - st.rows.length;
+        head.append(`Fast search${cfg.scope ? ` · ${cfg.scope(st.key)}` : ""} `, el("b", null, `${st.hits.length > 29 ? "30+" : st.hits.length} of ${st.rows.length.toLocaleString("id-ID")}${missing > 0 ? ` (${missing.toLocaleString("id-ID")} not loaded)` : ""}`),
+          st.loading ? ` · updating ${st.done}/${st.pages || "…"}` : ` · ${mins < 1 ? "just updated" : `${mins} min old`}`);
+        const b = el("button", null, "Update"); b.type = "button"; b.onclick = () => load(true); head.append(b);
+      } else head.append(st.error ? st.error : `Loading ${cfg.noun} ${st.done}/${st.pages || "…"}`);
+      const list = el("ul");
+      st.hits.forEach((r, i) => {
+        const li = el("li"); li.setAttribute("role", "option"); li.setAttribute("aria-selected", String(i === st.sel));
+        li.append(el("span", `dot ${cfg.dot(r)}`), marked(String(cfg.name(r) ?? ""), words), el("span", "us", cfg.id(r)));
+        li.append(el("span", "sub", cfg.sub(r).filter(Boolean).join(" · ")));
+        li.onclick = () => pick(r);
+        list.append(li);
+      });
+      const parts = [head];
+      if (st.hits.length) parts.push(list);
+      else if (st.rows) parts.push(el("div", "empty", "Nobody matches all of those words"));
+      const foot = el("div", "foot"); foot.append(el("kbd", null, "↑↓"), " choose · ", el("kbd", null, "Enter"), " show in the table · ", el("kbd", null, "Esc"), " close");
+      if (st.hits.length) parts.push(foot);
+      st.box.replaceChildren(...parts);
+      place();
+      st.box.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
+    }
+
+    const here = () => location.pathname.startsWith(cfg.path);
+    document.addEventListener("input", (e) => {
+      if (st.picking || !here() || !(e.target instanceof HTMLInputElement) || !e.target.matches(cfg.input)) return;
+      st.input = e.target; st.query = e.target.value; st.sel = 0;
+      load(); draw();
+    }, true);
+    document.addEventListener("focusin", (e) => { if (here() && e.target instanceof HTMLInputElement && e.target.matches(cfg.input)) { st.input = e.target; st.query = e.target.value; load(); draw(); } }, true);
+    document.addEventListener("focusout", (e) => { if (e.target === st.input) setTimeout(() => { if (document.activeElement !== st.input) close(); }, 0); }, true);
+    document.addEventListener("keydown", (e) => {
+      if (!st.box || e.target !== st.input) return;
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); st.sel = (st.sel + (e.key === "ArrowDown" ? 1 : -1) + st.hits.length) % Math.max(1, st.hits.length); draw(); }
+      else if (e.key === "Enter" && st.hits[st.sel]) { e.preventDefault(); e.stopPropagation(); pick(st.hits[st.sel]); }
+      else if (e.key === "Escape") { e.preventDefault(); close(); }
+    }, true);
+    addEventListener("resize", place); addEventListener("scroll", place, true);
+
+    // the page's own requests: its sign-in (kept in memory only, never saved) and, for invoices, which month it shows
+    return function seen(u, auth) {
+      if (!u.pathname.startsWith(cfg.api)) return;
+      if (auth) { const first = !st.auth; st.auth = auth; if (first && st.error) { st.error = ""; load(); } }
+      const key = cfg.key(Object.fromEntries(u.searchParams));
+      if (key !== st.key) { st.key = key; st.rows = null; st.total = 0; } // another month: its own list, loaded on the next search
+    };
   }
 
-  function closeLdn() { ldnBox?.remove(); ldnBox = null; }
-  function pickLdn(r) {
-    if (!r || !ldnInput) return;
-    closeLdn();
-    const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
-    ldnPicking = true; set.call(ldnInput, r.username); ldnInput.dispatchEvent(new Event("input", { bubbles: true })); ldnPicking = false; ldnQuery = r.username;
-  }
+  const fsCss = `
+    .erp-fs { --card: #090b0c; --raised: #1a1d1e; --edge: #363738; --hair: #262727; --bone: #e9e1dc; --paper: #efefed; --body: #b3b0af; --muted: #8a8b8a; --green: #55bc82; --red: #f12614; --blue: #3e7edf;
+      position: fixed; z-index: 2147483001; max-height: min(460px, 60vh); display: flex; flex-direction: column; border-radius: 8px; background: var(--card); color: var(--body);
+      font: 400 14px/1.4 Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; font-feature-settings: "cv11", "tnum"; -webkit-font-smoothing: antialiased;
+      box-shadow: inset 0 0 0 1px var(--edge), 0 40px 32px rgba(0,0,0,.18), 0 22px 18px rgba(0,0,0,.2), 0 12px 10px rgba(0,0,0,.2), 0 6px 5px rgba(0,0,0,.18), 0 2px 2px rgba(0,0,0,.2);
+      animation: erp-fast-menu .25s cubic-bezier(.22, 1, .36, 1) both; transform-origin: top; }
+    @keyframes erp-fast-menu { from { opacity: 0; transform: scale(.98) translateY(-4px); } }
+    .erp-fs .head { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--hair); font-size: 12px; font-weight: 500; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+    .erp-fs .head::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--bone); flex: none; }
+    .erp-fs .head b { font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--paper); }
+    .erp-fs .head button { margin-left: auto; border: 0; background: none; color: var(--muted); font: inherit; letter-spacing: 0; text-transform: none; cursor: pointer; padding: 2px 6px; border-radius: 6px; }
+    .erp-fs .head button:hover { color: var(--paper); background: rgba(255,255,255,.04); }
+    .erp-fs ul { list-style: none; margin: 0; padding: 4px; overflow: auto; }
+    .erp-fs li { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; gap: 4px 12px; align-items: center; padding: 8px 10px; border-radius: 6px; cursor: pointer; }
+    .erp-fs li[aria-selected="true"] { background: var(--raised); }
+    .erp-fs .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
+    .erp-fs .dot.on { background: var(--green); } .erp-fs .dot.iso { background: var(--red); }
+    .erp-fs .nm { color: var(--paper); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .erp-fs .nm mark { background: none; color: var(--bone); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: rgba(233,225,220,.4); }
+    .erp-fs .us { font: 12px/1.4 "JetBrains Mono", ui-monospace, Menlo, monospace; color: var(--body); }
+    .erp-fs .sub { grid-column: 2 / 4; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .erp-fs .empty { padding: 16px 14px; color: var(--muted); }
+    .erp-fs .foot { padding: 8px 14px; border-top: 1px solid var(--hair); font-size: 12px; color: var(--muted); }
+    .erp-fs kbd { font: 11px "JetBrains Mono", ui-monospace, monospace; padding: 1px 5px; border-radius: 4px; box-shadow: inset 0 0 0 1px var(--edge); color: var(--body); }
+    @media (prefers-reduced-motion: reduce) { .erp-fs { animation: none; } }`;
 
-  function drawLdn() {
-    if (!ldnInput || !ldnInput.isConnected || !ldnQuery.trim() || document.activeElement !== ldnInput) { if (ldnBox && document.activeElement !== ldnInput) closeLdn(); return; }
-    if (!document.getElementById("erp-ldn-css")) { const s = el("style"); s.id = "erp-ldn-css"; s.textContent = ldnCss; document.head.append(s); }
-    if (!ldnBox) { ldnBox = el("div"); ldnBox.id = "erp-ldn"; ldnBox.setAttribute("role", "listbox"); ldnBox.setAttribute("aria-label", "Fast search"); document.body.append(ldnBox);
-      ldnBox.addEventListener("mousedown", (e) => e.preventDefault()); } // keep focus in the search box
-    const words = fold(ldnQuery).split(" ").filter(Boolean);
-    ldnHits = searchLdn(ldnQuery); ldnSel = Math.min(ldnSel, Math.max(0, ldnHits.length - 1));
-    const head = el("div", "head");
-    if (ldn.rows) {
-      const mins = Math.floor((Date.now() - ldn.at) / 60000);
-      head.append("Fast search ", el("b", null, `${ldnHits.length > 29 ? "30+" : ldnHits.length} of ${ldn.rows.length.toLocaleString("id-ID")}${ldn.total > ldn.rows.length ? ` (${(ldn.total - ldn.rows.length).toLocaleString("id-ID")} not loaded)` : ""}`), ldn.loading ? ` · updating ${ldn.done}/${ldn.pages || "…"}` : ` · ${mins < 1 ? "just updated" : `${mins} min old`}`);
-      const b = el("button", null, "Update"); b.type = "button"; b.onclick = () => loadLdn(true); head.append(b);
-    } else head.append(ldn.error ? ldn.error : `Loading customers ${ldn.done}/${ldn.pages || "…"}`);
-    const list = el("ul");
-    ldnHits.forEach((r, i) => {
-      const li = el("li"); li.setAttribute("role", "option"); li.setAttribute("aria-selected", String(i === ldnSel));
-      li.append(el("span", `dot${r.isolir ? " iso" : r.online ? " on" : ""}`), marked(String(r.nama ?? ""), words), el("span", "us", r.username));
-      li.append(el("span", "sub", [r.paket, r.desa, r.router, r.phone].filter(Boolean).join(" · ")));
-      li.onclick = () => pickLdn(r);
-      list.append(li);
-    });
-    const parts = [head];
-    if (ldnHits.length) parts.push(list);
-    else if (ldn.rows) parts.push(el("div", "empty", "Nobody matches all of those words"));
-    const foot = el("div", "foot"); foot.append(el("kbd", null, "↑↓"), " choose · ", el("kbd", null, "Enter"), " show in the table · ", el("kbd", null, "Esc"), " close");
-    if (ldnHits.length) parts.push(foot);
-    ldnBox.replaceChildren(...parts);
-    placeLdn();
-    ldnBox.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
-  }
-
-  // one set of listeners for the page; the site redraws its search box, so they look it up each time
-  document.addEventListener("input", (e) => {
-    if (ldnPicking || !(e.target instanceof HTMLInputElement) || !e.target.matches(LDN_INPUT) || !location.pathname.startsWith("/ldn-radius")) return;
-    ldnInput = e.target; ldnQuery = e.target.value; ldnSel = 0;
-    loadLdn(); drawLdn();
-  }, true);
-  document.addEventListener("focusin", (e) => { if (e.target instanceof HTMLInputElement && e.target.matches(LDN_INPUT)) { ldnInput = e.target; ldnQuery = e.target.value; loadLdn(); drawLdn(); } }, true);
-  document.addEventListener("focusout", (e) => { if (e.target === ldnInput) setTimeout(() => { if (document.activeElement !== ldnInput) closeLdn(); }, 0); }, true);
-  document.addEventListener("keydown", (e) => {
-    if (!ldnBox || e.target !== ldnInput) return;
-    if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); ldnSel = (ldnSel + (e.key === "ArrowDown" ? 1 : -1) + ldnHits.length) % Math.max(1, ldnHits.length); drawLdn(); }
-    else if (e.key === "Enter" && ldnHits[ldnSel]) { e.preventDefault(); e.stopPropagation(); pickLdn(ldnHits[ldnSel]); }
-    else if (e.key === "Escape") { e.preventDefault(); closeLdn(); }
-  }, true);
-  addEventListener("resize", placeLdn); addEventListener("scroll", placeLdn, true);
+  const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const searches = [
+    // LDN Radius → Pelanggan: all RADIUS customers (no passwords are loaded)
+    fastSearch({
+      path: "/ldn-radius", api: "/api/admin/ldn-radius/", input: 'input[placeholder*="username PPPoE"]', noun: "customers",
+      key: () => "all", pageSize: 500,
+      url: (key, p, size) => `/api/admin/ldn-radius/customers?page=${p}&pageSize=${size}`,
+      total: (j) => j.total || 0, items: (j) => j.customers || [],
+      keep: ["username", "nama", "phone", "address", "desa", "kecamatanErp", "district", "router", "paket", "isolir", "online", "expirasi", "isInactive"],
+      name: (r) => r.nama, id: (r) => r.username, pick: (r) => r.username,
+      hay: (r) => [r.username, r.address, r.desa, r.kecamatanErp, r.district, r.router, r.paket], numbers: (r) => [r.phone],
+      dot: (r) => (r.isolir ? "iso" : r.online ? "on" : ""), sub: (r) => [r.paket, r.desa, r.router, r.phone],
+    }),
+    // Finance → Invoices: the month the page shows (it follows the month you pick there)
+    fastSearch({
+      path: "/finance/invoices", api: "/api/finance/invoices/", input: 'input[placeholder*="No. Invoice"]', noun: "invoices",
+      key: (q) => { const now = new Date(); return `inv-${q.year || now.getFullYear()}-${q.month || now.getMonth() + 1}`; },
+      scope: (key) => { const [, y, m] = key.split("-"); return `${MONTHS[Number(m) - 1]} ${y}`; },
+      pageSize: 200, // the most the server gives at once
+      url: (key, p, size) => { const [, y, m] = key.split("-"); return `/api/finance/invoices/list?month=${m}&year=${y}&page=${p}&pageSize=${size}`; },
+      total: (j) => j.total || 0, items: (j) => j.invoices || [],
+      keep: ["invoiceNumber", "winpayTrxId", "customerName", "radiusUsername", "contractNumber", "desa", "kecamatan", "router", "paket", "phone", "amount", "status", "period", "dueDate", "paidDate"],
+      name: (r) => r.customerName, id: (r) => r.invoiceNumber, pick: (r) => r.invoiceNumber,
+      hay: (r) => [r.invoiceNumber, r.winpayTrxId, r.radiusUsername, r.contractNumber, r.desa, r.kecamatan, r.router, r.paket], numbers: (r) => [r.phone],
+      dot: (r) => (/lunas|paid|bayar/i.test(r.status) && !/belum|unpaid/i.test(r.status) ? "on" : /jatuh|overdue|telat|lewat|tunggak/i.test(r.status) ? "iso" : ""),
+      sub: (r) => [r.status, rupiah(r.amount), r.period, r.desa, r.radiusUsername],
+    }),
+  ];
 
   // the site moves between pages without reloading: redraw when the address changes
   for (const m of ["pushState", "replaceState"]) {
