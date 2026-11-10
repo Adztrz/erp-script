@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.8
+// @version      2.9
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -784,6 +784,8 @@
       .erp-dock .pw { display: flex; align-items: center; gap: 8px; margin-top: 8px; padding: 8px 10px; border-radius: 8px; background: var(--raised); color: var(--paper); font: 13px "JetBrains Mono", ui-monospace, monospace; }
       .erp-dock .pw span { flex: 1; overflow-wrap: anywhere; }
       .erp-dock .rx { font-variant-numeric: tabular-nums; }
+      .erp-dock .webbox .facts { margin: 8px 0; } .erp-dock .webbox .note { margin: 6px 0; } .erp-dock .webbox .note a { color: var(--paper); overflow-wrap: anywhere; }
+      .erp-dock .note.warn { color: #e0b252; }
       @media (max-width: 760px) { .erp-dock .row2 { grid-template-columns: 1fr; } .erp-dock .mrow { min-height: 36px; } }
       @media (max-width: 760px) { .erp-dock .top kbd { display: none; } .erp-dock .shut { width: 40px; height: 40px; } .erp-dock .item { min-height: 44px; } .erp-dock { left: 8px !important; right: 8px !important; width: auto; bottom: 8px !important; top: auto !important; max-height: 80vh; transform-origin: bottom center; } }
       @media (prefers-reduced-motion: reduce) { .erp-dock, .erp-dock *, .erp-dock-fab, .erp-dock-fab * { animation: none !important; transition: none !important; } }`;
@@ -1176,7 +1178,7 @@
     function liveSessions() {
       if (live && Date.now() - live.at < 2 * 60000) return Promise.resolve(live);
       return (liveLoading ||= api("/api/admin/ldn-radius/panel?view=online").then((j) => {
-        const by = new Map(); for (const x of j.sessions || []) by.set(String(x.username).toLowerCase(), { ip: x.nasipaddress, up: Number(x.uptimeSec) || 0 });
+        const by = new Map(); for (const x of j.sessions || []) by.set(String(x.username).toLowerCase(), { ip: x.nasipaddress, up: Number(x.uptimeSec) || 0, addr: x.framedipaddress, ro: x.router, type: x.userType });
         return (live = { at: Date.now(), by });
       }).finally(() => { liveLoading = null; }));
     }
@@ -1341,7 +1343,7 @@
       if (acs && Date.now() - acs.at < 15 * 60000) return Promise.resolve(acs);
       return (acsLoading ||= api("/api/olt/acs/devices").then((j) => {
         const rows = (j.data || []).map((d) => ({ id: d._id, sn: snNorm(d.serialNumber), model: [d.manufacturer, d.productClass].filter(Boolean).join(" "), inform: d.lastInform,
-          ssid: d.ssid24 || d.ssid || "", ssid5: d.ssid5g || "", pppoe: d.pppoeUsername || d.wan?.usernameModem || "" }));
+          ssid: d.ssid24 || d.ssid || "", ssid5: d.ssid5g || "", pppoe: d.pppoeUsername || d.wan?.usernameModem || "", mgmt: d.externalIpAddress || d.wan?.ip || "" }));
         return (acs = { at: Date.now(), bySn: new Map(rows.map((d) => [d.sn, d])), byUser: new Map(rows.filter((d) => d.pppoe).map((d) => [lower(d.pppoe), d])) });
       }).catch(() => (acs = { at: Date.now(), bySn: new Map(), byUser: new Map(), failed: true })).finally(() => { acsLoading = null; }));
     }
@@ -1392,7 +1394,8 @@
       const head = el("div", "row"), e = el("div", "eyebrow"); e.style.margin = "0"; e.append("Modem"); head.append(e); parts.push(head);
       if (!onts || !acs) { parts.push(el("p", "note", "Looking the modem up on the OLTs… (the first time takes about 10 seconds)")); m.el.replaceChildren(...parts); return; }
       const { sn, ont, dev } = m.r ? modemOf(m.r) : { sn: m.key, ont: onts.bySn.get(m.key), dev: acs.bySn.get(m.key) };
-      if (!ont && !dev) { parts.push(el("p", "note", sn ? `${sn} isn't on any OLT's list or on TR-069.` : "No modem serial on file, and no ONT or TR-069 modem logs in with this username.")); m.el.replaceChildren(...parts); return; }
+      if (!ont && !dev) { parts.push(el("p", "note", sn ? `${sn} isn't on any OLT's list or on TR-069.` : "No modem serial on file, and no ONT or TR-069 modem logs in with this username."));
+        if (m.r) parts.push(webSection(m, m.r.username, null, redraw)); m.el.replaceChildren(...parts); return; }
       const live = m.live, st = live?.status || ont?.st, pill = el("span", "pill");
       pill.append(el("span", `dot ${ontState({ st })}`), st ? st[0].toUpperCase() + st.slice(1) : "TR-069 only"); head.append(pill);
       const facts = el("dl", "facts"), fact = (label, value, opts = {}) => { if (!value) return; const dd = el("dd", opts.cls || null);
@@ -1441,6 +1444,7 @@
         rb.classList.remove("wide", "primary"); if (!rb.classList.contains("arm")) rb.classList.add("btn"); acts.append(rb);
       }
       parts.push(acts);
+      { const u = m.r?.username || ont?.pppoe || dev?.pppoe; if (u) parts.push(webSection(m, u, dev, redraw)); }
       if (m.pw) { const box = el("div", "pw"); if (m.pw.none) box.append(el("span", null, "No WiFi password on record for this modem."));
         else { box.append(el("span", null, `${m.pw.ssid ? `${m.pw.ssid} · ` : ""}${m.pw.sandi}`)); const c = el("button", "copy", "Copy"); c.type = "button"; c.onclick = () => copy(m.pw.sandi, c); box.append(c); }
         parts.push(box, el("p", "note", "Hidden again in 30 seconds. Only give it to this modem's customer.")); }
@@ -1448,6 +1452,83 @@
       if (m.msg) parts.push(el("p", `note ${m.msg.bad ? "late" : m.msg.good ? "good" : ""}`, m.msg.text));
       m.el.replaceChildren(...parts);
       if (focus && m.el.isConnected) m.el.querySelector(`[data-k="${focus}"]`)?.focus();
+    }
+    // ---- the modem's own web page ----
+    // The ERP's Remote ONU looks for the session only on the RO the customer record names, and about 1 in 10 online
+    // customers are really on another RO (old ARJOSARI/TREMAS records), so it finds nothing. Here the address comes
+    // from RADIUS (the live session: its IP and real RO). The links open from a device on the NOC WireGuard; "from
+    // anywhere" is the ERP's temporary port on the RO (5 minutes, logged), which needs the ERP to find the session too.
+    function webSection(m, username, dev, redraw) {
+      const w = m.web, box = el("div", "webbox");
+      const head = el("div", "row"), e = el("div", "eyebrow"); e.style.margin = "12px 0 0"; e.append("Web page"); head.append(e); box.append(head);
+      if (!w) {
+        const b = el("button", "btn", "Find the modem's address"); b.type = "button"; b.dataset.k = `${m.key}web`; b.style.marginTop = "8px";
+        b.onclick = () => openWeb(m, username, redraw); box.append(b); return box;
+      }
+      if (w.busy) { box.append(el("p", "note", "Reading the live session and asking the ERP…")); return box; }
+      if (w.err) box.append(el("p", "note late", w.err));
+      const s = w.sess;
+      if (!s) { box.append(el("p", "note", "Not online now (no PPPoE session in RADIUS), so the modem can't be reached.")); return box; }
+      const facts = el("dl", "facts"), ip = el("dd", "mono", s.addr); const c = el("button", "copy", "Copy"); c.type = "button"; c.onclick = () => copy(s.addr, c); ip.append(c);
+      facts.append(el("dt", null, "Modem IP"), ip, el("dt", null, "On"), el("dd", null, `${s.ro} · online ${dur(s.up)}`)); box.append(facts);
+      if (w.erpRo && nameNorm(w.erpRo).split(/[\s-]/)[0] !== nameNorm(s.ro).split(/[\s-]/)[0])
+        box.append(el("p", "note warn", `The ERP has this customer on ${w.erpRo}, but the session is on ${s.ro}: the ERP's own Remote ONU and its 5-minute access can't find it. Correct the customer's RO in the ERP to fix that; the links below work anyway.`));
+      // direct links
+      const links = el("div", "actions"), link = (label, url) => { const a = el("a", "btn", label); a.href = url; a.target = "_blank"; a.rel = "noreferrer noopener"; links.append(a); };
+      link("Open :80 ↗", `http://${s.addr}/`); link(":8080 ↗", `http://${s.addr}:8080/`);
+      if (dev?.mgmt && dev.mgmt !== s.addr) link(`TR-069 IP ${dev.mgmt} ↗`, `http://${dev.mgmt}/`);
+      box.append(links, el("p", "note", "These open on a device connected to the NOC WireGuard (the RO only lets 10.99.98.0/24 reach modems)."));
+      // test and 5-minute access, through the ERP when it found the session
+      const acts = el("div", "actions");
+      if (w.id && w.erpFound) {
+        const t = el("button", "btn", w.probing ? "Testing… (~20 s)" : "Test from the RO"); t.type = "button"; t.disabled = !!w.probing; t.dataset.k = `${m.key}probe`;
+        t.onclick = async () => { w.probing = true; redraw();
+          try { const j = await api("/api/noc/remote-onu", { customerId: w.id, probe: true }); w.probe = j.probe; } catch (err) { w.err = `Test failed: ${err.message}`; }
+          w.probing = false; redraw(); };
+        acts.append(t);
+        if (!w.tunnel || w.tunnel.until < Date.now()) {
+          const go = armButton(w.st, "Open from anywhere · 5 min", "Click again: open a 5-minute port on the RO (logged)", () => {
+            let win = null; try { win = window.open("about:blank", "_blank"); if (win) win.opener = null; } catch { /* blocked */ }
+            w.st.armed = 0; w.opening = true; redraw();
+            api("/api/noc/remote-modem", { customerId: w.id }).then((j) => {
+              const min = Number(j.menit) > 0 ? Number(j.menit) : 5, secs = Number(j.kedaluwarsaDetik) || min * 60;
+              w.tunnel = { url: String(j.url), until: Date.now() + secs * 1000, note: j.keterangan || "" };
+              if (win && !win.closed) win.location.replace(w.tunnel.url); else window.open(w.tunnel.url, "_blank", "noopener");
+            }).catch((err) => { win?.close(); w.err = `Access not opened: ${err.message}`; }).finally(() => { w.opening = false; redraw(); });
+          }, redraw, `${m.key}tunnel`);
+          go.classList.remove("wide", "primary"); if (w.opening) { go.disabled = true; go.textContent = "Opening…"; } acts.append(go);
+        }
+      } else if (!w.id) acts.append(el("span", "sub", "The ERP's Remote ONU doesn't know this username, so there's no 5-minute access."));
+      box.append(acts);
+      if (w.tunnel && w.tunnel.until > Date.now()) {
+        const p = el("p", "note good"), a = el("a", null, w.tunnel.url); a.href = w.tunnel.url; a.target = "_blank"; a.rel = "noreferrer noopener";
+        const left = el("b"); p.append("Open now: ", a, " · closes in ", left); box.append(p);
+        const tick = (first) => { if (!w.tunnel) return; const sLeft = Math.max(0, Math.round((w.tunnel.until - Date.now()) / 1000)); left.textContent = `${Math.floor(sLeft / 60)}:${String(sLeft % 60).padStart(2, "0")}`;
+          if (!sLeft) { w.tunnel = null; redraw(); } else if (first || left.isConnected) setTimeout(tick, 1000); }; // the first tick runs before the box is on the page
+        tick(true);
+      }
+      if (w.probe) {
+        const say = { menjawab: "answers", tidakMenjawab: "no answer", takDiuji: "not tested", takTerbaca: "unclear" };
+        const r = el("p", "note"); r.append(`From ${s.ro}: ping ${say[w.probe.ping?.status] || "–"}`);
+        for (const x of w.probe.http || []) { r.append(" · "); r.append(el("span", x.status === "menjawab" ? "good" : x.status === "tidakMenjawab" ? "late" : "", `port ${x.port} ${say[x.status] || x.status}${x.http ? ` (${x.http})` : ""}`)); }
+        box.append(r);
+        if ((w.probe.http || []).length && w.probe.http.every((x) => x.status === "tidakMenjawab")) // only a clear "no" on every port
+          box.append(el("p", "note warn", dev ? "This modem doesn't serve its web page on the internet side. Use WiFi password, Change WiFi or Reboot above: they go through TR-069." : "This modem doesn't serve its web page on the internet side, and it isn't on TR-069: it needs a visit, or TR-069 set up on it."));
+      }
+      return box;
+    }
+    const dur = (sec) => { const d = Math.floor(sec / 86400), h = Math.floor((sec % 86400) / 3600), mi = Math.floor((sec % 3600) / 60); return d ? `${d} d ${h} h` : h ? `${h} h ${mi} min` : `${mi} min`; };
+    async function openWeb(m, username, redraw) {
+      const w = (m.web = { busy: true, st: { armed: 0 } }); redraw();
+      const u = lower(username);
+      const [lv, erp] = await Promise.all([
+        (live && Date.now() - live.at < 30000 ? Promise.resolve(live) : (live = null, liveSessions())).catch((e) => { w.err = `RADIUS sessions not read: ${e.message}`; return null; }),
+        api(`/api/noc/remote-onu?q=${encodeURIComponent(username)}`).then(async (j) => { const c = (j.hasil || []).find((x) => lower(x.username) === u); if (!c) return null;
+          const d = await api("/api/noc/remote-onu", { customerId: c.customerId, probe: false }); return { id: c.customerId, ro: c.ro, found: d.sumberSesi === "live" || d.sumberSesi === "snapshot", ip: d.sesi?.ip }; }).catch(() => null),
+      ]);
+      const s = lv?.by.get(u);
+      w.sess = s && s.addr ? s : erp?.ip ? { addr: erp.ip, ro: erp.ro, up: 0 } : null;
+      w.id = erp?.id; w.erpRo = erp?.ro; w.erpFound = !!erp?.found; w.busy = false; redraw();
     }
     function wifiForm(m, dev, redraw) {
       const f = m.form, form = el("form"); form.onsubmit = (ev) => ev.preventDefault();
