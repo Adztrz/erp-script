@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         ERP — faster Work Orders, Planning and LDN search
 // @namespace    adztrz
-// @version      1.3
-// @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes. LDN Radius → Pelanggan: instant search as you type, any word order, spacing and punctuation ignored.
+// @version      1.4
+// @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes. LDN Radius → Pelanggan: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
 // @grant        none
@@ -141,16 +141,41 @@
   const KEEP = ["username", "nama", "phone", "address", "desa", "kecamatanErp", "district", "router", "paket", "isolir", "online", "expirasi", "isInactive"];
   const fold = (s) => String(s ?? "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
   const digits = (s) => { let d = String(s ?? "").replace(/\D/g, ""); if (d.startsWith("62")) d = "0" + d.slice(2); return d; };
-  let ldn = { rows: null, at: 0, loading: null, done: 0, pages: 0, error: "" };
+  let ldn = { rows: null, at: 0, loading: null, done: 0, pages: 0, error: "", total: 0 };
 
   const idb = () => new Promise((ok, no) => { const r = indexedDB.open(LDN_DB, 1); r.onupgradeneeded = () => r.result.createObjectStore(LDN_STORE); r.onsuccess = () => ok(r.result); r.onerror = () => no(r.error); });
   async function idbGet() { try { const db = await idb(); return await new Promise((ok) => { const q = db.transaction(LDN_STORE).objectStore(LDN_STORE).get("all"); q.onsuccess = () => ok(q.result); q.onerror = () => ok(null); }); } catch { return null; } }
   async function idbPut(v) { try { const db = await idb(); db.transaction(LDN_STORE, "readwrite").objectStore(LDN_STORE).put(v, "all"); } catch { /* the list just isn't kept */ } }
 
+  // How a word sounds, roughly: old Indonesian spellings made modern (oe→u, dj→j, tj→c, sj→sy, ch→kh, ph→f)
+  // and double letters made single, so WINNA = WINA, WELLY = WELY, SOEMARNO = SUMARNO.
+  const sound = (w) => w.replace(/oe/g, "u").replace(/dj/g, "j").replace(/tj/g, "c").replace(/sj/g, "sy").replace(/ch/g, "kh").replace(/ph/g, "f").replace(/(.)\1+/g, "$1");
+  // Edits between a and b (a letter wrong, missing, extra, or two swapped), giving up past `max`
+  function near(a, b, max) {
+    if (Math.abs(a.length - b.length) > max) return false;
+    let prev2 = null, prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+    for (let i = 1; i <= a.length; i++) {
+      const cur = [i]; let best = i;
+      for (let j = 1; j <= b.length; j++) {
+        let v = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+        if (prev2 && i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) v = Math.min(v, prev2[j - 2] + 1);
+        cur.push(v); if (v < best) best = v;
+      }
+      if (best > max) return false;
+      prev2 = prev; prev = cur;
+    }
+    return prev[b.length] <= max;
+  }
+  // A typed word that's close to the start of a word in the record (so a half-typed word still counts)
+  const fuzzyHit = (w, words, max) => words.some((x) => near(w, x.slice(0, w.length), max) || near(w, x.slice(0, w.length + 1), max) || near(w, x, max));
+
   function indexRows(rows) {
     for (const r of rows) {
       r._name = fold(r.nama);
       r._hay = ` ${r._name} ${fold(r.username)} ${fold(r.address)} ${fold(r.desa)} ${fold(r.kecamatanErp)} ${fold(r.district)} ${fold(r.router)} ${fold(r.paket)} ${digits(r.phone)} `;
+      r._words = [...new Set(r._hay.trim().split(" ").filter((x) => x.length > 1 && !/^\d+$/.test(x)).map(sound))];
+      r._nameWords = [...new Set(r._name.split(" ").map(sound))];
+      r._sound = ` ${r._words.join(" ")} `;
     }
     return rows;
   }
@@ -158,7 +183,7 @@
   async function loadLdn(force = false) {
     if (ldn.loading) return ldn.loading;
     if (!force && ldn.rows && Date.now() - ldn.at < LDN_TTL) return;
-    if (!force && !ldn.rows) { const kept = await idbGet(); if (kept?.rows) { ldn.rows = indexRows(kept.rows); ldn.at = kept.at; drawLdn(); if (Date.now() - kept.at < LDN_TTL) return; } }
+    if (!force && !ldn.rows) { const kept = await idbGet(); if (kept?.rows) { ldn.rows = indexRows(kept.rows); ldn.at = kept.at; ldn.total = kept.total || 0; drawLdn(); if (Date.now() - kept.at < LDN_TTL) return; } }
     if (!ldnAuth) { ldn.error = "Open the Pelanggan list once so the search can sign in"; drawLdn(); return; }
     ldn.loading = (async () => {
       ldn.error = ""; ldn.done = 0;
@@ -171,12 +196,18 @@
       try {
         const first = await page(1);
         ldn.pages = Math.max(1, Math.ceil((first.total || 0) / 500));
-        const out = [...(first.customers || [])], rest = Array.from({ length: ldn.pages - 1 }, (_, i) => i + 2);
+        const out = [], rest = Array.from({ length: ldn.pages - 1 }, (_, i) => i + 2);
         // three at a time, so the server isn't flooded
-        for (let i = 0; i < rest.length; i += 3) for (const j of await Promise.all(rest.slice(i, i + 3).map(page))) out.push(...(j.customers || []));
+        const got = new Map([[1, first.customers || []]]);
+        for (let i = 0; i < rest.length; i += 3) (await Promise.all(rest.slice(i, i + 3).map(async (p) => [p, (await page(p)).customers || []]))).forEach(([p, c]) => got.set(p, c));
+        // a page that came back short (the server was busy) is asked for again, one at a time
+        for (const p of rest) if (got.get(p).length < 500 && p < ldn.pages) got.set(p, (await page(p)).customers || []);
+        if (rest.length && !got.get(ldn.pages).length) got.set(ldn.pages, (await page(ldn.pages)).customers || []);
+        for (const p of [...got.keys()].sort((a, b) => a - b)) out.push(...got.get(p));
+        ldn.total = first.total || out.length;
         const rows = out.map((c) => Object.fromEntries(KEEP.map((k) => [k, c[k]])));
         ldn.rows = indexRows(rows); ldn.at = Date.now();
-        idbPut({ at: ldn.at, rows });
+        idbPut({ at: ldn.at, rows, total: ldn.total });
       } catch (e) { ldn.error = `Couldn't load the list: ${e.message}`; }
       ldn.loading = null; drawLdn();
     })();
@@ -186,13 +217,29 @@
   function searchLdn(q) {
     const words = fold(q).split(" ").filter(Boolean), num = digits(q);
     if (!words.length || !ldn.rows) return [];
-    const out = [];
+    const sounds = words.map(sound);
+    // spelling-tolerant matching needs a real word: 4+ letters, matched at the start of a word in the record
+    const soft = (w) => w.length >= 4;
+    const soundHit = (r, i) => r._sound.includes(" " + sounds[i]);
+    const slack = (w) => (w.length >= 9 ? 2 : w.length >= 5 ? 1 : 0); // letters that may be off: 1 from 5 letters, 2 from 9
+    const out = [], seen = new Set();
     for (const r of ldn.rows) {
-      if (!words.every((w) => r._hay.includes(w)) && !(num.length >= 6 && r._hay.includes(num))) continue;
-      // name starts with what you typed, then every word in the name, then anywhere
-      const score = r._name.startsWith(words.join(" ")) ? 0 : words.every((w) => r._name.includes(w)) ? 1 : 2;
-      out.push([score, r]);
-      if (out.length > 400) break;
+      let score;
+      if (num.length >= 6 && r._hay.includes(num)) score = 0;
+      // exact letters: name starts with what you typed, then every word in the name, then anywhere
+      else if (words.every((w) => r._hay.includes(w))) score = r._name.startsWith(words.join(" ")) ? 0 : words.every((w) => r._name.includes(w)) ? 1 : 2;
+      // spelled another way (winna / wina, soemarno / sumarno)
+      else if (words.every((w, i) => r._hay.includes(w) || (soft(w) && soundHit(r, i)))) score = sounds.every((w) => r._nameWords.some((x) => x.startsWith(w))) ? 3 : 4;
+      else continue;
+      out.push([score, r]); seen.add(r);
+    }
+    // a letter or two off, only when the passes above found few people (it's the slow part)
+    if (out.length < 30) for (const r of ldn.rows) {
+      if (seen.has(r)) continue;
+      const ok = words.every((w, i) => r._hay.includes(w) || (soft(w) && (soundHit(r, i) || (slack(w) && fuzzyHit(sounds[i], r._words, slack(w))))));
+      if (!ok) continue;
+      const inName = words.every((w, i) => r._name.includes(w) || (soft(w) && (r._nameWords.some((x) => x.startsWith(sounds[i])) || (slack(w) && fuzzyHit(sounds[i], r._nameWords, slack(w))))));
+      out.push([inName ? 5 : 6, r]);
     }
     return out.sort((a, b) => a[0] - b[0] || a[1]._name.localeCompare(b[1]._name)).slice(0, 30).map((x) => x[1]);
   }
@@ -263,7 +310,7 @@
     const head = el("div", "head");
     if (ldn.rows) {
       const mins = Math.floor((Date.now() - ldn.at) / 60000);
-      head.append("Fast search ", el("b", null, `${ldnHits.length > 29 ? "30+" : ldnHits.length} of ${ldn.rows.length.toLocaleString("id-ID")}`), ldn.loading ? ` · updating ${ldn.done}/${ldn.pages || "…"}` : ` · ${mins < 1 ? "just updated" : `${mins} min old`}`);
+      head.append("Fast search ", el("b", null, `${ldnHits.length > 29 ? "30+" : ldnHits.length} of ${ldn.rows.length.toLocaleString("id-ID")}${ldn.total > ldn.rows.length ? ` (${(ldn.total - ldn.rows.length).toLocaleString("id-ID")} not loaded)` : ""}`), ldn.loading ? ` · updating ${ldn.done}/${ldn.pages || "…"}` : ` · ${mins < 1 ? "just updated" : `${mins} min old`}`);
       const b = el("button", null, "Update"); b.type = "button"; b.onclick = () => loadLdn(true); head.append(b);
     } else head.append(ldn.error ? ldn.error : `Loading customers ${ldn.done}/${ldn.pages || "…"}`);
     const list = el("ul");
