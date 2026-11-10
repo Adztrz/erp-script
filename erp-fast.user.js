@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.5
+// @version      2.6
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -543,8 +543,8 @@
 
   // ---------- the Dock: a floating button (Alt+K) with customer lookup, pages and tools ----------
   // Everything here reads what this script already keeps in the browser (the LDN customer list, this month's invoices)
-  // and pages you've seen in the sidebar; it never asks the server on its own, except Bulk Lunas when you press its
-  // buttons. "Open in …" goes to the page and fills that page's own search box when it arrives.
+  // and pages you've seen in the sidebar. It asks the server only to pay (when you press the buttons) and for the
+  // outage radar (a 20 KB router feed every 5 minutes, from one ERP tab). "Open in …" goes to the page and fills that page's own search box when it arrives.
   (() => {
     const RECENT = "erpDock.recent", PAGES = "erpDock.pages", PENDING = "erpDock.pending";
     const ls = { get: (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } }, set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
@@ -752,6 +752,30 @@
       .erp-dock .btn.arm { background: var(--green); color: var(--canvas); box-shadow: 0 1px 3px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.35); }
       .erp-dock .btn:disabled { opacity: .45; cursor: default; }
       .erp-dock .bar { height: 2px; border-radius: 2px; background: var(--hair); overflow: hidden; } .erp-dock .bar i { display: block; height: 100%; background: var(--bone); transition: width .3s var(--out); }
+      /* Outage radar */
+      .erp-dock-fab.alert::after { content: ""; position: absolute; top: 7px; right: 7px; width: 9px; height: 9px; border-radius: 50%; background: var(--red);
+        box-shadow: 0 0 0 2px var(--card); animation: erp-dock-ping 1.6s var(--soft) infinite; }
+      @keyframes erp-dock-ping { 50% { box-shadow: 0 0 0 2px var(--card), 0 0 0 7px rgba(241,38,20,0); } 0% { box-shadow: 0 0 0 2px var(--card), 0 0 0 0 rgba(241,38,20,.5); } }
+      .erp-dock .rhead { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 4px; }
+      .erp-dock .rhead .tools { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+      .erp-dock .rhead .btn { height: 28px; font-size: 12px; }
+      .erp-dock .ralert { display: grid; gap: 2px; width: calc(100% - 8px); margin: 6px 4px; padding: 10px 12px; border: 0; border-radius: 8px; text-align: left; cursor: pointer; font: inherit;
+        background: rgba(241,38,20,.08); box-shadow: inset 0 0 0 1px rgba(241,38,20,.45); color: var(--paper); }
+      .erp-dock .ralert.drop { background: rgba(224,178,82,.07); box-shadow: inset 0 0 0 1px rgba(224,178,82,.4); }
+      .erp-dock .ralert b { font-weight: 500; } .erp-dock .ralert span { font-size: 12px; color: var(--body); }
+      .erp-dock .ralert:hover, .erp-dock .ralert[aria-selected="true"] { box-shadow: inset 0 0 0 1px #ff6a5c; }
+      .erp-dock .rok { margin: 6px 4px; padding: 10px 12px; border-radius: 8px; background: rgba(85,188,130,.06); box-shadow: inset 0 0 0 1px rgba(85,188,130,.3); font-size: 13px; color: var(--paper); }
+      .erp-dock .rrow { grid-template-columns: 18px minmax(0, 1fr) 72px 92px; }
+      .erp-dock .rrow canvas, .erp-dock canvas.spark { width: 72px; height: 22px; margin: 0; }
+      .erp-dock .rrow .n { text-align: right; font-size: 13px; color: var(--paper); font-variant-numeric: tabular-nums; }
+      .erp-dock .rrow .n small { display: block; font-size: 11px; color: var(--muted); }
+      .erp-dock .rrow .n small.late { color: #ff6a5c; } .erp-dock .rrow .n small.warn { color: #e0b252; }
+      .erp-dock .dot.drop { background: #e0b252; } .erp-dock .dot.down { background: var(--red); box-shadow: 0 0 0 3px rgba(241,38,20,.18); } .erp-dock .dot.ok { background: var(--green); }
+      .erp-dock .dot.silent { background: transparent; box-shadow: inset 0 0 0 1px var(--muted); }
+      .erp-dock canvas.big { width: 100%; height: 96px; margin: 6px 0 2px; }
+      .erp-dock .ticks { display: flex; justify-content: space-between; font: 11px "JetBrains Mono", ui-monospace, monospace; color: var(--muted); }
+      .erp-dock .desa { grid-template-columns: minmax(0, 1fr) 120px auto; }
+      .erp-dock .meter { height: 4px; border-radius: 2px; background: var(--hair); overflow: hidden; } .erp-dock .meter i { display: block; height: 100%; background: #ff6a5c; }
       @media (max-width: 760px) { .erp-dock .row2 { grid-template-columns: 1fr; } .erp-dock .mrow { min-height: 36px; } }
       @media (max-width: 760px) { .erp-dock .top kbd { display: none; } .erp-dock .shut { width: 40px; height: 40px; } .erp-dock .item { min-height: 44px; } .erp-dock { left: 8px !important; right: 8px !important; width: auto; bottom: 8px !important; top: auto !important; max-height: 80vh; transform-origin: bottom center; } }
       @media (prefers-reduced-motion: reduce) { .erp-dock, .erp-dock *, .erp-dock-fab, .erp-dock-fab * { animation: none !important; transition: none !important; } }`;
@@ -784,7 +808,7 @@
       if (panel) return;
       panel = el("div", "erp-dock"); panel.setAttribute("role", "dialog"); panel.setAttribute("aria-label", "Dock");
       document.body.append(panel); fab.setAttribute("aria-expanded", "true"); place();
-      view = { q: "", sel: 0, card: null, radius: view.radius, mode: bulk && bulk.phase !== "input" ? "bulk" : null }; // a bulk run in progress comes back
+      view = { q: "", sel: 0, card: null, radius: view.radius, mode: bulk && bulk.phase !== "input" ? "bulk" : radar?.alerts.length ? "radar" : null }; // a bulk run in progress comes back; an outage opens on the radar
       draw(); panel.querySelector("input")?.focus();
       await data(); draw();
     }
@@ -1080,6 +1104,206 @@
       if (focus) bulk.el.querySelector(`[data-k="${focus}"]`)?.focus();
     }
 
+    // ---- Outage radar ----
+    // Every 5 minutes one ERP tab reads the LDN panel's router feed (how many sessions each router has open right now,
+    // 20 KB) and keeps 48 hours of it, so each router has its own usual level; well below its last two hours is an
+    // outage, and the Dock button gets a red dot. Opening a router reads the live session list (6 MB, ~1 s) to show
+    // which of its customers are offline, by village and on a map.
+    const RADAR_AT = "erpDock.radarAt", RADAR_EVERY = 5 * 60000, RADAR_KEEP = 48 * 3600000;
+    let radar = null, radarOff = "", radarDrawn = 0, areas = null, live = null, liveLoading = null;
+    const median = (a) => { const x = a.filter((v) => v != null).sort((p, q) => p - q); return x.length ? x[Math.floor(x.length / 2)] : null; };
+    const hhmm = (t) => new Date(t).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
+    async function radarTick(force) {
+      if (radarOff && !force) return;
+      const last = Number(ls.get(RADAR_AT, 0));
+      if (force || Date.now() - last >= RADAR_EVERY) {
+        ls.set(RADAR_AT, Date.now()); // the other tabs wait
+        try {
+          const ov = await api("/api/admin/ldn-radius/panel?view=overview");
+          const hist = (await idbGet("radar")) || { s: [] }, c = {};
+          for (const f of ov.feed || []) c[f.nasname] = Number(f.open) || 0;
+          hist.s = [...hist.s.filter((x) => x.t > Date.now() - RADAR_KEEP), { t: Date.now(), c }];
+          hist.feed = (ov.feed || []).map((f) => ({ ip: f.nasname, name: f.shortname, open: Number(f.open) || 0, healthy: !!f.healthy, newest: f.newest }));
+          hist.at = Date.now(); radarOff = "";
+          await idbPut("radar", hist);
+        } catch (e) {
+          ls.set(RADAR_AT, last);
+          if (/HTTP 40[13]|izin|akses|forbidden/i.test(e.message)) radarOff = "Your account can't read the LDN panel, so the radar can't run.";
+          else if (force) radarOff = e.message;
+        }
+      }
+      const hist = await idbGet("radar");
+      radar = hist ? assess(hist) : null;
+      if (fab) { const a = radar?.alerts ?? []; fab.classList.toggle("alert", a.length > 0); fab.title = a.length ? `Dock (Alt+K): outage on ${a.map((x) => x.name).join(", ")}` : "Dock (Alt+K)"; }
+      if (panel && (view.mode === "radar" || (!view.q.trim() && !view.card && !view.mode)) && radar?.at !== radarDrawn) drawBody();
+    }
+    // each router against its own last two hours (ignoring the latest 20 minutes): down below 30%, a drop from 8 or 10%
+    function assess(hist) {
+      const now = Date.now(), samples = hist.s || [], list = [];
+      for (const f of hist.feed || []) {
+        const vals = samples.map((x) => [x.t, x.c[f.ip]]).filter(([, v]) => v != null);
+        const usual = median(vals.filter(([t]) => t < now - 20 * 60000 && t > now - 120 * 60000).map(([, v]) => v));
+        const cur = f.open, gap = usual == null ? 0 : usual - cur, step = usual == null ? 0 : Math.max(8, usual * 0.1);
+        let level = "ok";
+        if (usual == null) level = cur > 0 ? "learning" : "silent";
+        else if (usual < 5 && cur < 5) level = "silent";
+        else if (cur <= usual * 0.3 || (!f.healthy && usual >= 10)) level = "down";
+        else if (gap >= step) level = "drop";
+        let since = null; // when the dip began
+        if (level === "down" || level === "drop") for (let i = vals.length - 1; i >= 0 && vals[i][1] <= usual - step / 2; i--) since = vals[i][0];
+        list.push({ ...f, usual, gap, level, since, series: vals.filter(([t]) => t > now - 24 * 3600000) });
+      }
+      const rank = { down: 0, drop: 1, learning: 2, ok: 3, silent: 4 };
+      list.sort((a, b) => rank[a.level] - rank[b.level] || b.open - a.open);
+      const alerts = list.filter((x) => x.level === "down" || x.level === "drop"), watched = list.filter((x) => x.level !== "silent");
+      return { at: hist.at, list, alerts, wide: watched.length >= 4 && alerts.length >= watched.length * 0.6, learning: !samples.length || now - samples[0].t < 25 * 60000 };
+    }
+    const nameNorm = (n) => String(n || "").toUpperCase().replace(/^RO[\s-]+/, "").trim();
+    async function areaNames() {
+      if (areas && Date.now() - areas.at < 30 * 60000) return areas;
+      try { const j = await api("/api/admin/ldn-radius/panel?view=area-summary"); areas = { at: Date.now(), rows: j.rows || [] }; } catch { areas = { at: Date.now(), rows: [] }; }
+      return areas;
+    }
+    // the live sessions: who is online right now, on which router, for how long
+    function liveSessions() {
+      if (live && Date.now() - live.at < 2 * 60000) return Promise.resolve(live);
+      return (liveLoading ||= api("/api/admin/ldn-radius/panel?view=online").then((j) => {
+        const by = new Map(); for (const x of j.sessions || []) by.set(String(x.username).toLowerCase(), { ip: x.nasipaddress, up: Number(x.uptimeSec) || 0 });
+        return (live = { at: Date.now(), by });
+      }).finally(() => { liveLoading = null; }));
+    }
+    // the ERP's own row for a feed router: the same name when it's a real one, else the biggest look-alike
+    // (RO ARJOSARI and the old ARJOSARI are different routers; RO-NGADIROJO-E2E is NGADIROJO)
+    function areaOf(name) {
+      const rows = areas?.rows ?? [], n = nameNorm(name), exact = rows.find((r) => r.router === name);
+      if (exact && exact.active >= 50) return exact;
+      const like = rows.filter((r) => r.router && r.router !== "(?)" && (nameNorm(r.router) === n || n.includes(nameNorm(r.router)) || nameNorm(r.router).includes(n)));
+      return like.sort((a, b) => b.active - a.active)[0] || exact || null;
+    }
+    function spark(cv, series, usual, big) {
+      requestAnimationFrame(() => {
+        const dpr = devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight; if (!w || series.length < 2) return;
+        cv.width = w * dpr; cv.height = h * dpr; const g = cv.getContext("2d"); g.scale(dpr, dpr);
+        const vs = series.map(([, v]) => v), max = Math.max(...vs, usual ?? 0, 1) * 1.08, t0 = Date.now() - 24 * 3600000;
+        const X = (t) => ((t - t0) / (24 * 3600000)) * w, Y = (v) => h - 2 - (v / max) * (h - 4);
+        if (usual != null) { g.strokeStyle = "#363738"; g.setLineDash([3, 3]); g.beginPath(); g.moveTo(0, Y(usual)); g.lineTo(w, Y(usual)); g.stroke(); g.setLineDash([]); }
+        g.strokeStyle = "#b3b0af"; g.lineWidth = big ? 1.5 : 1; g.beginPath();
+        series.forEach(([t, v], i) => (i && t - series[i - 1][0] < 20 * 60000 ? g.lineTo(X(t), Y(v)) : g.moveTo(X(t), Y(v)))); g.stroke();
+        const [lt, lv] = series[series.length - 1]; g.fillStyle = lv < (usual ?? 0) * 0.9 ? "#ff6a5c" : "#e9e1dc"; g.beginPath(); g.arc(X(lt), Y(lv), big ? 3 : 2, 0, Math.PI * 2); g.fill();
+      });
+    }
+    function radarView() {
+      if (view.nas) return [routerView(view.nas)];
+      const out = [], head = el("div", "rhead"), e = el("div", "eyebrow"); e.style.margin = "10px 6px 6px"; e.append("Outage radar");
+      const tools = el("div", "tools"), again = el("button", "btn", "Check now"); again.type = "button";
+      again.onclick = async () => { again.disabled = true; again.textContent = "Checking…"; await radarTick(true); drawBody(); };
+      tools.append(radar?.at ? `checked ${ago(radar.at)}` : "", again); head.append(e, tools); out.push(head);
+      if (radarOff) { out.push(el("p", "note late", radarOff)); if (!radar) return out; }
+      if (!radar) { out.push(el("p", "note", "Reading the routers…")); radarTick(true); return out; }
+      radarDrawn = radar.at;
+      const said = (x) => `${x.open} online · usually ${x.usual}${x.since ? ` · since ${hhmm(x.since)}` : ""}`;
+      if (radar.wide) out.push(el("div", "ralert", "Most routers dropped at once: more likely the central link or the RADIUS server than one area."));
+      for (const x of radar.alerts) {
+        const b = el("button", `ralert item${x.level === "drop" ? " drop" : ""}`); b.type = "button";
+        b.append(el("b", null, `${x.name}: ${x.level === "down" ? "down" : `${x.gap} fewer online`}`), el("span", null, x.healthy ? said(x) : `${said(x)} · its session feed has stopped`));
+        b.onclick = () => { view.nas = x.ip; drawBody(); }; out.push(b);
+      }
+      if (!radar.alerts.length && !radar.learning) out.push(el("div", "rok", `All ${radar.list.filter((x) => x.level !== "silent").length} routers at their usual level.`));
+      if (radar.learning) out.push(el("p", "note", "Learning each router's usual level from a reading every 5 minutes while an ERP tab is open. Alerts start after about 25 minutes; the lines fill in over a day."));
+      const e2 = el("div", "eyebrow"); e2.append("Routers"); out.push(e2);
+      radar.list.forEach((x, i) => {
+        const b = el("button", "item rrow rise"); b.type = "button"; b.style.setProperty("--i", String(Math.min(i, 14)));
+        const area = areaOf(x.name);
+        const cv = el("canvas"); cv.setAttribute("aria-hidden", "true");
+        const n = el("span", "n"); n.append(String(x.open));
+        const dark = x.level === "silent" && (area?.active ?? 0) >= 20; // nothing reported, yet customers on file: the feed or the router
+        n.append(el("small", x.level === "down" ? "late" : x.level === "drop" || dark ? "warn" : null, dark ? "no sessions: check" : x.level === "silent" ? "no sessions" : x.usual == null ? "learning" : x.gap > 0 ? `−${x.gap} vs ${x.usual}` : `usual ${x.usual}`));
+        b.append(el("span", `dot ${x.level === "learning" ? "" : x.level}`), el("span", "t", x.name), cv, n, el("span", "s", [area?.district, area ? `${area.active} active customers` : ""].filter(Boolean).join(" · ") || " "));
+        b.onclick = () => { view.nas = x.ip; drawBody(); };
+        out.push(b); spark(cv, x.series, x.usual);
+      });
+      if (!areas) areaNames().then(() => view.mode === "radar" && !view.nas && drawBody());
+      return out;
+    }
+    function routerView(ip) {
+      const x = radar?.list.find((r) => r.ip === ip), wrap = el("div", "card");
+      const back = el("button", "back", "← All routers"); back.type = "button"; back.onclick = () => { view.nas = null; view.desa = null; drawBody(); };
+      wrap.append(back);
+      if (!x) { wrap.append(el("p", "note", "This router isn't in the feed any more.")); return wrap; }
+      const who = el("div", "who rise"), pill = el("span", "pill");
+      pill.append(el("span", `dot ${x.level}`), { down: "Down", drop: "Dropping", ok: "Normal", learning: "Learning", silent: "No sessions" }[x.level]);
+      who.append(el("h3", null, x.name), pill); wrap.append(who);
+      const stats = el("div", "stats rise"); stats.style.cssText = "margin-top:12px;padding:0"; stats.style.setProperty("--i", "1");
+      const stat = (v, l, cls = "") => { const d = el("div", `stat ${cls}`); d.append(el("b", null, String(v)), el("span", null, l)); stats.append(d); return d; };
+      stat(x.open, "online now", x.level === "down" || x.level === "drop" ? "iso" : "on"); stat(x.usual ?? "–", "usually"); const back15 = stat("…", "reconnected ≤15 min");
+      wrap.append(stats);
+      const chart = el("div", "near rise"); chart.style.setProperty("--i", "2");
+      const cv = el("canvas", "big"); cv.setAttribute("aria-label", `${x.name} sessions over the last 24 hours`);
+      const ticks = el("div", "ticks"); for (const hAgo of [24, 18, 12, 6, 0]) ticks.append(el("span", null, hAgo ? hhmm(Date.now() - hAgo * 3600000) : "now"));
+      chart.append(el("div", "sub", `Sessions, last 24 hours${x.usual != null ? " · dashed: usual level" : ""}${x.since ? ` · dropping since ${hhmm(x.since)}` : ""}`), cv, ticks);
+      wrap.append(chart); spark(cv, x.series, x.usual, true);
+      const who2 = el("div", "near rise"); who2.style.setProperty("--i", "3"); wrap.append(who2);
+      if (!customers) { who2.append(el("p", "note", "To see who's offline, open LDN Radius → Pelanggan once so the customer list is kept here.")); return wrap; }
+      who2.append(el("p", "note", "Reading the live sessions…"));
+      liveSessions().then((lv) => { if (view.nas === ip && who2.isConnected) offlineView(who2, back15, ip, lv); }).catch((e) => { who2.replaceChildren(el("p", "note late", e.message)); });
+      return wrap;
+    }
+    // which customers belong to this router: online ones by their session, offline ones by their LDN router name
+    // (each name goes to the router most of its online customers are on)
+    function offlineView(box, back15, ip, lv) {
+      const votes = {};
+      for (const c of customers) { const s = lv.by.get(String(c.username).toLowerCase()); if (s) { const v = (votes[c.router] ||= {}); v[s.ip] = (v[s.ip] || 0) + 1; } }
+      const home = {}; for (const [r, v] of Object.entries(votes)) home[r] = Object.entries(v).sort((a, b) => b[1] - a[1])[0][0];
+      const mine = [], off = []; let fresh = 0;
+      for (const c of customers) {
+        if (c.isolir || c.isInactive) continue;
+        const s = lv.by.get(String(c.username).toLowerCase());
+        if (s ? s.ip === ip : home[c.router] === ip) { mine.push(c); if (!s) off.push(c); else if (s.up < 900) fresh++; }
+      }
+      back15.querySelector("b").textContent = String(fresh);
+      const parts = [];
+      const e = el("div", "eyebrow"); e.style.margin = "0 0 8px"; e.append(`Offline now `, el("b", null, `${off.length} of ${mine.length} active customers`)); parts.push(e);
+      if (fresh >= 10) parts.push(el("p", "note good", `${fresh} customers reconnected in the last 15 minutes: the line is coming back.`));
+      // a map: online faint green, offline red
+      const pts = mine.map((c) => ({ c, p: where(c), on: !off.includes(c) })).filter((z) => z.p);
+      if (pts.length > 5) { const cv = el("canvas"); cv.style.height = "200px"; cv.setAttribute("aria-label", `${off.length} offline customers on a map of ${x_name(ip)}`); parts.push(cv); requestAnimationFrame(() => fitPlot(cv, pts)); }
+      // villages, most offline first
+      const by = new Map(); for (const c of mine) { const d = c.desa || "No village"; const g = by.get(d) || { all: 0, off: [] }; g.all++; if (off.includes(c)) g.off.push(c); by.set(d, g); }
+      const rows = [...by].filter(([, g]) => g.off.length).sort((a, b) => b[1].off.length - a[1].off.length || b[1].off.length / b[1].all - a[1].off.length / a[1].all);
+      if (!rows.length) parts.push(el("p", "note", "Everyone on this router is online."));
+      rows.slice(0, 15).forEach(([d, g], i) => {
+        const b = el("button", "item desa rise"); b.type = "button"; b.style.setProperty("--i", String(i));
+        const m = el("span", "meter"), fill = el("i"); fill.style.width = `${Math.round((g.off.length / g.all) * 100)}%`; m.append(fill);
+        b.append(el("span", "t", d), m, el("span", "r", `${g.off.length} / ${g.all}`));
+        b.onclick = () => { view.desa = view.desa === d ? null : d; offlineView(box, back15, ip, lv); };
+        parts.push(b);
+        if (view.desa === d) parts.push(...g.off.slice(0, 40).map((c, j) => custItem(c, j)));
+      });
+      box.replaceChildren(...parts);
+      items = [...panel.querySelectorAll(".scroll .item, .scroll .tile")];
+    }
+    const x_name = (ip) => radar?.list.find((r) => r.ip === ip)?.name || "this router";
+    // fit the dots to their own bounds (ignoring the farthest 2% each way)
+    function fitPlot(cv, pts) {
+      const dpr = devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight; if (!w) return;
+      cv.width = w * dpr; cv.height = h * dpr; const g = cv.getContext("2d"); g.scale(dpr, dpr);
+      const q = (a, f) => a[Math.min(a.length - 1, Math.max(0, Math.floor(a.length * f)))];
+      const la = pts.map((z) => z.p.lat).sort((a, b) => a - b), lo = pts.map((z) => z.p.lng).sort((a, b) => a - b);
+      const [y0, y1, x0, x1] = [q(la, 0.02), q(la, 0.98), q(lo, 0.02), q(lo, 0.98)], kx = Math.cos(((y0 + y1) / 2) * Math.PI / 180);
+      const sx = (x1 - x0) * kx || 1e-4, sy = y1 - y0 || 1e-4, sc = Math.min((w - 16) / sx, (h - 16) / sy), ox = (w - sx * sc) / 2, oy = (h - sy * sc) / 2;
+      const P = (p) => [ox + (p.lng - x0) * kx * sc, h - oy - (p.lat - y0) * sc];
+      g.fillStyle = "rgba(85,188,130,.45)"; for (const z of pts) if (z.on) { const [x, y] = P(z.p); g.fillRect(x - 1, y - 1, 2, 2); }
+      g.fillStyle = "#ff4a3a"; for (const z of pts) if (!z.on) { const [x, y] = P(z.p); g.beginPath(); g.arc(x, y, 2.6, 0, Math.PI * 2); g.fill(); }
+    }
+    function radarItem(i) {
+      const b = el("button", "item rise"); b.type = "button"; b.style.setProperty("--i", String(i));
+      const a = radar?.alerts ?? [];
+      b.append(el("span", `dot ${a.some((x) => x.level === "down") ? "down" : a.length ? "drop" : radar && !radar.learning ? "ok" : ""}`), el("span", "t", "Outage radar"),
+        el("span", "r", a.length ? `${a.length} alert${a.length > 1 ? "s" : ""}` : radar?.learning ? "learning" : radar ? "all normal" : ""),
+        el("span", "s", a.length ? a.map((x) => `${x.name} ${x.level === "down" ? "down" : `−${x.gap}`}`).join(" · ") : "Routers against their usual level; who's offline, by village and on a map"));
+      b.onclick = () => { view.mode = "radar"; view.nas = null; view.card = null; drawBody(); }; return b;
+    }
+
     function draw() {
       if (!panel) return;
       const top = el("div", "top"), input = el("input"); input.placeholder = "Customer, page or tool…"; input.value = view.q; input.setAttribute("aria-label", "Search the Dock");
@@ -1101,6 +1325,7 @@
       panel.classList.toggle("wide", view.mode === "bulk");
       if (view.mode === "bulk") { parts.push(bulkView()); body.replaceChildren(...parts); items = []; return bulkDraw(); }
       if (view.card) parts.push(cardView(view.card));
+      else if (view.mode === "radar") parts.push(...radarView());
       else if (!view.q.trim()) parts.push(...homeView());
       else parts.push(...resultsView(view.q));
       body.replaceChildren(...parts);
@@ -1120,7 +1345,7 @@
       const g = el("div", "grid");
       SHORTCUTS.forEach(([label, path, icon], i) => { const t = el("button", "tile rise"); t.type = "button"; t.style.setProperty("--i", String(i)); t.append(svg(icon), label); t.onclick = () => go(path); g.append(t); });
       out.push(g);
-      const e4 = el("div", "eyebrow"); e4.append("Tools"); out.push(e4, toolItem(0));
+      const e4 = el("div", "eyebrow"); e4.append("Tools"); out.push(e4, radarItem(0), toolItem(1));
       const recent = ls.get(RECENT, []).map((u) => customers?.find((r) => r.username === u)).filter(Boolean);
       if (recent.length) { const e3 = el("div", "eyebrow"); e3.append("Recent customers"); out.push(e3, ...recent.slice(0, 5).map(custItem)); }
       if (!customers) out.push(el("p", "note", "To look customers up here, open LDN Radius → Pelanggan once: its fast search keeps the list in this browser."));
@@ -1130,9 +1355,9 @@
       const out = [], cs = findCustomers(q), ps = findPages(q);
       if (cs.length) { const e = el("div", "eyebrow"); e.append("Customers"); out.push(e, ...cs.map(custItem)); }
       if (ps.length) { const e = el("div", "eyebrow"); e.append("Pages"); out.push(e, ...ps.map(pageItem)); }
-      const tool = /^(bul|lun|bay|tan|pay|mas|mar)/.test(fold(q));
-      if (tool) { const e = el("div", "eyebrow"); e.append("Tools"); out.push(e, toolItem(0)); }
-      if (!cs.length && !ps.length && !tool) out.push(el("p", "note", customers ? "Nothing matches all of those words." : "No customer list yet: open LDN Radius → Pelanggan once."));
+      const tool = /^(bul|lun|bay|tan|pay|mas|mar)/.test(fold(q)), net = /^(rad|out|gan|mat|rou|off|jar|dow|put)/.test(fold(q));
+      if (tool || net) { const e = el("div", "eyebrow"); e.append("Tools"); out.push(e); if (net) out.push(radarItem(0)); if (tool) out.push(toolItem(1)); }
+      if (!cs.length && !ps.length && !tool && !net) out.push(el("p", "note", customers ? "Nothing matches all of those words." : "No customer list yet: open LDN Radius → Pelanggan once."));
       return out;
     }
     function cardView(r) {
@@ -1200,10 +1425,10 @@
       if (!panel || !panel.contains(document.activeElement) && document.activeElement !== document.body) return;
       // typing anywhere in the open Dock goes to its search box, no click needed
       if (view.mode !== "bulk" && /^\S$/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName ?? "") && !document.activeElement?.isContentEditable) {
-        if (view.card) { view.card = null; drawBody(); }
+        if (view.card || view.mode) { view.card = null; view.mode = null; drawBody(); }
         panel.querySelector("input")?.focus(); return; // the key then lands in the box
       }
-      if (e.key === "Escape") { e.preventDefault(); if (view.mode === "bulk" && bulk?.phase !== "paying") { view.mode = null; drawBody(); panel.querySelector("input")?.focus(); } else if (view.card) { view.card = null; drawBody(); panel.querySelector("input")?.focus(); } else { close(); fab?.focus(); } }
+      if (e.key === "Escape") { e.preventDefault(); if (view.mode === "bulk" && bulk?.phase !== "paying") { view.mode = null; drawBody(); panel.querySelector("input")?.focus(); } else if (view.mode === "radar" && !view.card) { if (view.nas) view.nas = null; else view.mode = null; drawBody(); panel.querySelector("input")?.focus(); } else if (view.card) { view.card = null; drawBody(); panel.querySelector("input")?.focus(); } else { close(); fab?.focus(); } }
       else if (/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement?.tagName ?? "") && document.activeElement !== panel.querySelector(".top input")) return; // a form field in the Dock keeps its keys
       else if ((e.key === "ArrowDown" || e.key === "ArrowUp") && items.length) { e.preventDefault(); view.sel = (view.sel + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
         items.forEach((x, i) => x.setAttribute("aria-selected", String(i === view.sel))); items[view.sel].scrollIntoView({ block: "nearest" }); }
@@ -1218,6 +1443,7 @@
     addEventListener("popstate", () => setTimeout(tick, 300));
     if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", () => setTimeout(tick, 600)); else setTimeout(tick, 600);
     setInterval(() => { if (document.visibilityState === "visible") { mount(); place(); learn(); } }, 5000);
+    setTimeout(() => radarTick(), 8000); setInterval(() => radarTick(), 60000);
   })();
 
   // ---------- one idle clock for all ERP tabs ----------
