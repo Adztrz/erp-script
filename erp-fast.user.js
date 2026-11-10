@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.0
+// @version      2.1
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -784,8 +784,10 @@
       top.append(svg(ICON.search), input, el("kbd", null, "Esc"), shut);
       const body = el("div", "scroll"), foot = el("div", "foot");
       foot.append(el("span", null, customers ? `${customers.length.toLocaleString("id-ID")} customers · ${ago(custAt)}` : "Customer list: open LDN → Pelanggan once"), el("span", null, invoices ? `Invoices ${MONTHS_ID[Number(invKey.split("-")[2]) - 1]} kept` : "Invoices: open Invoices once"));
+      const was = document.activeElement, keep = was === document.body || !was || panel.contains(was); // focus was in the Dock: the new box takes it
       panel.replaceChildren(top, body, foot);
       drawBody();
+      if (keep) { input.focus(); input.setSelectionRange(input.value.length, input.value.length); }
     }
     function drawBody() {
       const body = panel?.querySelector(".scroll"); if (!body) return;
@@ -887,6 +889,11 @@
     document.addEventListener("keydown", (e) => {
       if (e.altKey && !e.ctrlKey && !e.metaKey && e.key.toLowerCase() === "k") { e.preventDefault(); panel ? close() : open(); return; }
       if (!panel || !panel.contains(document.activeElement) && document.activeElement !== document.body) return;
+      // typing anywhere in the open Dock goes to its search box, no click needed
+      if (/^\S$/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName ?? "") && !document.activeElement?.isContentEditable) {
+        if (view.card) { view.card = null; drawBody(); }
+        panel.querySelector("input")?.focus(); return; // the key then lands in the box
+      }
       if (e.key === "Escape") { e.preventDefault(); if (view.card) { view.card = null; drawBody(); panel.querySelector("input")?.focus(); } else { close(); fab?.focus(); } }
       else if ((e.key === "ArrowDown" || e.key === "ArrowUp") && items.length) { e.preventDefault(); view.sel = (view.sel + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
         items.forEach((x, i) => x.setAttribute("aria-selected", String(i === view.sel))); items[view.sel].scrollIntoView({ block: "nearest" }); }
