@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.16
+// @version      2.17
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -741,6 +741,9 @@
       .erp-dock .map .zoom { position: absolute; top: 8px; right: 8px; z-index: 4; display: grid; gap: 4px; }
       .erp-dock .map .zoom button { width: 28px; height: 28px; border: 0; border-radius: 6px; background: rgba(9,11,12,.88); color: var(--paper); font: 500 16px/1 Inter, system-ui, sans-serif; cursor: pointer; box-shadow: inset 0 0 0 1px var(--edge); }
       .erp-dock .map .zoom button:hover { box-shadow: inset 0 0 0 1px #696a68; } .erp-dock .map .zoom button:disabled { opacity: .4; cursor: default; }
+      .erp-dock.erp-dock-full { inset: 0; width: auto; max-height: none; border-radius: 0; box-shadow: none; z-index: 2147483003; animation: erp-dock-open .25s var(--out) both; }
+      .erp-dock-full .map.full { position: absolute; inset: 0; height: auto; margin: 0; border-radius: 0; }
+      .erp-dock .map.full .mdot { width: 13px; height: 13px; margin: -6.5px 0 0 -6.5px; }
       .erp-dock .map .attr { position: absolute; left: 6px; bottom: 4px; font-size: 10px; color: rgba(255,255,255,.75); text-shadow: 0 1px 2px #000; pointer-events: none; }
       .erp-dock .counts { display: flex; gap: 12px; font-size: 13px; } .erp-dock .counts b { color: var(--paper); font-weight: 500; }
       .erp-dock .rise { animation: erp-dock-rise .45s var(--soft) both; animation-delay: calc(var(--i, 0) * 30ms); }
@@ -848,7 +851,7 @@
     }
     function close() {
       const p = panel; if (!p) return;
-      panel = null; fab?.setAttribute("aria-expanded", "false");
+      panel = null; fab?.setAttribute("aria-expanded", "false"); dropFull();
       if (calm()) p.remove(); else { p.classList.add("out"); setTimeout(() => p.remove(), 170); }
     }
     const remember = (r) => { const list = ls.get(RECENT, []).filter((u) => u !== r.username); list.unshift(r.username); ls.set(RECENT, list.slice(0, 8)); };
@@ -1605,6 +1608,7 @@
     }
     function drawBody() {
       const body = panel?.querySelector(".scroll"); if (!body) return;
+      dropFull();
       items = []; const parts = [];
       panel.classList.toggle("wide", view.mode === "bulk");
       if (view.mode === "bulk") { parts.push(bulkView()); body.replaceChildren(...parts); items = []; return bulkDraw(); }
@@ -1730,6 +1734,7 @@
         tip.hidden = !on; if (on) { tip.textContent = `${x.r.nama || x.r.username} · ${Math.round(x.d)} m`; tip.style.left = d.style.left; tip.style.top = d.style.top; tip.classList.toggle("low", parseFloat(d.style.top) < 34); }
       }
       box.hl = hl;
+      box.redraw = () => tileMap(box, r, n, radius, rows); // after going full screen and back
       box.pon = (set) => { box.ponSet = set; dots.forEach((d, i) => d.classList.toggle("pon", set.has(n.list[i].r.username))); };
       if (box.ponSet) box.pon(box.ponSet);
       const base = el("div", "seg basemap");
@@ -1737,6 +1742,8 @@
         b.onclick = () => { ls.set(BASEMAP, k); tileMap(box, r, n, radius, rows); }; base.append(b); }
       const me = el("span", "mdot me"); me.style.left = `${w / 2}px`; me.style.top = `${h / 2}px`;
       const zoom = el("div", "zoom");
+      const full = box.classList.contains("full"), fs = el("button", null, full ? "⤡" : "⤢"); fs.type = "button"; fs.title = full ? "Back (F or Esc)" : "Full screen (F)";
+      fs.setAttribute("aria-label", full ? "Leave full screen" : "Full screen"); fs.onclick = () => toggleFull(box); zoom.append(fs);
       for (const [t, dz, label] of [["+", 1, "Zoom in"], ["−", -1, "Zoom out"]]) { const b = el("button", null, t); b.type = "button"; b.setAttribute("aria-label", label);
         b.disabled = (dz > 0 && z >= T.max) || (dz < 0 && z <= 12); b.onclick = () => { view.zoom = (view.zoom || 0) + dz; tileMap(box, r, n, radius, rows); }; zoom.append(b); }
       box.classList.toggle("sat", kind === "sat"); box.classList.toggle("carto", !!carto);
@@ -1744,6 +1751,18 @@
     }
     // the customers on the same OLT PON port: when many of them are down together it's the line (PON, splitter, ODP),
     // not one house. Statuses come from the OLTs' cached ONT lists (kept 2 hours).
+    // F over the map (or its ⤢ button) fills the window with it, F or Esc puts it back; the tiles are drawn again
+    // for the new size. A window-filling layer rather than the browser's full screen, so it works in every browser.
+    // (the map moves into a layer of its own on the page: inside the Dock, the Dock's animation would box it in)
+    const fullMap = () => document.querySelector(".erp-dock-full .map");
+    const dropFull = () => document.querySelector(".erp-dock-full")?.remove();
+    function toggleFull(box) {
+      if (!box) return;
+      const layer = document.querySelector(".erp-dock-full");
+      if (layer) { box.classList.remove("full"); box.fullHome?.replaceWith(box); layer.remove(); }
+      else { const spot = el("span"); box.fullHome = spot; box.replaceWith(spot); const l = el("div", "erp-dock erp-dock-full"); box.classList.add("full"); l.append(box); document.body.append(l); }
+      box.redraw?.();
+    }
     // paste your CARTO key once; it stays in this browser's storage and goes only to CARTO's tile server
     function cartoKeyRow(redraw) {
       const row = el("div", "keyrow"), key = ls.get(CARTO_KEY, "");
@@ -1790,6 +1809,10 @@
     document.addEventListener("keydown", (e) => {
       if (e.altKey && !e.ctrlKey && !e.metaKey && e.key.toLowerCase() === "k") { e.preventDefault(); panel ? close() : open(); return; }
       if (!panel || !panel.contains(document.activeElement) && document.activeElement !== document.body) return;
+      // F over the map: full screen (the search box always has focus, so over the map F wins over typing)
+      if ((e.key === "f" || e.key === "F") && !e.ctrlKey && !e.metaKey && !e.altKey && (panel.querySelector(".map:hover") || fullMap())
+        && (document.activeElement === panel.querySelector(".top input") || !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName ?? ""))) { e.preventDefault(); e.stopPropagation(); toggleFull(fullMap() || panel.querySelector(".map:hover")); return; }
+      if (e.key === "Escape" && fullMap()) { e.preventDefault(); e.stopPropagation(); toggleFull(fullMap()); return; }
       // typing anywhere in the open Dock goes to its search box, no click needed
       if (view.mode !== "bulk" && /^\S$/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName ?? "") && !document.activeElement?.isContentEditable) {
         if (view.card || view.mode || view.modem) { view.card = null; view.mode = null; view.modem = null; drawBody(); }
@@ -1801,7 +1824,7 @@
         items.forEach((x, i) => x.setAttribute("aria-selected", String(i === view.sel))); items[view.sel].scrollIntoView({ block: "nearest" }); }
       else if (e.key === "Enter" && document.activeElement?.tagName === "INPUT" && items[view.sel]) { e.preventDefault(); items[view.sel].click(); }
     }, true);
-    document.addEventListener("pointerdown", (e) => { if (panel && !panel.contains(e.target) && !fab.contains(e.target)) close(); }, true);
+    document.addEventListener("pointerdown", (e) => { if (panel && !panel.contains(e.target) && !fab.contains(e.target) && !e.target.closest?.(".erp-dock-full")) close(); }, true);
     addEventListener("resize", place);
     addEventListener("erp-fast-saved", () => { if (panel) data().then(drawBody); }); // a fresher list was just saved
 
