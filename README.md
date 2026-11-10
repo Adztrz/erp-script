@@ -14,6 +14,18 @@ The page searches and filters only what it has loaded, so for an older work orde
 
 The bar follows the Faust design (Night Ledger: near-black card, bone dot label, graphite segments, blue focus ring). The fast search moves the Faust way too: the box unfolds with a slight un-blur, its label types itself in with a faint blinking cursor, new results rise in one after another (ones that stay don't move), the selection slides between rows, a bone progress line with a light sweep shows loading, and the box folds away on close. All of it is off under the system's reduced-motion setting.
 
+## The Dock
+
+A floating button above the site's own corner button (or **Alt+K**, anywhere in the ERP) opens one search box for customers, pages and tools:
+
+- **Customers**: from the LDN customer list this script keeps (spelling-tolerant, any word order). Each customer opens a card with status (online / offline / isolir), username, phone (copy or WhatsApp), address, area, plan, router, IP, active since, expiry, ONT serial, and this month's invoice from the kept invoices.
+- **Open in …**: LDN Radius (on the Pelanggan tab), Invoices, Map Terpadu or Master Pelanggan, with that page's own search filled in when it arrives; Google Maps from the customer's location.
+- **Nearby**: everyone within 100 m, 300 m or 1 km of the customer, counted online / offline / isolir, on a small dot map, nearest first. For checking an area when someone reports an outage.
+- **Pages**: any ERP page by name, learned from the sidebar as you browse.
+- **Home**: customers, online and isolir counts from the kept list, shortcuts, and your recent customers.
+
+It never asks the server on its own: it reads what's kept in this browser. Open LDN Radius → Pelanggan once to fill the customer list (the first time takes about 2 minutes), and Invoices once for invoices.
+
 ## Install
 
 1. Install [Tampermonkey](https://www.tampermonkey.net/).
