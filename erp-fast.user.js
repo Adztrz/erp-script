@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.12
+// @version      2.13
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -718,6 +718,23 @@
       .erp-dock .near { margin: 4px; padding: 12px; border-radius: 8px; background: var(--canvas); box-shadow: inset 0 0 0 1px var(--hair); }
       .erp-dock .near .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
       .erp-dock canvas { display: block; width: 100%; height: 170px; margin: 10px 0 6px; }
+      .erp-dock .map { position: relative; height: 240px; margin: 10px 0 6px; border-radius: 8px; overflow: hidden; background: #0f1214; box-shadow: inset 0 0 0 1px var(--hair); }
+      .erp-dock .map .tiles img { position: absolute; width: 256px; height: 256px; max-width: none; filter: brightness(.8) saturate(.9); pointer-events: none; user-select: none; }
+      .erp-dock .map .ring { position: absolute; border-radius: 50%; box-shadow: inset 0 0 0 1.5px rgba(233,225,220,.7); pointer-events: none; }
+      .erp-dock .map .ring.half { box-shadow: none; border: 1px dashed rgba(233,225,220,.45); }
+      .erp-dock .mdot { position: absolute; width: 11px; height: 11px; margin: -5.5px 0 0 -5.5px; padding: 0; border: 1.5px solid rgba(7,9,11,.9); border-radius: 50%; background: var(--green); cursor: pointer;
+        transition: transform .12s var(--out), box-shadow .12s; animation: erp-dock-pop .35s var(--out) backwards; animation-delay: var(--d, 0ms); }
+      .erp-dock .mdot.off { background: #a3a4a3; } .erp-dock .mdot.iso { background: var(--red); }
+      .erp-dock .mdot:hover, .erp-dock .mdot.hl { transform: scale(1.6); z-index: 2; box-shadow: 0 0 0 3px rgba(233,225,220,.75); }
+      .erp-dock .mdot.me { width: 15px; height: 15px; margin: -7.5px 0 0 -7.5px; background: var(--bone); border: 2.5px solid var(--canvas); box-shadow: 0 0 0 2px var(--bone); pointer-events: none; animation: none; z-index: 1; }
+      @keyframes erp-dock-pop { from { transform: scale(0); opacity: 0; } }
+      .erp-dock .map .tip { position: absolute; z-index: 3; transform: translate(-50%, calc(-100% - 12px)); max-width: 80%; padding: 4px 8px; border-radius: 6px; background: var(--card);
+        color: var(--paper); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; box-shadow: inset 0 0 0 1px var(--edge), 0 4px 10px rgba(0,0,0,.4); }
+      .erp-dock .map .tip.low { transform: translate(-50%, 14px); }
+      .erp-dock .map .zoom { position: absolute; top: 8px; right: 8px; z-index: 4; display: grid; gap: 4px; }
+      .erp-dock .map .zoom button { width: 28px; height: 28px; border: 0; border-radius: 6px; background: rgba(9,11,12,.88); color: var(--paper); font: 500 16px/1 Inter, system-ui, sans-serif; cursor: pointer; box-shadow: inset 0 0 0 1px var(--edge); }
+      .erp-dock .map .zoom button:hover { box-shadow: inset 0 0 0 1px #696a68; } .erp-dock .map .zoom button:disabled { opacity: .4; cursor: default; }
+      .erp-dock .map .attr { position: absolute; left: 6px; bottom: 4px; font-size: 10px; color: rgba(255,255,255,.75); text-shadow: 0 1px 2px #000; pointer-events: none; }
       .erp-dock .counts { display: flex; gap: 12px; font-size: 13px; } .erp-dock .counts b { color: var(--paper); font-weight: 500; }
       .erp-dock .rise { animation: erp-dock-rise .45s var(--soft) both; animation-delay: calc(var(--i, 0) * 30ms); }
       @keyframes erp-dock-rise { from { opacity: 0; transform: translateY(8px); filter: blur(2px); } }
@@ -1652,37 +1669,57 @@
     function nearView(r) {
       const box = el("div", "near rise"); box.style.setProperty("--i", "3");
       const head = el("div", "row"), e = el("div", "eyebrow"); e.style.margin = "0"; e.append("Nearby");
-      const seg = el("div", "seg"); for (const m of [100, 300, 1000]) { const b = el("button", null, m < 1000 ? `${m} m` : "1 km"); b.type = "button"; b.setAttribute("aria-pressed", String(view.radius === m)); b.onclick = () => { view.radius = m; drawBody(); }; seg.append(b); }
+      const seg = el("div", "seg"); for (const m of [100, 300, 1000]) { const b = el("button", null, m < 1000 ? `${m} m` : "1 km"); b.type = "button"; b.setAttribute("aria-pressed", String(view.radius === m)); b.onclick = () => { view.radius = m; view.zoom = 0; drawBody(); }; seg.append(b); }
       head.append(e, seg); box.append(head);
       const n = nearby(r, view.radius);
       if (!n) { box.append(el("p", "note", customers && !("lat" in r) ? "Locations arrive with the next refresh of the customer list (LDN → Pelanggan → Update)." : "This customer has no location saved.")); return box; }
       const cnt = { on: 0, off: 0, iso: 0 }; n.list.forEach((x) => cnt[state(x.r)]++);
       const counts = el("div", "counts"); counts.style.marginTop = "10px";
       for (const [key, label] of [["on", "online"], ["off", "offline"], ["iso", "isolir"]]) { const s = el("span"); s.append(el("b", null, String(cnt[key])), ` ${label}`); counts.append(s); }
-      const cv = el("canvas"); cv.setAttribute("aria-label", `${n.list.length} customers within ${view.radius} metres`);
-      box.append(counts, cv);
-      requestAnimationFrame(() => plot(cv, n, view.radius));
-      for (const [i, x] of n.list.slice(0, 8).entries()) { const it = custItem(x.r, i); it.querySelector(".r").textContent = `${Math.round(x.d)} m`; box.append(it); }
+      const map = el("div", "map"); map.setAttribute("role", "group"); map.setAttribute("aria-label", `Map of ${n.list.length} customers within ${view.radius} metres`);
+      box.append(counts, map);
+      const rows = [];
+      for (const [i, x] of n.list.slice(0, 8).entries()) { const it = custItem(x.r, i); it.querySelector(".r").textContent = `${Math.round(x.d)} m`;
+        it.addEventListener("mouseenter", () => map.hl?.(i, true)); it.addEventListener("mouseleave", () => map.hl?.(i, false)); rows.push(it); box.append(it); }
+      setTimeout(() => tileMap(map, r, n, view.radius, rows), 0); // once the card is on the page (a frame may not come while the tab is hidden)
       if (n.list.length > 8) box.append(el("p", "note", `and ${n.list.length - 8} more within ${view.radius < 1000 ? `${view.radius} m` : "1 km"}`));
       return box;
     }
-    // a small dot map: this customer in the middle, neighbours by status, rings at half and full radius; dots arrive outward
-    function plot(cv, n, radius) {
-      const dpr = devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight; if (!w) return;
-      cv.width = w * dpr; cv.height = h * dpr; const g = cv.getContext("2d"); g.scale(dpr, dpr);
-      const cx = w / 2, cy = h / 2, R = Math.min(w, h) / 2 - 8, kx = Math.cos(n.c.lat * Math.PI / 180);
-      const pts = n.list.map((x) => ({ x: cx + ((x.p.lng - n.c.lng) * 111000 * kx / radius) * R, y: cy - ((x.p.lat - n.c.lat) * 111000 / radius) * R, s: state(x.r), d: x.d }));
-      const col = { on: "#55bc82", off: "#6d6f6f", iso: "#f12614" }, t0 = performance.now(), still = calm();
-      const frame = (t) => {
-        const k = still ? 1 : Math.min(1, (t - t0) / 700);
-        g.clearRect(0, 0, w, h);
-        g.strokeStyle = "#262727"; g.lineWidth = 1; for (const f of [0.5, 1]) { g.beginPath(); g.arc(cx, cy, R * f, 0, Math.PI * 2); g.stroke(); }
-        for (const p of pts) { const show = Math.min(1, Math.max(0, (k * 1.4 - p.d / radius * 0.8))); if (!show) continue;
-          g.globalAlpha = show; g.fillStyle = col[p.s]; g.beginPath(); g.arc(p.x, p.y, p.s === "off" ? 2 : 2.6, 0, Math.PI * 2); g.fill(); }
-        g.globalAlpha = 1; g.strokeStyle = "#e9e1dc"; g.lineWidth = 1.5; g.beginPath(); g.arc(cx, cy, 5, 0, Math.PI * 2); g.stroke();
-        if (k < 1 && cv.isConnected) requestAnimationFrame(frame);
-      };
-      requestAnimationFrame(frame);
+    // the map Peta Terpadu uses (Google hybrid tiles), drawn here without a map library: this customer in the middle,
+    // rings at half and full radius, every neighbour a dot. A dot and its row in the list light up together; a dot opens
+    // that customer.
+    const gtile = (x, y, z) => `https://mt${(x + y) % 4}.google.com/vt/lyrs=y&hl=id&x=${x}&y=${y}&z=${z}`;
+    function tileMap(box, r, n, radius, rows) {
+      const w = box.clientWidth, h = box.clientHeight; if (!w) return;
+      if (view.zoomFor !== r.username) { view.zoom = 0; view.zoomFor = r.username; }
+      const mpp0 = 156543.03392 * Math.cos(n.c.lat * Math.PI / 180); // metres per pixel at zoom 0
+      const z = Math.max(12, Math.min(20, Math.floor(Math.log2((mpp0 * Math.min(w, h) * 0.46) / radius)) + (view.zoom || 0)));
+      const size = 256 * 2 ** z, world = (p) => { const sin = Math.sin(p.lat * Math.PI / 180); return [((p.lng + 180) / 360) * size, (0.5 - Math.log((1 + sin) / (1 - sin)) / (4 * Math.PI)) * size]; };
+      const [cx, cy] = world(n.c), left = cx - w / 2, top = cy - h / 2, mpp = mpp0 / 2 ** z;
+      const tiles = el("div", "tiles");
+      for (let tx = Math.floor(left / 256); tx * 256 < left + w; tx++) for (let ty = Math.floor(top / 256); ty * 256 < top + h; ty++) {
+        const img = el("img"); img.src = gtile(tx, ty, z); img.alt = ""; img.draggable = false; img.style.left = `${tx * 256 - left}px`; img.style.top = `${ty * 256 - top}px`; tiles.append(img); }
+      const ring = (f, cls) => { const d = el("span", `ring ${cls}`), R = (radius * f) / mpp; d.style.cssText = `width:${2 * R}px;height:${2 * R}px;left:${w / 2 - R}px;top:${h / 2 - R}px`; return d; };
+      const tip = el("span", "tip"); tip.hidden = true;
+      const dots = n.list.map((x, i) => {
+        const [px, py] = world(x.p), b = el("button", `mdot ${state(x.r)}`); b.type = "button"; b.tabIndex = -1;
+        b.style.left = `${px - left}px`; b.style.top = `${py - top}px`; b.style.setProperty("--d", `${Math.round(Math.min(1, x.d / radius) * 350)}ms`);
+        b.setAttribute("aria-label", `${x.r.nama || x.r.username}, ${Math.round(x.d)} m`);
+        b.onmouseenter = () => hl(i, true); b.onmouseleave = () => hl(i, false);
+        b.onclick = () => { view.card = x.r; view.sel = 0; remember(x.r); draw(); };
+        return b;
+      });
+      function hl(i, on) {
+        const d = dots[i], x = n.list[i]; if (!d) return;
+        d.classList.toggle("hl", on); rows[i]?.setAttribute("aria-selected", String(on));
+        tip.hidden = !on; if (on) { tip.textContent = `${x.r.nama || x.r.username} · ${Math.round(x.d)} m`; tip.style.left = d.style.left; tip.style.top = d.style.top; tip.classList.toggle("low", parseFloat(d.style.top) < 34); }
+      }
+      box.hl = hl;
+      const me = el("span", "mdot me"); me.style.left = `${w / 2}px`; me.style.top = `${h / 2}px`;
+      const zoom = el("div", "zoom");
+      for (const [t, dz, label] of [["+", 1, "Zoom in"], ["−", -1, "Zoom out"]]) { const b = el("button", null, t); b.type = "button"; b.setAttribute("aria-label", label);
+        b.disabled = (dz > 0 && z >= 20) || (dz < 0 && z <= 12); b.onclick = () => { view.zoom = (view.zoom || 0) + dz; tileMap(box, r, n, radius, rows); }; zoom.append(b); }
+      box.replaceChildren(tiles, ring(0.5, "half"), ring(1, ""), ...dots, me, tip, zoom, el("span", "attr", "Google"));
     }
 
     // keys: Alt+K opens and closes; in the Dock, arrows move, Enter picks, Esc goes back or closes
