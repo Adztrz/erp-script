@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.21
+// @version      2.22
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -1694,18 +1694,27 @@
     }
     // ---- Technicians by village: the ERP's own map (HRD → Pemetaan Wilayah Teknisi), kept 6 hours ----
     // A village usually has a field team, an area head (KA …) and a backbone team; the field team comes first.
+    // Villages come two ways: a team's own list, and each technician's individual placement ("data individu", e.g.
+    // TIM DONOROJO 1 has no team list; its two technicians cover Nglampeng and four more by placement). Both count.
     let techMap = null, techLoading = null;
     function techIndex() {
       if (techMap && Date.now() - techMap.at < 6 * 3600000) return Promise.resolve(techMap);
       return (techLoading ||= (async () => {
-        let kept = await idbGet("tech");
+        let kept = await idbGet("tech2");
         if (!kept || Date.now() - kept.at > 6 * 3600000) {
           const j = await api("/api/hrd/technician-area-map");
           kept = { at: Date.now(), teams: (j.teams || []).filter((t) => t.jumlahAnggota > 0).map((t) => ({ name: t.namaTim, desa: t.assignedDesa || [],
-            members: (t.anggota || []).map((a) => ({ n: a.nama, lead: !!a.isKetua || a.id === t.kepalaTeknisId })) })) };
-          idbPut("tech", kept);
+            members: (t.anggota || []).map((a) => ({ n: a.nama, lead: !!a.isKetua || a.id === t.kepalaTeknisId })) })),
+            techs: (j.teknisi || []).map((t) => ({ n: t.nama, team: t.timLabel || t.teams?.[0]?.namaTim || "Tanpa tim", lead: (t.teams || []).some((x) => /ketua|kepala/i.test(x.peran || "")),
+              desa: (t.desaList || []).map((x) => x.label || x.desa) })) };
+          idbPut("tech2", kept);
         }
-        const by = new Map(); for (const t of kept.teams) for (const d of t.desa) { const k = fold(d); by.set(k, [...(by.get(k) || []), t]); }
+        // village → its teams, each with the members who cover it
+        const by = new Map(), add = (desa, team, member) => { const k = fold(desa); let m = by.get(k); if (!m) by.set(k, (m = new Map()));
+          let t = m.get(team); if (!t) m.set(team, (t = { name: team, members: [] })); if (member && !t.members.some((x) => x.n === member.n)) t.members.push(member); };
+        for (const t of kept.teams) for (const d of t.desa) { add(d, t.name); for (const mb of t.members) add(d, t.name, mb); }
+        for (const tc of kept.techs || []) for (const d of tc.desa) add(d, tc.team, { n: tc.n, lead: tc.lead });
+        for (const [k, m] of by) by.set(k, [...m.values()]);
         return (techMap = { at: kept.at, by });
       })().finally(() => { techLoading = null; }));
     }
@@ -1721,7 +1730,7 @@
         if (!teams.length) return box.replaceChildren(head, el("p", "note warn", `No team covers ${titleCase(r.desa)} yet (HRD → Pemetaan Wilayah Teknisi).`));
         const rows = teams.map((t) => { const row = el("div", "team"), kind = teamKind(t.name);
           const names = t.members.map((m) => (m.lead ? `${titleCase(m.n)} (lead)` : titleCase(m.n))).join(", ");
-          row.append(el("span", `tag ${kind}`, { field: "Field", area: "Area head", backbone: "Backbone", office: "Office" }[kind]), el("b", null, t.name), el("span", "sub", names || "no members"));
+          row.append(el("span", `tag ${kind}`, { field: "Field", area: "Area head", backbone: "Backbone", office: "Office" }[kind]), el("b", null, t.name === "Tanpa tim" ? "Placed individually (no team)" : t.name), el("span", "sub", names || "no members"));
           return row; });
         box.replaceChildren(head, ...rows);
       };
