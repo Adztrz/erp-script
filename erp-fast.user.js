@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.20
+// @version      2.21
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -802,6 +802,11 @@
       .erp-dock .dot.silent { background: transparent; box-shadow: inset 0 0 0 1px var(--muted); }
       .erp-dock canvas.big { width: 100%; height: 96px; margin: 6px 0 2px; }
       .erp-dock .ticks { display: flex; justify-content: space-between; font: 11px "JetBrains Mono", ui-monospace, monospace; color: var(--muted); }
+      .erp-dock .techs { margin: 0 4px 12px; display: grid; gap: 6px; }
+      .erp-dock .techs .team { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 8px; align-items: baseline; font-size: 13px; }
+      .erp-dock .techs .team b { font-weight: 500; color: var(--paper); } .erp-dock .techs .team .sub { grid-column: 2; font-size: 12px; color: var(--muted); }
+      .erp-dock .tag { font-size: 11px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; padding: 1px 6px; border-radius: 4px; background: rgba(255,255,255,.06); color: var(--body); }
+      .erp-dock .tag.field { color: var(--green); background: rgba(85,188,130,.1); } .erp-dock .tag.area { color: #e0b252; background: rgba(224,178,82,.1); }
       .erp-dock .pw.msg { white-space: pre-wrap; font: 12px/1.5 "JetBrains Mono", ui-monospace, monospace; display: block; }
       .erp-dock .report .actions { margin: 8px 0 0; }
       .erp-dock .hrow { cursor: default; } .erp-dock .hrow:hover { background: none; }
@@ -1687,11 +1692,49 @@
       order.forEach((o, i) => out.push(ontItem(o, i)));
       return out;
     }
+    // ---- Technicians by village: the ERP's own map (HRD → Pemetaan Wilayah Teknisi), kept 6 hours ----
+    // A village usually has a field team, an area head (KA …) and a backbone team; the field team comes first.
+    let techMap = null, techLoading = null;
+    function techIndex() {
+      if (techMap && Date.now() - techMap.at < 6 * 3600000) return Promise.resolve(techMap);
+      return (techLoading ||= (async () => {
+        let kept = await idbGet("tech");
+        if (!kept || Date.now() - kept.at > 6 * 3600000) {
+          const j = await api("/api/hrd/technician-area-map");
+          kept = { at: Date.now(), teams: (j.teams || []).filter((t) => t.jumlahAnggota > 0).map((t) => ({ name: t.namaTim, desa: t.assignedDesa || [],
+            members: (t.anggota || []).map((a) => ({ n: a.nama, lead: !!a.isKetua || a.id === t.kepalaTeknisId })) })) };
+          idbPut("tech", kept);
+        }
+        const by = new Map(); for (const t of kept.teams) for (const d of t.desa) { const k = fold(d); by.set(k, [...(by.get(k) || []), t]); }
+        return (techMap = { at: kept.at, by });
+      })().finally(() => { techLoading = null; }));
+    }
+    const teamKind = (n) => (/^KA\b/i.test(n) ? "area" : /BACKBONE/i.test(n) ? "backbone" : /\b(NOC|ADMIN|KANTOR|CS|GUDANG)\b/i.test(n) ? "office" : "field");
+    const teamsFor = (desa) => { const order = { field: 0, area: 1, backbone: 2, office: 3 }; return [...(techMap?.by.get(fold(desa)) || [])].sort((a, b) => order[teamKind(a.name)] - order[teamKind(b.name)]); };
+    const titleCase = (x) => String(x).toLowerCase().replace(/(^|\s)\S/g, (c) => c.toUpperCase());
+    function techBox(r) {
+      const box = el("div", "techs rise"); box.style.setProperty("--i", "2");
+      const fill = () => {
+        const head = el("div", "eyebrow"); head.style.margin = "0 0 6px"; head.append("Technicians", el("b", null, r.desa ? ` · ${titleCase(r.desa)}` : ""));
+        if (!r.desa) return box.replaceChildren(head, el("p", "note", "This customer has no village on file, so no team can be matched."));
+        const teams = teamsFor(r.desa);
+        if (!teams.length) return box.replaceChildren(head, el("p", "note warn", `No team covers ${titleCase(r.desa)} yet (HRD → Pemetaan Wilayah Teknisi).`));
+        const rows = teams.map((t) => { const row = el("div", "team"), kind = teamKind(t.name);
+          const names = t.members.map((m) => (m.lead ? `${titleCase(m.n)} (lead)` : titleCase(m.n))).join(", ");
+          row.append(el("span", `tag ${kind}`, { field: "Field", area: "Area head", backbone: "Backbone", office: "Office" }[kind]), el("b", null, t.name), el("span", "sub", names || "no members"));
+          return row; });
+        box.replaceChildren(head, ...rows);
+      };
+      if (techMap) fill(); else { box.append(el("p", "note", "Finding this area's technicians…")); techIndex().then(fill).catch((e) => box.replaceChildren(el("p", "note late", `Technician map not read: ${e.message}`))); }
+      return box;
+    }
+
     // ---- Outage report: the text for the technicians' group, and a notice and phone list for the customers ----
     const wib = (t = Date.now()) => new Date(t).toLocaleString("id-ID", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
     const lalu = (t) => { const m = Math.floor((Date.now() - new Date(t)) / 60000); return m < 1 ? "baru saja" : m < 120 ? `${m} menit lalu` : m < 2880 ? `${Math.round(m / 60)} jam lalu` : `${Math.round(m / 1440)} hari lalu`; };
     const phone62 = (p) => { let d = String(p ?? "").replace(/\D/g, ""); if (d.startsWith("0")) d = "62" + d.slice(1); return d.length >= 10 ? d : ""; };
     function reportBox({ title, down, total, since, custs, age }) {
+      if (!techMap) techIndex().then(() => {}).catch(() => {}); // the team line appears once the map is in
       const box = el("div", "near report"), e = el("div", "eyebrow"); e.style.margin = "0 0 8px"; e.append("Outage report"); box.append(e);
       const title1 = (d) => String(d).toLowerCase().replace(/(^|\s)\S/g, (x) => x.toUpperCase()); // KASIHAN and Kasihan are one village
       const vil = new Map(); for (const c of custs) { const d = c.desa ? title1(c.desa.trim()) : "?"; vil.set(d, (vil.get(d) || 0) + 1); }
@@ -1699,7 +1742,8 @@
       const mid = pts.length ? { lat: pts.reduce((a, p) => a + p.lat, 0) / pts.length, lng: pts.reduce((a, p) => a + p.lng, 0) / pts.length } : null;
       const text = [`*GANGGUAN* · ${title}`, `${down} dari ${total} offline${since ? ` sejak ${hhmm(since)}` : ""}${age ? ` (data ${age})` : ""}`,
         villages.length ? `Desa: ${villages.slice(0, 8).map(([d, n]) => `${d} (${n})`).join(", ")}${villages.length > 8 ? ", …" : ""}` : "",
-        custs.length === down ? `Pelanggan terdampak: ${custs.length}` : `Pelanggan terdampak yang terdata: ${custs.length} dari ${down} modem offline`, mid ? `Lokasi: https://www.google.com/maps?q=${mid.lat.toFixed(6)},${mid.lng.toFixed(6)}` : "", `Dilaporkan ${wib()} WIB`].filter(Boolean).join("\n");
+        custs.length === down ? `Pelanggan terdampak: ${custs.length}` : `Pelanggan terdampak yang terdata: ${custs.length} dari ${down} modem offline`,
+        (() => { const t = [...new Set(villages.slice(0, 3).flatMap(([d]) => teamsFor(d).filter((x) => teamKind(x.name) === "field").map((x) => x.name)))]; return t.length ? `Tim: ${t.join(", ")}` : ""; })(), mid ? `Lokasi: https://www.google.com/maps?q=${mid.lat.toFixed(6)},${mid.lng.toFixed(6)}` : "", `Dilaporkan ${wib()} WIB`].filter(Boolean).join("\n");
       const notice = `Pelanggan Yth, saat ini sedang ada gangguan jaringan di area ${villages.slice(0, 3).map(([d]) => d).filter((d) => d !== "?").join(", ") || "Anda"}. Tim teknisi kami sedang menanganinya. Mohon maaf atas ketidaknyamanannya. Terima kasih.`;
       const phones = [...new Set(custs.map((c) => phone62(c.phone)).filter(Boolean))];
       const pre = el("div", "pw msg"); pre.textContent = text; box.append(pre);
@@ -1871,13 +1915,14 @@
       fact("Phone", r.phone, { mono: true, copy: true, link: wa(r.phone) ? ["WhatsApp", wa(r.phone)] : null });
       fact("Address", r.address); fact("Area", [r.desa, r.kecamatanErp].filter(Boolean).join(", "));
       fact("Plan", r.paket); fact("Router", r.router); fact("IP", r.ip, { mono: true, copy: true });
-      fact("Active since", r.tglAktif); fact("Expires", r.expirasi && !isNaN(new Date(r.expirasi)) ? new Date(r.expirasi).toLocaleString("id-ID", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : r.expirasi); fact("ONT", r.ontSerial, { mono: true, copy: true }); fact("Partner", r.mitra);
+      fact("Active since", r.tglAktif && !isNaN(new Date(r.tglAktif)) ? new Date(r.tglAktif).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" }) : r.tglAktif); fact("Expires", r.expirasi && !isNaN(new Date(r.expirasi)) ? new Date(r.expirasi).toLocaleString("id-ID", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : r.expirasi); fact("ONT", r.ontSerial, { mono: true, copy: true }); fact("Partner", r.mitra);
+      const tech = techBox(r);
       const acts = el("div", "actions rise"); acts.style.setProperty("--i", "2");
       const act = (label, fn, primary) => { const b = el("button", `btn${primary ? " primary" : ""}`, label); b.type = "button"; b.onclick = fn; acts.append(b); };
       act("Open in LDN", () => openIn.ldn(r), true); act("Invoices", () => openIn.invoices(r)); act("Map Terpadu", () => openIn.map(r)); act("Master", () => openIn.master(r));
       const loc = where(r); if (loc) { const a = el("a", "btn", "Google Maps"); a.href = `https://www.google.com/maps?q=${loc.lat},${loc.lng}`; a.target = "_blank"; a.rel = "noreferrer"; acts.append(a); }
       const bill = payBox(r); billDraw(bills.get(r.username));
-      wrap.append(back, who, facts, acts, bill, modemBox(`u:${r.username}`, r), nearView(r));
+      wrap.append(back, who, facts, tech, acts, bill, modemBox(`u:${r.username}`, r), nearView(r));
       return wrap;
     }
     function nearView(r) {
