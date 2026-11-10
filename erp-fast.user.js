@@ -238,10 +238,11 @@
 
   function placeLdn() {
     if (!ldnBox || !ldnInput?.isConnected) return;
-    const r = ldnInput.getBoundingClientRect(), w = Math.max(r.width, 420);
+    // as wide as the search box, at least 460px, lined up with its right edge and kept inside the window
+    const r = ldnInput.getBoundingClientRect(), vw = document.documentElement.clientWidth, w = Math.min(Math.max(r.width, 460), vw - 16);
     ldnBox.style.top = `${r.bottom + 6}px`;
-    ldnBox.style.left = `${Math.max(8, Math.min(r.left, innerWidth - w - 8))}px`;
-    ldnBox.style.width = `${Math.min(w, innerWidth - 16)}px`;
+    ldnBox.style.left = `${Math.max(8, Math.min(r.right - w, vw - w - 8))}px`;
+    ldnBox.style.width = `${w}px`;
   }
 
   function closeLdn() { ldnBox?.remove(); ldnBox = null; }
