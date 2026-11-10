@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — faster Work Orders, Planning, and LDN and invoice search
 // @namespace    adztrz
-// @version      1.6
+// @version      1.7
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -409,6 +409,25 @@
       sub: (r) => [r.status, rupiah(r.amount), r.period, r.desa, r.radiusUsername],
     }),
   ];
+
+  // ---------- one idle clock for all ERP tabs ----------
+  // The ERP logs out after 120 minutes without a click, key, touch or scroll, counted in each tab on its own; and a
+  // logout in any tab signs out every tab. So with ten tabs open and work in one, a forgotten tab ends everyone's
+  // session. Here real activity in one tab is passed to the others (at most every 30 s), where it counts as a scroll,
+  // which the ERP's idle timer listens for. Only real input is passed on: 120 minutes of really doing nothing still
+  // logs you out, as the ERP intends.
+  try {
+    const chan = new BroadcastChannel("erp-fast-activity");
+    let sent = 0;
+    const real = (e) => {
+      if (!e.isTrusted) return; // the scroll this script raises itself doesn't travel on
+      const now = Date.now();
+      if (now - sent < 30000) return;
+      sent = now; chan.postMessage(now);
+    };
+    for (const t of ["mousedown", "keydown", "touchstart", "scroll"]) addEventListener(t, real, { capture: true, passive: true });
+    chan.onmessage = () => dispatchEvent(new Event("scroll"));
+  } catch { /* no BroadcastChannel: each tab keeps its own clock */ }
 
   // the site moves between pages without reloading: redraw when the address changes
   for (const m of ["pushState", "replaceState"]) {
