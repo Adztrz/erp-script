@@ -169,7 +169,9 @@
 
   const idb = () => new Promise((ok, no) => { const r = indexedDB.open(IDB, 1); r.onupgradeneeded = () => r.result.createObjectStore(IDB_STORE); r.onsuccess = () => ok(r.result); r.onerror = () => no(r.error); });
   async function idbGet(key) { try { const db = await idb(); return await new Promise((ok) => { const q = db.transaction(IDB_STORE).objectStore(IDB_STORE).get(key); q.onsuccess = () => ok(q.result); q.onerror = () => ok(null); }); } catch { return null; } }
-  async function idbPut(key, v) { try { const db = await idb(); db.transaction(IDB_STORE, "readwrite").objectStore(IDB_STORE).put(v, key); } catch { /* the list just isn't kept */ } }
+  // the search's working fields (_name, _hay, …) are rebuilt on load, so they're left out of what's saved
+  const bare = (r) => { const o = {}; for (const k in r) if (k[0] !== "_") o[k] = r[k]; return o; };
+  async function idbPut(key, v) { if (v?.rows) v = { ...v, rows: v.rows.map(bare) }; try { const db = await idb(); db.transaction(IDB_STORE, "readwrite").objectStore(IDB_STORE).put(v, key); } catch { /* the list just isn't kept */ } }
 
   const calm = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
   const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
@@ -233,6 +235,7 @@
       const rows = [...got.keys()].sort((a, b) => a - b).flatMap((p) => got.get(p));
       const kept = { at: Date.now(), rows, total: total || rows.length };
       idbPut(part, kept); idbPut(`${part}~partial`, null);
+      setTimeout(() => dispatchEvent(new CustomEvent("erp-fast-saved", { detail: part })), 500); // the Dock reads it again
       return kept;
     }
 
@@ -888,6 +891,7 @@
     }, true);
     document.addEventListener("pointerdown", (e) => { if (panel && !panel.contains(e.target) && !fab.contains(e.target)) close(); }, true);
     addEventListener("resize", place);
+    addEventListener("erp-fast-saved", () => { if (panel) data().then(drawBody); }); // a fresher list was just saved
 
     const tick = () => { if (!document.body) return; mount(); learn(); runPending(); place(); };
     for (const m of ["pushState", "replaceState"]) { const orig = history[m]; history[m] = function () { const r = orig.apply(this, arguments); setTimeout(tick, 300); setTimeout(runPending, 1200); return r; }; }
