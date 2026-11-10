@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — faster Work Orders, Planning, and LDN and invoice search
 // @namespace    adztrz
-// @version      1.9
+// @version      1.10
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -312,11 +312,11 @@
       let fresh = false;
       if (!st.box) {
         fresh = true;
-        st.box = el("div", "erp-fs"); st.box.setAttribute("role", "listbox"); st.box.setAttribute("aria-label", "Fast search"); document.body.append(st.box);
+        st.box = el("div", "erp-fs"); st.box.setAttribute("role", "listbox"); st.box.setAttribute("aria-label", "Search"); document.body.append(st.box);
         st.box.addEventListener("mousedown", (e) => e.preventDefault()); // keep focus in the search box
         st.box.append(el("div", "head"), el("div", "bar"), el("div", "body"), el("div", "foot"));
         // the label is made once, so a redraw while it types doesn't cut it short
-        const label = el("span", `tw${calm() ? "" : " typing"}`, "Fast search"); label.style.setProperty("--n", String(label.textContent.length));
+        const label = el("span", `tw${calm() ? "" : " typing"}`, "Search"); label.style.setProperty("--n", String(label.textContent.length));
         st.box.querySelector(".head").append(label, el("span", "info"));
         st.box.querySelector(".bar").append(el("span"));
         const foot = st.box.querySelector(".foot"); foot.append(el("kbd", null, "↑↓"), " choose · ", el("kbd", null, "Enter"), " show in the table · ", el("kbd", null, "Esc"), " close");
@@ -461,7 +461,7 @@
     @keyframes erp-fs-row { from { opacity: 0; transform: translateY(8px); filter: blur(2px); } }
     .erp-fs li:active { transform: scale(.99); }
     .erp-fs .pill { position: absolute; left: 4px; right: 4px; top: 0; border-radius: 6px; background: var(--raised); opacity: 0;
-      transition: transform .32s var(--swap), height .32s var(--swap), opacity .2s; pointer-events: none; }
+      transition: transform .1s var(--out), height .1s var(--out), opacity .15s; pointer-events: none; }
     .erp-fs .pill.on { opacity: 1; }
     .erp-fs li.picked { animation: erp-fs-pick .18s ease-out both; }
     @keyframes erp-fs-pick { 40% { background: rgba(233,225,220,.12); } }
