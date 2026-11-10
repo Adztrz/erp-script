@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.2
+// @version      2.3
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -759,7 +759,7 @@
     const svg = (d, cls = "") => { const n = "http://www.w3.org/2000/svg", s = document.createElementNS(n, "svg"); s.setAttribute("viewBox", "0 0 24 24"); s.setAttribute("fill", "none");
       s.setAttribute("stroke", "currentColor"); s.setAttribute("stroke-width", "1.5"); s.setAttribute("stroke-linecap", "round"); s.setAttribute("stroke-linejoin", "round"); s.setAttribute("aria-hidden", "true");
       if (cls) s.setAttribute("class", cls); const p = document.createElementNS(n, "path"); p.setAttribute("d", d); s.append(p); return s; };
-    const ICON = { dock: "M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 17h6M17 14v6", x: "M6 6l12 12M18 6 6 18", search: "M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM20 20l-4-4", page: "M6 3h9l3 3v15H6zM9 9h6M9 13h6M9 17h4", go: "M5 12h14M13 6l6 6-6 6" };
+    const ICON = { rook: "M4.56 2.00L8.14 2.00L8.14 4.03L10.27 4.03L10.27 2.00L13.65 2.00L13.65 4.03L15.94 4.03L15.94 2.00L19.49 2.00L19.49 5.77L9.75 12.08L9.75 15.38L5.91 17.84L7.62 16.68L7.62 10.44L8.71 9.32L4.56 5.64ZM15.42 9.74L16.45 10.44L16.45 16.03L19.57 19.40L19.57 22.00L4.43 22.00L4.43 19.45L5.91 19.45L11.44 15.64L11.44 12.08Z", dock: "M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 17h6M17 14v6", x: "M6 6l12 12M18 6 6 18", search: "M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM20 20l-4-4", page: "M6 3h9l3 3v15H6zM9 9h6M9 13h6M9 17h4", go: "M5 12h14M13 6l6 6-6 6" };
 
     function place() {
       if (!fab) return;
@@ -777,7 +777,8 @@
       if (fab?.isConnected) return;
       if (!document.getElementById("erp-dock-css")) { const s = el("style"); s.id = "erp-dock-css"; s.textContent = css; document.head.append(s); }
       fab = el("button", "erp-dock-fab"); fab.type = "button"; fab.title = "Dock (Alt+K)"; fab.setAttribute("aria-label", "Open the Dock"); fab.setAttribute("aria-expanded", "false");
-      fab.append(svg(ICON.dock, "open"), svg(ICON.x, "x")); fab.onclick = () => (panel ? close() : open());
+      const mark = svg(ICON.rook, "open"); mark.setAttribute("fill", "currentColor"); mark.setAttribute("stroke", "none"); // the rook, cracked in two
+      fab.append(mark, svg(ICON.x, "x")); fab.onclick = () => (panel ? close() : open());
       document.body.append(fab); place();
     }
     async function open() {
