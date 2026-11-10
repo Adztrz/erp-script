@@ -284,8 +284,8 @@
         else continue;
         out.push([score, r]); seen.add(r);
       }
-      // a letter or two off, only when the passes above found few (it's the slow part)
-      if (out.length < 30) for (const r of st.rows) {
+      // a letter or two off, only when the passes above found next to nobody (it's the slow part on a big list)
+      if (out.length < 5) for (const r of st.rows) {
         if (seen.has(r)) continue;
         if (!words.every((w, i) => r._hay.includes(w) || (soft(w) && (soundHit(r, i) || (slack(w) && fuzzyHit(sounds[i], r._words, slack(w))))))) continue;
         const inName = words.every((w, i) => r._name.includes(w) || (soft(w) && (r._nameWords.some((x) => x.startsWith(sounds[i])) || (slack(w) && fuzzyHit(sounds[i], r._nameWords, slack(w))))));
