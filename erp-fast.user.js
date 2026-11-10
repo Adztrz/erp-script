@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.19
+// @version      2.20
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -731,7 +731,7 @@
       .erp-dock .map .ring.half { box-shadow: none; border: 1px dashed rgba(233,225,220,.45); }
       .erp-dock .mdot { position: absolute; width: 11px; height: 11px; margin: -5.5px 0 0 -5.5px; padding: 0; border: 1.5px solid rgba(7,9,11,.9); border-radius: 50%; background: var(--green); cursor: pointer;
         transition: transform .12s var(--out), box-shadow .12s; animation: erp-dock-pop .35s var(--out) backwards; animation-delay: var(--d, 0ms); }
-      .erp-dock .mdot.off { background: #a3a4a3; } .erp-dock .mdot.iso { background: var(--red); }
+      .erp-dock .mdot.off { background: #a3a4a3; } .erp-dock .mdot.on { background: var(--green); } .erp-dock .mdot.iso { background: var(--red); }
       .erp-dock .mdot:hover, .erp-dock .mdot.hl { transform: scale(1.6); z-index: 2; box-shadow: 0 0 0 3px rgba(233,225,220,.75); }
       .erp-dock .mdot.me { width: 15px; height: 15px; margin: -7.5px 0 0 -7.5px; background: var(--bone); border: 2.5px solid var(--canvas); box-shadow: 0 0 0 2px var(--bone); pointer-events: none; animation: none; z-index: 1; }
       @keyframes erp-dock-pop { from { transform: scale(0); opacity: 0; } }
@@ -1311,9 +1311,10 @@
       if (fresh >= 10) parts.push(el("p", "note good", `${fresh} customers reconnected in the last 15 minutes: the line is coming back.`));
       const rx = radar?.list.find((r) => r.ip === ip);
       if (off.length) parts.push(reportBox({ title: x_name(ip), down: off.length, total: mine.length, since: rx?.level === "down" || rx?.level === "drop" ? rx.since : null, custs: off }));
-      // a map: online faint green, offline red
+      // where the offline ones are, on the map
       const pts = mine.map((c) => ({ c, p: where(c), on: !off.includes(c) })).filter((z) => z.p);
-      if (pts.length > 5) { const cv = el("canvas"); cv.style.height = "200px"; cv.setAttribute("aria-label", `${off.length} offline customers on a map of ${x_name(ip)}`); parts.push(cv); requestAnimationFrame(() => fitPlot(cv, pts)); }
+      if (pts.length) { parts.push(areaMap(pts, `${off.length} offline customers on a map of ${x_name(ip)}`));
+        parts.push(el("p", "note", `On the map: ${pts.length} of ${mine.length} customers (the ones with a saved location), offline in red.`)); }
       // villages, most offline first
       const by = new Map(); for (const c of mine) { const d = c.desa || "No village"; const g = by.get(d) || { all: 0, off: [] }; g.all++; if (off.includes(c)) g.off.push(c); by.set(d, g); }
       const rows = [...by].filter(([, g]) => g.off.length).sort((a, b) => b[1].off.length - a[1].off.length || b[1].off.length / b[1].all - a[1].off.length / a[1].all);
@@ -1330,18 +1331,6 @@
       items = [...panel.querySelectorAll(".scroll .item, .scroll .tile")];
     }
     const x_name = (ip) => radar?.list.find((r) => r.ip === ip)?.name || "this router";
-    // fit the dots to their own bounds (ignoring the farthest 2% each way)
-    function fitPlot(cv, pts) {
-      const dpr = devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight; if (!w) return;
-      cv.width = w * dpr; cv.height = h * dpr; const g = cv.getContext("2d"); g.scale(dpr, dpr);
-      const q = (a, f) => a[Math.min(a.length - 1, Math.max(0, Math.floor(a.length * f)))];
-      const la = pts.map((z) => z.p.lat).sort((a, b) => a - b), lo = pts.map((z) => z.p.lng).sort((a, b) => a - b);
-      const [y0, y1, x0, x1] = [q(la, 0.02), q(la, 0.98), q(lo, 0.02), q(lo, 0.98)], kx = Math.cos(((y0 + y1) / 2) * Math.PI / 180);
-      const sx = (x1 - x0) * kx || 1e-4, sy = y1 - y0 || 1e-4, sc = Math.min((w - 16) / sx, (h - 16) / sy), ox = (w - sx * sc) / 2, oy = (h - sy * sc) / 2;
-      const P = (p) => [ox + (p.lng - x0) * kx * sc, h - oy - (p.lat - y0) * sc];
-      g.fillStyle = "rgba(85,188,130,.45)"; for (const z of pts) if (z.on) { const [x, y] = P(z.p); g.fillRect(x - 1, y - 1, 2, 2); }
-      g.fillStyle = "#ff4a3a"; for (const z of pts) if (!z.on) { const [x, y] = P(z.p); g.beginPath(); g.arc(x, y, 2.6, 0, Math.PI * 2); g.fill(); }
-    }
     function radarItem(i) {
       const b = el("button", "item rise"); b.type = "button"; b.style.setProperty("--i", String(i));
       const a = radar?.alerts ?? [];
@@ -1687,7 +1676,9 @@
         : g.crit >= 3 ? `${g.crit} modems with critical signal on this port: check the connectors and splitter on this line.` : "This port looks normal."));
       // where they are
       const pts = g.all.map((o) => { const c = customerOf(o.sn, o, null); return c && where(c) ? { c, p: where(c), on: o.st === "online" } : null; }).filter(Boolean);
-      if (pts.length > 3) { const cv = el("canvas"); cv.style.height = "200px"; cv.setAttribute("aria-label", `Map of ${pts.length} customers on this port, offline in red`); wrap.append(cv); setTimeout(() => fitPlot(cv, pts), 0); }
+      if (pts.length) { wrap.append(areaMap(pts, `Map of ${pts.length} customers on this port, offline in red`));
+        wrap.append(el("p", "note", `On the map: ${pts.length} of ${g.all.length} modems, the ones linked to a customer with a saved location (offline in red). The rest have no customer match or no location.`)); }
+      else wrap.append(el("p", "note", `None of the ${g.all.length} modems on this port is linked to a customer with a saved location, so there's nothing to map.`));
       out.push(wrap);
       if (g.off) out.push(reportBox({ title: `${g.olt} · PON ${g.pon}`, down: g.off, total: g.all.length, age: g.fresh ? `OLT ${lalu(g.fresh)}` : "",
         custs: g.all.filter((o) => o.st !== "online").map((o) => customerOf(o.sn, o, null)).filter(Boolean) }));
@@ -1918,12 +1909,47 @@
       dark: { url: (x, y, z) => `https://tile.openstreetmap.org/${z}/${x}/${y}.png`, max: 19, attr: "© OpenStreetMap" }, // CARTO now wants a key
       sat: { url: (x, y, z) => `https://mt${(x + y) % 4}.google.com/vt/lyrs=y&hl=id&x=${x}&y=${y}&z=${z}`, max: 20, attr: "Google" },
     };
+    function tileSource() {
+      const kind = ls.get(BASEMAP, "dark") === "sat" ? "sat" : "dark", key = ls.get(CARTO_KEY, ""), carto = kind === "dark" && !!key;
+      const T = carto ? { url: (x, y, z) => `https://basemaps.cartocdn.com/rastertiles/dark_all/${z}/${x}/${y}.png?key=${encodeURIComponent(key)}`, max: 20, attr: "© OpenStreetMap © CARTO" } : TILES[kind];
+      return { kind, carto, T };
+    }
+    // the same map for a group of customers (a PON port, a router's offline customers): fitted to where they are,
+    // offline red over online green; a dot shows the name and opens the customer
+    function areaMap(pts, label) {
+      const box = el("div", "map"); box.setAttribute("role", "group"); box.setAttribute("aria-label", label);
+      box.redraw = () => drawAreaMap(box, pts); setTimeout(box.redraw, 0); return box;
+    }
+    function drawAreaMap(box, pts) {
+      const w = box.clientWidth, h = box.clientHeight; if (!w || !pts.length) return;
+      const { kind, carto, T } = tileSource(), q = (a, f) => a[Math.min(a.length - 1, Math.max(0, Math.floor(a.length * f)))];
+      const la = pts.map((z) => z.p.lat).sort((a, b) => a - b), lo = pts.map((z) => z.p.lng).sort((a, b) => a - b), cut = pts.length > 20 ? 0.02 : 0;
+      const b = { s: q(la, cut), n: q(la, 1 - cut), w: q(lo, cut), e: q(lo, 1 - cut) }, mid = { lat: (b.s + b.n) / 2, lng: (b.w + b.e) / 2 };
+      const proj = (p, z) => { const size = 256 * 2 ** z, sin = Math.sin(p.lat * Math.PI / 180); return [((p.lng + 180) / 360) * size, (0.5 - Math.log((1 + sin) / (1 - sin)) / (4 * Math.PI)) * size]; };
+      let z = T.max; while (z > 8) { const [x0, y0] = proj({ lat: b.n, lng: b.w }, z), [x1, y1] = proj({ lat: b.s, lng: b.e }, z); if (x1 - x0 <= w - 48 && y1 - y0 <= h - 48) break; z--; }
+      z = Math.max(8, Math.min(T.max, z + (box.zoom || 0)));
+      const [cx, cy] = proj(mid, z), left = cx - w / 2, top = cy - h / 2, tiles = el("div", "tiles");
+      for (let tx = Math.floor(left / 256); tx * 256 < left + w; tx++) for (let ty = Math.floor(top / 256); ty * 256 < top + h; ty++) {
+        const img = el("img"); img.src = T.url(tx, ty, z); img.alt = ""; img.draggable = false; img.style.left = `${tx * 256 - left}px`; img.style.top = `${ty * 256 - top}px`; tiles.append(img); }
+      const tip = el("span", "tip"); tip.hidden = true;
+      const dots = [...pts].sort((a, c) => a.on - c.on).reverse().map((z0) => { // offline drawn last, on top
+        const [px, py] = proj(z0.p, z), d = el("button", `mdot ${z0.on ? "on" : "iso"}`); d.type = "button"; d.tabIndex = -1; d.style.left = `${px - left}px`; d.style.top = `${py - top}px`;
+        const name = `${z0.c.nama || z0.c.username}${z0.on ? "" : " · offline"}`; d.setAttribute("aria-label", name);
+        d.onmouseenter = () => { tip.textContent = name; tip.style.left = d.style.left; tip.style.top = d.style.top; tip.classList.toggle("low", py - top < 34); tip.hidden = false; d.classList.add("hl"); };
+        d.onmouseleave = () => { tip.hidden = true; d.classList.remove("hl"); };
+        d.onclick = () => { view.card = z0.c; view.sel = 0; remember(z0.c); draw(); }; return d; });
+      const zoom = el("div", "zoom"), full = box.classList.contains("full"), fs = el("button", null, full ? "⤡" : "⤢"); fs.type = "button"; fs.title = full ? "Back (F or Esc)" : "Full screen (F)"; fs.onclick = () => toggleFull(box); zoom.append(fs);
+      for (const [t, dz, label] of [["+", 1, "Zoom in"], ["−", -1, "Zoom out"]]) { const bt = el("button", null, t); bt.type = "button"; bt.setAttribute("aria-label", label); bt.onclick = () => { box.zoom = (box.zoom || 0) + dz; box.redraw(); }; zoom.append(bt); }
+      const base = el("div", "seg basemap");
+      for (const [k, label] of [["dark", "Map"], ["sat", "Satellite"]]) { const bt = el("button", null, label); bt.type = "button"; bt.setAttribute("aria-pressed", String(kind === k)); bt.onclick = () => { ls.set(BASEMAP, k); box.redraw(); }; base.append(bt); }
+      box.classList.toggle("sat", kind === "sat"); box.classList.toggle("carto", carto);
+      box.replaceChildren(tiles, ...dots, tip, zoom, base, el("span", "attr", T.attr));
+    }
     function tileMap(box, r, n, radius, rows) {
       const w = box.clientWidth, h = box.clientHeight; if (!w) return;
       if (view.zoomFor !== r.username) { view.zoom = 0; view.zoomFor = r.username; }
       const mpp0 = 156543.03392 * Math.cos(n.c.lat * Math.PI / 180); // metres per pixel at zoom 0
-      const kind = ls.get(BASEMAP, "dark") === "sat" ? "sat" : "dark", key = ls.get(CARTO_KEY, ""), carto = kind === "dark" && key;
-      const T = carto ? { url: (x, y, z) => `https://basemaps.cartocdn.com/rastertiles/dark_all/${z}/${x}/${y}.png?key=${encodeURIComponent(key)}`, max: 20, attr: "© OpenStreetMap © CARTO" } : TILES[kind];
+      const { kind, carto, T } = tileSource();
       const z = Math.max(12, Math.min(T.max, Math.floor(Math.log2((mpp0 * Math.min(w, h) * 0.46) / radius)) + (view.zoom || 0)));
       const size = 256 * 2 ** z, world = (p) => { const sin = Math.sin(p.lat * Math.PI / 180); return [((p.lng + 180) / 360) * size, (0.5 - Math.log((1 + sin) / (1 - sin)) / (4 * Math.PI)) * size]; };
       const [cx, cy] = world(n.c), left = cx - w / 2, top = cy - h / 2, mpp = mpp0 / 2 ** z;
