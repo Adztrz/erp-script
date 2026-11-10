@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — faster Work Orders, Planning, and LDN and invoice search
 // @namespace    adztrz
-// @version      1.7
+// @version      1.8
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -95,13 +95,15 @@
       font-family: inherit; font-size: 13px; font-weight: 500; line-height: 1; font-variant-numeric: tabular-nums; cursor: pointer;
       transition: color .2s cubic-bezier(.22, 1, .36, 1), background .2s cubic-bezier(.22, 1, .36, 1), transform .1s; }
     #erp-fast button:hover { color: var(--paper); background: rgba(255,255,255,.03); }
-    #erp-fast button:active { transform: scale(.98); }
+    #erp-fast button:active { transform: scale(.96); }
+    #erp-fast .tag::before { animation: erp-fast-dot 2.4s cubic-bezier(.1, 0, .1, 1) 1; }
+    @keyframes erp-fast-dot { 30% { transform: scale(1.8); opacity: .5; } }
     #erp-fast button[aria-pressed="true"] { background: var(--raised); color: var(--paper); }
     #erp-fast .solo { box-shadow: inset 0 0 0 1px var(--edge); color: var(--paper); }
     #erp-fast .solo:hover { box-shadow: inset 0 0 0 1px #696a68; }
     #erp-fast button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
     @media (max-width: 760px) { #erp-fast { left: 16px; right: 16px; justify-content: space-between; } #erp-fast button { height: 36px; } }
-    @media (prefers-reduced-motion: reduce) { #erp-fast { animation: none; } #erp-fast button { transition: none; } }`;
+    @media (prefers-reduced-motion: reduce) { #erp-fast, #erp-fast .tag::before { animation: none; } #erp-fast button { transition: none; } }`;
 
   function draw() {
     if (!document.body) return void document.addEventListener("DOMContentLoaded", draw, { once: true });
@@ -168,6 +170,7 @@
   async function idbGet(key) { try { const db = await idb(); return await new Promise((ok) => { const q = db.transaction(IDB_STORE).objectStore(IDB_STORE).get(key); q.onsuccess = () => ok(q.result); q.onerror = () => ok(null); }); } catch { return null; } }
   async function idbPut(key, v) { try { const db = await idb(); db.transaction(IDB_STORE, "readwrite").objectStore(IDB_STORE).put(v, key); } catch { /* the list just isn't kept */ } }
 
+  const calm = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
   const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
   function marked(name, words) {
     // the typed words, underlined where they appear in the name as written
@@ -181,7 +184,7 @@
 
   /** One fast search: where it shows, how its list is loaded, what each row says. */
   function fastSearch(cfg) {
-    const st = { auth: null, key: cfg.key({}), rows: null, at: 0, loading: null, done: 0, pages: 0, error: "", total: 0, partial: false, partNo: 0, parts: 0, partName: "", box: null, input: null, hits: [], sel: 0, query: "", picking: false };
+    const st = { auth: null, key: cfg.key({}), rows: null, at: 0, loading: null, done: 0, pages: 0, error: "", total: 0, partial: false, partNo: 0, parts: 0, partName: "", box: null, input: null, hits: [], sel: 0, query: "", picking: false, shown: new Set(), count: "", closing: null };
 
     function index(rows) {
       for (const r of rows) {
@@ -283,9 +286,16 @@
       st.box.style.left = `${Math.max(8, Math.min(r.right - w, vw - w - 8))}px`;
       st.box.style.width = `${w}px`;
     }
-    function close() { st.box?.remove(); st.box = null; }
+    // closing folds the box away; a reduced-motion user (or a box already going) just loses it
+    function close() {
+      const box = st.box; if (!box) return;
+      st.box = null; st.shown = new Set(); st.count = "";
+      if (calm()) return void box.remove();
+      box.classList.add("out"); setTimeout(() => box.remove(), 180);
+    }
     function pick(r) {
       if (!r || !st.input) return;
+      st.box?.querySelector('[aria-selected="true"]')?.classList.add("picked"); // a short flash on the row you chose
       close();
       const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
       st.picking = true; set.call(st.input, cfg.pick(r)); st.input.dispatchEvent(new Event("input", { bubbles: true })); st.picking = false; st.query = cfg.pick(r);
@@ -294,33 +304,74 @@
     function draw() {
       if (!st.input || !st.input.isConnected || !st.query.trim() || document.activeElement !== st.input) { if (st.box && document.activeElement !== st.input) close(); return; }
       if (!document.getElementById("erp-fs-css")) { const s = el("style"); s.id = "erp-fs-css"; s.textContent = fsCss; document.head.append(s); }
-      if (!st.box) { st.box = el("div", "erp-fs"); st.box.setAttribute("role", "listbox"); st.box.setAttribute("aria-label", "Fast search"); document.body.append(st.box);
-        st.box.addEventListener("mousedown", (e) => e.preventDefault()); } // keep focus in the search box
-      const words = fold(st.query).split(" ").filter(Boolean);
+      let fresh = false;
+      if (!st.box) {
+        fresh = true;
+        st.box = el("div", "erp-fs"); st.box.setAttribute("role", "listbox"); st.box.setAttribute("aria-label", "Fast search"); document.body.append(st.box);
+        st.box.addEventListener("mousedown", (e) => e.preventDefault()); // keep focus in the search box
+        st.box.append(el("div", "head"), el("div", "bar"), el("div", "body"), el("div", "foot"));
+        // the label is made once, so a redraw while it types doesn't cut it short
+        const label = el("span", `tw${calm() ? "" : " typing"}`, "Fast search"); label.style.setProperty("--n", String(label.textContent.length));
+        st.box.querySelector(".head").append(label, el("span", "info"));
+        st.box.querySelector(".bar").append(el("span"));
+        const foot = st.box.querySelector(".foot"); foot.append(el("kbd", null, "↑↓"), " choose · ", el("kbd", null, "Enter"), " show in the table · ", el("kbd", null, "Esc"), " close");
+      }
+      const box = st.box, words = fold(st.query).split(" ").filter(Boolean);
       st.hits = search(st.query); st.sel = Math.min(st.sel, Math.max(0, st.hits.length - 1));
-      const head = el("div", "head");
+
+      // head: the label types itself in when the box opens, the count pops when it changes
+      const head = box.querySelector(".info");
+      head.replaceChildren();
       if (st.rows) {
         const mins = Math.floor((Date.now() - st.at) / 60000), missing = st.total - st.rows.length;
+        const count = `${st.hits.length > 29 ? "30+" : st.hits.length} of ${st.rows.length.toLocaleString("id-ID")}${!st.loading && missing > 0 ? ` (${missing.toLocaleString("id-ID")} not loaded)` : ""}`;
         const progress = st.loading ? ` · ${st.parts > 1 ? `loading ${st.partName} (${st.partNo} of ${st.parts}) ` : "updating "}${st.done}/${st.pages || "…"}` : ` · ${mins < 1 ? "just updated" : `${mins} min old`}`;
-        head.append(`Fast search${cfg.scope ? ` · ${cfg.scope(st.key)}` : ""} `, el("b", null, `${st.hits.length > 29 ? "30+" : st.hits.length} of ${st.rows.length.toLocaleString("id-ID")}${!st.loading && missing > 0 ? ` (${missing.toLocaleString("id-ID")} not loaded)` : ""}`), progress);
-        const b = el("button", null, "Update"); b.type = "button"; b.onclick = () => load(true); head.append(b);
-      } else head.append(st.error ? st.error : `Loading ${cfg.noun}${st.parts > 1 ? ` · ${st.partName} (${st.partNo} of ${st.parts})` : ""} ${st.done}/${st.pages || "…"}`);
-      const list = el("ul");
-      st.hits.forEach((r, i) => {
-        const li = el("li"); li.setAttribute("role", "option"); li.setAttribute("aria-selected", String(i === st.sel));
-        li.append(el("span", `dot ${cfg.dot(r)}`), marked(String(cfg.name(r) ?? ""), words), el("span", "us", cfg.id(r)));
-        li.append(el("span", "sub", cfg.sub(r).filter(Boolean).join(" · ")));
-        li.onclick = () => pick(r);
-        list.append(li);
-      });
-      const parts = [head];
-      if (st.hits.length) parts.push(list);
-      else if (st.rows) parts.push(el("div", "empty", st.loading ? "Nobody yet in what's loaded; older months are still coming" : "Nobody matches all of those words"));
-      const foot = el("div", "foot"); foot.append(el("kbd", null, "↑↓"), " choose · ", el("kbd", null, "Enter"), " show in the table · ", el("kbd", null, "Esc"), " close");
-      if (st.hits.length) parts.push(foot);
-      st.box.replaceChildren(...parts);
+        const b = el("b", count !== st.count && st.count && !calm() ? "pop" : null, count); st.count = count;
+        head.append(cfg.scope ? ` · ${cfg.scope(st.key)} ` : " ", b, progress);
+        const up = el("button", null, "Update"); up.type = "button"; up.onclick = () => load(true); head.append(up);
+      } else head.append(` ${st.error ? st.error : `Loading ${cfg.noun}${st.parts > 1 ? ` · ${st.partName} (${st.partNo} of ${st.parts})` : ""} ${st.done}/${st.pages || "…"}`}`);
+
+      // a thin bone line for the page being loaded, with light sweeping across it
+      const bar = box.querySelector(".bar");
+      bar.classList.toggle("on", !!st.loading);
+      bar.firstChild.style.transform = `scaleX(${st.pages ? Math.min(1, st.done / st.pages) : 0.04})`;
+
+      // results: new ones rise in one after another; ones that stay don't move
+      const body = box.querySelector(".body"), seen = st.shown, now = new Set();
+      let list = body.querySelector("ul"), pill;
+      if (st.hits.length) {
+        if (!list) { list = el("ul"); pill = el("div", "pill"); list.append(pill); body.replaceChildren(list); }
+        pill = list.querySelector(".pill");
+        const rows = [];
+        let fresh_i = 0;
+        st.hits.forEach((r, i) => {
+          const id = cfg.id(r); now.add(id);
+          const li = el("li"); li.setAttribute("role", "option"); li.setAttribute("aria-selected", String(i === st.sel));
+          if (!seen.has(id) && !calm()) { li.classList.add("in"); li.style.setProperty("--i", String(Math.min(fresh_i++, 9))); }
+          li.append(el("span", `dot ${cfg.dot(r)}`), marked(String(cfg.name(r) ?? ""), words), el("span", "us", id));
+          li.append(el("span", "sub", cfg.sub(r).filter(Boolean).join(" · ")));
+          li.onclick = () => pick(r);
+          rows.push(li);
+        });
+        list.replaceChildren(pill, ...rows);
+      } else {
+        const msg = st.rows ? (st.loading ? "Nobody yet in what's loaded; older months are still coming" : "Nobody matches all of those words") : "";
+        const old = body.querySelector(".empty");
+        if (!old || old.textContent !== msg) body.replaceChildren(...(msg ? [el("div", "empty", msg)] : []));
+      }
+      st.shown = now;
+      box.querySelector(".foot").hidden = !st.hits.length;
+      if (fresh && !calm()) box.classList.add("opening");
       place();
-      st.box.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
+
+      // the highlight slides to the chosen row
+      const on = box.querySelector('[aria-selected="true"]');
+      if (on && list) {
+        pill = list.querySelector(".pill");
+        const go = () => { pill.style.transform = `translateY(${on.offsetTop}px)`; pill.style.height = `${on.offsetHeight}px`; pill.classList.add("on"); };
+        if (fresh || !pill.classList.contains("on")) { pill.style.transition = "none"; go(); void pill.offsetHeight; pill.style.transition = ""; } else go();
+        on.scrollIntoView({ block: "nearest" });
+      }
     }
 
     const here = () => location.pathname.startsWith(cfg.path);
@@ -353,16 +404,15 @@
       position: fixed; z-index: 2147483001; max-height: min(460px, 60vh); display: flex; flex-direction: column; border-radius: 8px; background: var(--card); color: var(--body);
       font: 400 14px/1.4 Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; font-feature-settings: "cv11", "tnum"; -webkit-font-smoothing: antialiased;
       box-shadow: inset 0 0 0 1px var(--edge), 0 40px 32px rgba(0,0,0,.18), 0 22px 18px rgba(0,0,0,.2), 0 12px 10px rgba(0,0,0,.2), 0 6px 5px rgba(0,0,0,.18), 0 2px 2px rgba(0,0,0,.2);
-      animation: erp-fast-menu .25s cubic-bezier(.22, 1, .36, 1) both; transform-origin: top; }
-    @keyframes erp-fast-menu { from { opacity: 0; transform: scale(.98) translateY(-4px); } }
+      transform-origin: top; }
     .erp-fs .head { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--hair); font-size: 12px; font-weight: 500; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
     .erp-fs .head::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--bone); flex: none; }
+    .erp-fs .head .info { display: contents; }
     .erp-fs .head b { font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--paper); }
     .erp-fs .head button { margin-left: auto; border: 0; background: none; color: var(--muted); font: inherit; letter-spacing: 0; text-transform: none; cursor: pointer; padding: 2px 6px; border-radius: 6px; }
     .erp-fs .head button:hover { color: var(--paper); background: rgba(255,255,255,.04); }
     .erp-fs ul { list-style: none; margin: 0; padding: 4px; overflow: auto; }
     .erp-fs li { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; gap: 4px 12px; align-items: center; padding: 8px 10px; border-radius: 6px; cursor: pointer; }
-    .erp-fs li[aria-selected="true"] { background: var(--raised); }
     .erp-fs .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
     .erp-fs .dot.on { background: var(--green); } .erp-fs .dot.iso { background: var(--red); }
     .erp-fs .nm { color: var(--paper); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -372,7 +422,45 @@
     .erp-fs .empty { padding: 16px 14px; color: var(--muted); }
     .erp-fs .foot { padding: 8px 14px; border-top: 1px solid var(--hair); font-size: 12px; color: var(--muted); }
     .erp-fs kbd { font: 11px "JetBrains Mono", ui-monospace, monospace; padding: 1px 5px; border-radius: 4px; box-shadow: inset 0 0 0 1px var(--edge); color: var(--body); }
-    @media (prefers-reduced-motion: reduce) { .erp-fs { animation: none; } }`;
+    /* ---- motion, in Faust's language: soft Column curve to arrive, the swap curve to slide, quick to leave ---- */
+    .erp-fs { --soft: cubic-bezier(.1, 0, .1, 1); --swap: cubic-bezier(.76, 0, .24, 1); --out: cubic-bezier(.22, 1, .36, 1); animation: none; }
+    .erp-fs.opening { animation: erp-fs-open .42s var(--out) both; }
+    @keyframes erp-fs-open { from { opacity: 0; clip-path: inset(0 0 100% 0 round 8px); transform: translateY(-6px); filter: blur(2px); }
+      to { opacity: 1; clip-path: inset(0 0 0 0 round 8px); transform: none; filter: none; } }
+    .erp-fs.out { animation: erp-fs-close .18s cubic-bezier(.4, 0, 1, 1) both; pointer-events: none; }
+    @keyframes erp-fs-close { to { opacity: 0; transform: translateY(-4px) scale(.98); filter: blur(1px); } }
+    /* the eyebrow types itself in, then keeps a faint blinking block cursor */
+    .erp-fs .tw { display: inline-flex; align-items: center; }
+    .erp-fs .tw::after { content: ""; width: .5em; height: 1em; margin-left: 3px; background: var(--bone); opacity: .2; animation: erp-fs-blink 1.1s steps(1) infinite; }
+    .erp-fs .tw.typing { clip-path: inset(0 100% 0 0); animation: erp-fs-type .55s steps(var(--n)) .08s forwards; }
+    @keyframes erp-fs-type { to { clip-path: inset(0 0 0 0); } }
+    @keyframes erp-fs-blink { 50% { opacity: 0; } }
+    .erp-fs .head b.pop { display: inline-block; animation: erp-fs-pop .32s var(--out); }
+    @keyframes erp-fs-pop { from { transform: translateY(3px); opacity: .4; filter: blur(1px); } }
+    /* loading: a bone line that grows with the pages, light sweeping across it */
+    .erp-fs .bar { height: 1px; background: var(--hair); overflow: hidden; position: relative; opacity: 0; transition: opacity .3s; }
+    .erp-fs .bar.on { opacity: 1; }
+    .erp-fs .bar span { position: absolute; inset: 0; background: var(--bone); transform-origin: left; transform: scaleX(0); transition: transform .5s var(--out); }
+    .erp-fs .bar.on::after { content: ""; position: absolute; inset: 0; width: 30%; background: linear-gradient(90deg, transparent, rgba(255,255,255,.7), transparent); animation: erp-fs-sweep 1.4s var(--swap) infinite; }
+    @keyframes erp-fs-sweep { from { transform: translateX(-100%); } to { transform: translateX(380%); } }
+    .erp-fs .body { display: flex; flex-direction: column; min-height: 0; }
+    .erp-fs ul { position: relative; }
+    /* results rise in one after another; the selection is a pill that slides between them */
+    .erp-fs li { position: relative; z-index: 1; background: none !important; transition: transform .1s; }
+    .erp-fs li.in { animation: erp-fs-row .45s var(--soft) both; animation-delay: calc(var(--i) * 28ms); }
+    @keyframes erp-fs-row { from { opacity: 0; transform: translateY(8px); filter: blur(2px); } }
+    .erp-fs li:active { transform: scale(.99); }
+    .erp-fs .pill { position: absolute; left: 4px; right: 4px; top: 0; border-radius: 6px; background: var(--raised); opacity: 0;
+      transition: transform .32s var(--swap), height .32s var(--swap), opacity .2s; pointer-events: none; }
+    .erp-fs .pill.on { opacity: 1; }
+    .erp-fs li.picked { animation: erp-fs-pick .18s ease-out both; }
+    @keyframes erp-fs-pick { 40% { background: rgba(233,225,220,.12); } }
+    .erp-fs .empty { animation: erp-fs-row .35s var(--soft) both; }
+    .erp-fs mark { transition: color .2s; }
+    @media (prefers-reduced-motion: reduce) {
+      .erp-fs, .erp-fs *, .erp-fs *::after { animation: none !important; transition: none !important; }
+      .erp-fs .tw.typing { clip-path: none; }
+    }`;
 
   const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   const searches = [
