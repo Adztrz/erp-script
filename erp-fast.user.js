@@ -167,7 +167,8 @@
     return prev[b.length] <= max;
   }
   // A typed word that's close to the start of a word in the record (so a half-typed word still counts)
-  const fuzzyHit = (w, words, max) => words.some((x) => near(w, x.slice(0, w.length), max) || near(w, x.slice(0, w.length + 1), max) || near(w, x, max));
+  // (only words starting with the same letter: a slip in the first letter is rare, and it skips most of the work)
+  const fuzzyHit = (w, words, max) => words.some((x) => x[0] === w[0] && (near(w, x.slice(0, w.length), max) || near(w, x.slice(0, w.length + 1), max) || near(w, x, max)));
 
   function indexRows(rows) {
     for (const r of rows) {
