@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.11
+// @version      2.12
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -1479,7 +1479,7 @@
       if (w.erpRo && nameNorm(w.erpRo).split(/[\s-]/)[0] !== nameNorm(s.ro).split(/[\s-]/)[0])
         box.append(el("p", "note warn", `The ERP has this customer on ${w.erpRo}, but the session is on ${s.ro}: the ERP's own Remote ONU and its 5-minute access can't find it. Correct the customer's RO in the ERP to fix that; the links below work anyway.`));
       // direct links
-      const links = el("div", "actions"), link = (label, url) => { const a = el("a", "btn", label); a.href = url; a.target = "_blank"; a.rel = "noreferrer noopener"; links.append(a); };
+      const links = el("div", "actions"), link = (label, url) => { const a = el("a", links.children.length ? "btn" : "btn primary", label); /* port 80 first: the main way in, on the NOC WireGuard */ a.href = url; a.target = "_blank"; a.rel = "noreferrer noopener"; links.append(a); };
       link("Open :80 ↗", `http://${s.addr}/`); link(":8080 ↗", `http://${s.addr}:8080/`);
       if (dev?.mgmt && dev.mgmt !== s.addr) link(`TR-069 IP ${dev.mgmt} ↗`, `http://${dev.mgmt}/`);
       box.append(links, el("p", "note", "These open on a device connected to the NOC WireGuard (the RO only lets 10.99.98.0/24 reach modems)."));
