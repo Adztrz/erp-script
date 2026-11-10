@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — faster Work Orders, Planning, and LDN and invoice search
 // @namespace    adztrz
-// @version      1.8
+// @version      1.9
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -199,8 +199,7 @@
 
     // One list is loaded in parts when cfg.parts says so (invoices for "all months": month by month, newest first).
     // Each part is kept on its own, so a month already opened is reused, and the search works on what's loaded so far.
-    async function loadPart(part, force) {
-      if (!force) { const kept = await idbGet(part); if (kept?.rows && Date.now() - kept.at < (cfg.ttl ? cfg.ttl(part) : SEARCH_TTL)) return kept; }
+    async function loadPart(part) {
       const size = cfg.pageSize;
       st.done = 0; st.pages = 0;
       const page = async (p) => {
@@ -226,22 +225,28 @@
     async function load(force = false) {
       if (st.loading) return st.loading;
       if (!force && st.rows && !st.partial && Date.now() - st.at < SEARCH_TTL) return;
-      const key = st.key, parts = cfg.parts ? cfg.parts(key) : [key];
-      if (!st.auth) {
-        // without a sign-in, whatever is kept still searches
-        if (!st.rows) { const kept = (await Promise.all(parts.map(idbGet))).filter(Boolean); if (kept.length && key === st.key) { st.rows = index(kept.flatMap((k) => k.rows)); st.at = Math.min(...kept.map((k) => k.at)); st.total = kept.reduce((n, k) => n + (k.total || 0), 0); st.partial = kept.length < parts.length; draw(); } }
-        st.error = "Open this list once so the search can sign in"; draw(); return;
-      }
+      const key = st.key, parts = cfg.parts ? cfg.parts(key) : [key], byPart = new Map();
+      const show = () => {
+        if (key !== st.key) return;
+        const got = parts.filter((p) => byPart.has(p)).map((p) => byPart.get(p));
+        st.rows = got.flatMap((k) => k.rows); st.total = got.reduce((n, k) => n + (k.total || 0), 0);
+        st.at = Math.min(...got.map((k) => k.at)); st.partial = got.length < parts.length; draw();
+      };
+      // what this browser kept answers at once, however old; the fresh list replaces it part by part as it arrives
+      (await Promise.all(parts.map(idbGet))).forEach((k, i) => { if (k?.rows) byPart.set(parts[i], { ...k, rows: index(k.rows) }); });
+      if (byPart.size) show();
+      if (!st.auth) { if (!byPart.size) { st.error = "Open this list once so the search can sign in"; draw(); } return; }
       st.loading = (async () => {
         st.error = ""; st.partNo = 0; st.parts = parts.length;
-        const all = [], totals = [], ats = [];
         try {
           for (const part of parts) {
             if (key !== st.key) break; // the page moved to another month: stop, its own list loads next
             st.partNo++; st.partName = cfg.partLabel ? cfg.partLabel(part) : "";
-            const kept = await loadPart(part, force);
-            all.push(...index(kept.rows)); totals.push(kept.total || 0); ats.push(kept.at);
-            if (key === st.key) { st.rows = all.slice(); st.total = totals.reduce((a, b) => a + b, 0); st.at = Math.min(...ats); st.partial = st.partNo < parts.length; draw(); }
+            const kept = byPart.get(part), fresh = kept && Date.now() - kept.at < (cfg.ttl ? cfg.ttl(part) : SEARCH_TTL);
+            if (fresh && !force) continue;
+            const got = await loadPart(part);
+            byPart.set(part, { ...got, rows: index(got.rows) });
+            show();
           }
         } catch (e) { st.error = `Couldn't load the list: ${e.message}`; }
         st.loading = null; draw();
@@ -398,7 +403,7 @@
     // the page's own requests: its sign-in (kept in memory only, never saved) and, for invoices, which month it shows
     return function seen(u, auth) {
       if (!u.pathname.startsWith(cfg.api)) return;
-      if (auth) { const first = !st.auth; st.auth = auth; if (first && st.error) { st.error = ""; load(); } }
+      if (auth) { const first = !st.auth; st.auth = auth; if (first && (st.error || st.rows)) { st.error = ""; load(); } } // refresh what the saved copy showed
       const key = cfg.key(Object.fromEntries(u.searchParams));
       if (key !== st.key) { st.key = key; st.rows = null; st.total = 0; st.partial = false; } // another month: its own list, loaded on the next search
     };
