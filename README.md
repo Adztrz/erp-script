@@ -35,6 +35,8 @@ A floating button above the site's own corner button (or **Alt+K**, anywhere in 
 
 Apart from paying (the card's Pay and Bulk Lunas) and the outage radar, it never asks the server on its own: it reads what's kept in this browser. Open LDN Radius → Pelanggan once to fill the customer list (the first time takes about 2 minutes), and Invoices once for invoices.
 
+Colours everywhere in the Dock: online green, isolir red, offline grey; red also marks an alarm (critical signal, a port mostly down, stale data) and amber a warning.
+
 ## Install
 
 1. Install [Tampermonkey](https://www.tampermonkey.net/).

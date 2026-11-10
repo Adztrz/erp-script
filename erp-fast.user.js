@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.25
+// @version      2.26
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -456,7 +456,7 @@
     .erp-fs ul { list-style: none; margin: 0; padding: 4px; overflow: auto; }
     .erp-fs li { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; gap: 4px 12px; align-items: center; padding: 8px 10px; border-radius: 6px; cursor: pointer; }
     .erp-fs .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
-    .erp-fs .dot.on { background: var(--green); } .erp-fs .dot.iso { background: var(--red); }
+    .erp-fs .dot.on { background: var(--green); } .erp-fs .dot.iso, .erp-fs .dot.bad { background: var(--red); } .erp-fs .dot.off { background: #8a8b8a; } /* isolir red, offline grey */
     .erp-fs .nm { color: var(--paper); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .erp-fs .nm mark { background: none; color: var(--bone); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: rgba(233,225,220,.4); }
     .erp-fs .us { font: 12px/1.4 "JetBrains Mono", ui-monospace, Menlo, monospace; color: var(--body); }
@@ -516,7 +516,7 @@
         "lat", "lng", "ip", "tglAktif", "ontSerial", "mitra", "customerDocId"], // the Dock shows these, and finds neighbours by lat/lng
       name: (r) => r.nama, id: (r) => r.username, pick: (r) => r.username,
       hay: (r) => [r.username, r.address, r.desa, r.kecamatanErp, r.district, r.router, r.paket], numbers: (r) => [r.phone],
-      dot: (r) => (r.isolir ? "iso" : r.online ? "on" : ""), sub: (r) => [r.paket, r.desa, r.router, r.phone],
+      dot: (r) => (r.isolir ? "iso" : r.online ? "on" : "off"), sub: (r) => [r.paket, r.desa, r.router, r.phone],
     }),
     // Finance → Invoices: the month the page shows (it follows the month you pick there)
     fastSearch({
@@ -536,7 +536,7 @@
       keep: ["invoiceNumber", "winpayTrxId", "customerName", "radiusUsername", "contractNumber", "desa", "kecamatan", "router", "paket", "phone", "amount", "status", "period", "dueDate", "paidDate"],
       name: (r) => r.customerName, id: (r) => r.invoiceNumber, pick: (r) => r.invoiceNumber,
       hay: (r) => [r.invoiceNumber, r.winpayTrxId, r.radiusUsername, r.contractNumber, r.desa, r.kecamatan, r.router, r.paket], numbers: (r) => [r.phone],
-      dot: (r) => (/lunas|paid|bayar/i.test(r.status) && !/belum|unpaid/i.test(r.status) ? "on" : /jatuh|overdue|telat|lewat|tunggak/i.test(r.status) ? "iso" : ""),
+      dot: (r) => (/lunas|paid|bayar/i.test(r.status) && !/belum|unpaid/i.test(r.status) ? "on" : /jatuh|overdue|telat|lewat|tunggak/i.test(r.status) ? "bad" : ""),
       sub: (r) => [r.status, rupiah(r.amount), r.period, r.desa, r.radiusUsername],
     }),
   ];
@@ -682,7 +682,9 @@
       .erp-dock .item .s { grid-column: 2 / 4; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .erp-dock .item svg { width: 16px; height: 16px; color: var(--muted); }
       .erp-dock .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); justify-self: center; }
-      .erp-dock .dot.on { background: var(--green); box-shadow: 0 0 0 3px rgba(85,188,130,.15); } .erp-dock .dot.iso { background: var(--red); box-shadow: 0 0 0 3px rgba(241,38,20,.15); }
+      .erp-dock .dot.on { background: var(--green); box-shadow: 0 0 0 3px rgba(85,188,130,.15); }
+      .erp-dock .dot.iso, .erp-dock .dot.bad { background: var(--red); box-shadow: 0 0 0 3px rgba(241,38,20,.15); }
+      .erp-dock .dot.off { background: #8a8b8a; } /* online green, isolir red, offline grey */
       .erp-dock .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; padding: 0 6px; }
       .erp-dock .tile { display: grid; justify-items: start; gap: 8px; padding: 12px; border: 0; border-radius: 8px; background: var(--canvas); box-shadow: inset 0 0 0 1px var(--hair);
         color: var(--paper); font: inherit; font-size: 13px; font-weight: 500; text-align: left; cursor: pointer; transition: box-shadow .2s, transform .15s var(--out); }
@@ -692,7 +694,7 @@
       .erp-dock .stat { padding: 10px 12px; border-radius: 8px; background: var(--canvas); box-shadow: inset 0 0 0 1px var(--hair); }
       .erp-dock .stat b { display: block; font-size: 20px; font-weight: 500; letter-spacing: -.01em; color: var(--paper); font-variant-numeric: tabular-nums; }
       .erp-dock .stat span { font-size: 12px; color: var(--muted); }
-      .erp-dock .stat.on b { color: var(--green); } .erp-dock .stat.iso b { color: #ff6a5c; }
+      .erp-dock .stat.on b { color: var(--green); } .erp-dock .stat.iso b, .erp-dock .stat.bad b { color: #ff6a5c; }
       .erp-dock .note { margin: 8px 10px; font-size: 12px; color: var(--muted); }
       /* the customer card */
       .erp-dock .card { padding: 4px 8px 8px; }
@@ -745,6 +747,7 @@
       .erp-dock-full .map.full { position: absolute; inset: 0; height: auto; margin: 0; border-radius: 0; }
       .erp-dock .map.full .mdot { width: 13px; height: 13px; margin: -6.5px 0 0 -6.5px; }
       .erp-dock .map .attr { position: absolute; left: 6px; bottom: 4px; font-size: 10px; color: rgba(255,255,255,.75); text-shadow: 0 1px 2px #000; pointer-events: none; }
+      .erp-dock .counts span { display: inline-flex; align-items: center; gap: 6px; } .erp-dock .counts .dot { width: 8px; height: 8px; }
       .erp-dock .counts { display: flex; gap: 12px; font-size: 13px; } .erp-dock .counts b { color: var(--paper); font-weight: 500; }
       .erp-dock .rise { animation: erp-dock-rise .45s var(--soft) both; animation-delay: calc(var(--i, 0) * 30ms); }
       @keyframes erp-dock-rise { from { opacity: 0; transform: translateY(8px); filter: blur(2px); } }
@@ -1285,7 +1288,7 @@
       who.append(el("h3", null, x.name), pill); wrap.append(who);
       const stats = el("div", "stats rise"); stats.style.cssText = "margin-top:12px;padding:0"; stats.style.setProperty("--i", "1");
       const stat = (v, l, cls = "") => { const d = el("div", `stat ${cls}`); d.append(el("b", null, String(v)), el("span", null, l)); stats.append(d); return d; };
-      stat(x.open, "online now", x.level === "down" || x.level === "drop" ? "iso" : "on"); stat(x.usual ?? "–", "usually"); const back15 = stat("…", "reconnected ≤15 min");
+      stat(x.open, "online now", x.level === "down" || x.level === "drop" ? "bad" : "on"); stat(x.usual ?? "–", "usually"); const back15 = stat("…", "reconnected ≤15 min");
       wrap.append(stats);
       const chart = el("div", "near rise"); chart.style.setProperty("--i", "2");
       const cv = el("canvas", "big"); cv.setAttribute("aria-label", `${x.name} sessions over the last 24 hours`);
@@ -1406,7 +1409,7 @@
     const rxClass = (rx) => (rx == null ? "" : rx >= -26 ? "good" : rx >= -28 ? "warn" : "late");
     const dbm = (rx) => (rx == null || rx === 0 ? "–" : `${Number(rx).toFixed(1).replace(".", ",")} dBm`);
     const when = (t) => { if (!t) return ""; const m = Math.floor((Date.now() - new Date(t)) / 60000); return m < 1 ? "just now" : m < 120 ? `${m} min ago` : m < 2880 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} days ago`; };
-    const ontState = (o) => (!o ? "" : /online|working/i.test(o.st) ? "on" : /los|dying|offline/i.test(o.st) ? "iso" : "off");
+    const ontState = (o) => (!o ? "" : /online|working/i.test(o.st) ? "on" : /los|dying|offline/i.test(o.st) ? "off" : "");
     function modemItem(m, i) {
       const b = el("button", "item rise"); b.type = "button"; b.style.setProperty("--i", String(i));
       b.append(el("span", `dot ${ontState(m.ont)}`), el("span", "t", m.cust?.nama || m.ont?.name || m.dev?.model || m.sn), el("span", "r", m.ont?.raw || m.sn),
@@ -1620,7 +1623,7 @@
     const needOnts = (out) => { if (onts) return true; out.push(el("p", "note", "Reading the OLTs' ONT lists… (about 6 seconds the first time)")); ontIndex().then(() => drawBody()).catch((e) => { out.length = 0; }); return false; };
     function ontItem(o, i, right) {
       const c = customerOf(o.sn, o, null), b = el("button", "item rise"); b.type = "button"; b.style.setProperty("--i", String(Math.min(i, 14)));
-      const lv = o.st !== "online" ? "iso" : usable(o) ? { crit: "iso", warn: "drop", good: "on" }[sigLevel(o.rx)] : "";
+      const lv = o.st !== "online" ? "off" : usable(o) ? { crit: "bad", warn: "drop", good: "on" }[sigLevel(o.rx)] : "";
       b.append(el("span", `dot ${lv}`), el("span", "t", c?.nama || o.name || o.raw), el("span", "r", right ?? (usable(o) ? dbm(o.rx) : o.st)),
         el("span", "s", [`${o.olt} · ${o.pon}:${o.id}`, c?.desa, c?.username || "no customer linked", o.st !== "online" ? o.st : old(o) ? `old reading (${when(o.seen)})` : when(o.seen)].filter(Boolean).join(" · ")));
       b.onclick = () => { if (c) { view.card = c; remember(c); } else view.modem = o.sn; view.sel = 0; draw(); };
@@ -1648,7 +1651,7 @@
       if (clusters.length) { const e = el("div", "eyebrow"); e.append("PON ports with several weak"); out.push(e);
         clusters.forEach(([k, l], i) => { const g = groups.find((x) => x.key === k), b = el("button", "item rise"); b.type = "button"; b.style.setProperty("--i", String(i));
           const avg = l.reduce((a, o) => a + o.rx, 0) / l.length;
-          b.append(el("span", `dot ${lvl === "crit" ? "iso" : "drop"}`), el("span", "t", `${g?.olt || l[0].olt} · ${l[0].pon}`), el("span", "r", `${l.length} of ${g?.all.length ?? "?"}`), el("span", "s", `worst ${dbm(l[0].rx)} · average ${dbm(avg)}`));
+          b.append(el("span", `dot ${lvl === "crit" ? "bad" : "drop"}`), el("span", "t", `${g?.olt || l[0].olt} · ${l[0].pon}`), el("span", "r", `${l.length} of ${g?.all.length ?? "?"}`), el("span", "s", `worst ${dbm(l[0].rx)} · average ${dbm(avg)}`));
           b.onclick = () => { view.from = "signal"; view.mode = "pon"; view.pon = k; drawBody(); }; out.push(b); }); }
       const e2 = el("div", "eyebrow"); e2.append(`Weakest`, el("b", null, `${weak.length}`)); out.push(e2);
       weak.slice(0, 60).forEach((o, i) => out.push(ontItem(o, i)));
@@ -1674,7 +1677,7 @@
       const g = ponGroups().find((x) => x.key === key); if (!g) { out.push(el("p", "note", "This port isn't in the OLT lists any more.")); return out; }
       const wrap = el("div", "card"), who = el("div", "who"); who.append(el("h3", null, `${g.olt} · PON ${g.pon}`)); wrap.append(who);
       const stats = el("div", "stats"); stats.style.cssText = "margin-top:12px;padding:0";
-      for (const [v, l, c] of [[g.all.length, "modems", ""], [g.off, "offline", g.off ? "iso" : ""], [g.crit, "critical signal", g.crit ? "iso" : ""]]) { const d = el("div", `stat ${c}`); d.append(el("b", null, String(v)), el("span", null, l)); stats.append(d); }
+      for (const [v, l, c] of [[g.all.length, "modems", ""], [g.off, "offline", g.off ? "off" : ""], [g.crit, "critical signal", g.crit ? "bad" : ""]]) { const d = el("div", `stat ${c}`); d.append(el("b", null, String(v)), el("span", null, l)); stats.append(d); }
       wrap.append(stats);
       const share = g.off / g.all.length;
       wrap.append(el("p", `note ${g.off >= 3 && share >= 0.25 ? "late" : g.crit >= 3 ? "warn" : "good"}`, g.off >= 3 && share >= 0.25 ? `${g.off} of ${g.all.length} down together: most likely the line (PON, splitter or ODP).`
@@ -1811,7 +1814,7 @@
       const e1 = el("div", "eyebrow"); e1.append("OLT lists ", el("b", null, stale ? `${stale} of ${list.length} older than a day` : `all ${list.length} read within a day`)); out.push(e1);
       list.forEach((g, i) => {
         const row = el("div", "item hrow rise"); row.style.setProperty("--i", String(Math.min(i, 14)));
-        const a = age(g), lv = !g.newest || a > 3 * 86400000 ? "iso" : a > 24 * 3600000 ? "drop" : a > 6 * 3600000 ? "off" : "on";
+        const a = age(g), lv = !g.newest || a > 3 * 86400000 ? "bad" : a > 24 * 3600000 ? "drop" : a > 6 * 3600000 ? "" : "on";
         const read = el("button", "copy", polling.has(g.pid) ? "Reading…" : "Read now"); read.type = "button"; read.disabled = polling.has(g.pid);
         read.title = "Ask the OLT for its modem list now (read-only; up to ~50 s)"; read.onclick = () => readOlt(g.pid, g.olt);
         const info = onts.olts.find((x) => x.id === g.pid), why = a > 24 * 3600000 && info && info.ok === false && info.err ? ` · the ERP can't reach it${info.ip ? ` (${info.ip})` : ""}: ${info.err.replace(/\s+/g, " ").slice(0, 110)}…` : "";
@@ -1826,7 +1829,7 @@
         const dead = radar.list.filter((x) => !x.healthy || x.level === "silent");
         if (!dead.length) out.push(el("p", "note good", `All ${radar.list.length} routers are reporting sessions.`));
         dead.forEach((x) => { const a = areaOf(x.name), row = el("div", "item hrow");
-          row.append(el("span", `dot ${(a?.active ?? 0) >= 20 ? "iso" : "off"}`), el("span", "t", x.name), el("span", "r", `${x.open} sessions`),
+          row.append(el("span", `dot ${(a?.active ?? 0) >= 20 ? "bad" : ""}`), el("span", "t", x.name), el("span", "r", `${x.open} sessions`),
             el("span", "s", (a?.active ?? 0) >= 20 ? `feed ${x.healthy ? "quiet" : "stopped"}, yet ${a.active} active customers on file: their sessions are counted on another router, or the feed is broken` : `feed ${x.healthy ? "quiet" : "stopped"}; few or no customers on file (likely retired)`));
           out.push(row); });
       }
@@ -1965,7 +1968,7 @@
       if (!n) { box.append(el("p", "note", customers && !("lat" in r) ? "Locations arrive with the next refresh of the customer list (LDN → Pelanggan → Update)." : "This customer has no location saved.")); return box; }
       const cnt = { on: 0, off: 0, iso: 0 }; n.list.forEach((x) => cnt[state(x.r)]++);
       const counts = el("div", "counts"); counts.style.marginTop = "10px";
-      for (const [key, label] of [["on", "online"], ["off", "offline"], ["iso", "isolir"]]) { const s = el("span"); s.append(el("b", null, String(cnt[key])), ` ${label}`); counts.append(s); }
+      for (const [key, label] of [["on", "online"], ["off", "offline"], ["iso", "isolir"]]) { const s = el("span"); s.append(el("span", `dot ${key}`), el("b", null, String(cnt[key])), ` ${label}`); counts.append(s); } // also the map's legend
       const map = el("div", "map"); map.setAttribute("role", "group"); map.setAttribute("aria-label", `Map of ${n.list.length} customers within ${view.radius} metres`);
       const pon = el("div", "ponbox");
       box.append(counts, map, cartoKeyRow(() => drawBody()), pon);
@@ -2009,7 +2012,7 @@
         const img = el("img"); img.src = T.url(tx, ty, z); img.alt = ""; img.draggable = false; img.style.left = `${tx * 256 - left}px`; img.style.top = `${ty * 256 - top}px`; tiles.append(img); }
       const tip = el("span", "tip"); tip.hidden = true;
       const dots = [...pts].sort((a, c) => a.on - c.on).reverse().map((z0) => { // offline drawn last, on top
-        const [px, py] = proj(z0.p, z), d = el("button", `mdot ${z0.on ? "on" : "iso"}`); d.type = "button"; d.tabIndex = -1; d.style.left = `${px - left}px`; d.style.top = `${py - top}px`;
+        const [px, py] = proj(z0.p, z), d = el("button", `mdot ${z0.on ? "on" : "off"}`); d.type = "button"; d.tabIndex = -1; d.style.left = `${px - left}px`; d.style.top = `${py - top}px`;
         const name = `${z0.c.nama || z0.c.username}${z0.on ? "" : " · offline"}`; d.setAttribute("aria-label", name);
         d.onmouseenter = () => { tip.textContent = name; tip.style.left = d.style.left; tip.style.top = d.style.top; tip.classList.toggle("low", py - top < 34); tip.hidden = false; d.classList.add("hl"); };
         d.onmouseleave = () => { tip.hidden = true; d.classList.remove("hl"); };
@@ -2102,7 +2105,7 @@
         : ["good", "This PON port looks normal."];
       const open = view.ponFor === r.username && view.ponOpen;
       const head = el("button", "item ponrow"); head.type = "button"; head.setAttribute("aria-expanded", String(!!open));
-      head.append(el("span", `dot ${off.length >= 3 && share >= 0.25 ? "iso" : off.length ? "off" : "on"}`), el("span", "t", `Same PON · ${ont.olt} · ${ont.pon}`),
+      head.append(el("span", `dot ${off.length >= 3 && share >= 0.25 ? "bad" : off.length ? "drop" : "on"}`), el("span", "t", `Same PON · ${ont.olt} · ${ont.pon}`),
         el("span", "r", `${off.length} / ${same.length} offline`), el("span", "s", `${same.length - off.length} online · ${users.size} matched to customers, outlined on the map · OLT list ${when(onts.at)}`));
       head.onclick = () => { view.ponFor = r.username; view.ponOpen = !open; ponLine(box, r, map); };
       const parts = [head, el("p", `note ${verdict[0]}`, verdict[1])];
@@ -2110,7 +2113,7 @@
         if (!off.length) parts.push(el("p", "note", "Everyone on this port is online."));
         off.sort((a, b) => a.id - b.id).slice(0, 40).forEach((o, i) => {
           const c = customerOf(o.sn, o, null), b = el("button", "item rise"); b.type = "button"; b.style.setProperty("--i", String(i));
-          b.append(el("span", `dot ${o.st === "offline" ? "iso" : "off"}`), el("span", "t", c?.nama || o.name || o.raw), el("span", "r", `ONU ${o.id}`),
+          b.append(el("span", `dot ${o.st === "offline" ? "off" : ""}`), el("span", "t", c?.nama || o.name || o.raw), el("span", "r", `ONU ${o.id}`),
             el("span", "s", [o.raw, o.st, o.seen ? `seen ${when(o.seen)}` : "", c ? c.username : "no customer linked"].filter(Boolean).join(" · ")));
           b.onclick = () => { if (c) { view.card = c; remember(c); } else view.modem = o.sn; view.sel = 0; draw(); };
           parts.push(b);
