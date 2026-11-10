@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — faster Work Orders, Planning, and LDN and invoice search
 // @namespace    adztrz
-// @version      1.5
+// @version      1.6
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -181,7 +181,7 @@
 
   /** One fast search: where it shows, how its list is loaded, what each row says. */
   function fastSearch(cfg) {
-    const st = { auth: null, key: cfg.key({}), rows: null, at: 0, loading: null, done: 0, pages: 0, error: "", total: 0, box: null, input: null, hits: [], sel: 0, query: "", picking: false };
+    const st = { auth: null, key: cfg.key({}), rows: null, at: 0, loading: null, done: 0, pages: 0, error: "", total: 0, partial: false, partNo: 0, parts: 0, partName: "", box: null, input: null, hits: [], sel: 0, query: "", picking: false };
 
     function index(rows) {
       for (const r of rows) {
@@ -194,33 +194,52 @@
       return rows;
     }
 
+    // One list is loaded in parts when cfg.parts says so (invoices for "all months": month by month, newest first).
+    // Each part is kept on its own, so a month already opened is reused, and the search works on what's loaded so far.
+    async function loadPart(part, force) {
+      if (!force) { const kept = await idbGet(part); if (kept?.rows && Date.now() - kept.at < SEARCH_TTL) return kept; }
+      const size = cfg.pageSize;
+      st.done = 0; st.pages = 0;
+      const page = async (p) => {
+        const r = await realFetch(cfg.url(part, p, size), { headers: { authorization: st.auth } });
+        if (!r.ok) throw new Error(`The server said ${r.status}`);
+        const j = await r.json(); st.done++; draw();
+        return j;
+      };
+      const first = await page(1), total = cfg.total(first);
+      st.pages = Math.max(1, Math.ceil(total / size));
+      const got = new Map([[1, cfg.items(first)]]), rest = Array.from({ length: st.pages - 1 }, (_, i) => i + 2);
+      // three at a time, so the server isn't flooded
+      for (let i = 0; i < rest.length; i += 3) (await Promise.all(rest.slice(i, i + 3).map(async (p) => [p, cfg.items(await page(p))]))).forEach(([p, c]) => got.set(p, c));
+      // a page that came back short (the server was busy) is asked for again, one at a time
+      for (const p of rest) if (got.get(p).length < size && p < st.pages) got.set(p, cfg.items(await page(p)));
+      if (rest.length && !got.get(st.pages).length) got.set(st.pages, cfg.items(await page(st.pages)));
+      const rows = [...got.keys()].sort((a, b) => a - b).flatMap((p) => got.get(p)).map((c) => Object.fromEntries(cfg.keep.map((k) => [k, c[k]])));
+      const kept = { at: Date.now(), rows, total: total || rows.length };
+      idbPut(part, kept);
+      return kept;
+    }
+
     async function load(force = false) {
       if (st.loading) return st.loading;
-      if (!force && st.rows && Date.now() - st.at < SEARCH_TTL) return;
-      const key = st.key;
-      if (!force && !st.rows) { const kept = await idbGet(key); if (kept?.rows && key === st.key) { st.rows = index(kept.rows); st.at = kept.at; st.total = kept.total || 0; draw(); if (Date.now() - kept.at < SEARCH_TTL) return; } }
-      if (!st.auth) { st.error = "Open this list once so the search can sign in"; draw(); return; }
+      if (!force && st.rows && !st.partial && Date.now() - st.at < SEARCH_TTL) return;
+      const key = st.key, parts = cfg.parts ? cfg.parts(key) : [key];
+      if (!st.auth) {
+        // without a sign-in, whatever is kept still searches
+        if (!st.rows) { const kept = (await Promise.all(parts.map(idbGet))).filter(Boolean); if (kept.length && key === st.key) { st.rows = index(kept.flatMap((k) => k.rows)); st.at = Math.min(...kept.map((k) => k.at)); st.total = kept.reduce((n, k) => n + (k.total || 0), 0); st.partial = kept.length < parts.length; draw(); } }
+        st.error = "Open this list once so the search can sign in"; draw(); return;
+      }
       st.loading = (async () => {
-        st.error = ""; st.done = 0;
-        const size = cfg.pageSize;
-        const page = async (p) => {
-          const r = await realFetch(cfg.url(key, p, size), { headers: { authorization: st.auth } });
-          if (!r.ok) throw new Error(`The server said ${r.status}`);
-          const j = await r.json(); st.done++; draw();
-          return j;
-        };
+        st.error = ""; st.partNo = 0; st.parts = parts.length;
+        const all = [], totals = [], ats = [];
         try {
-          const first = await page(1), total = cfg.total(first);
-          st.pages = Math.max(1, Math.ceil(total / size));
-          const got = new Map([[1, cfg.items(first)]]), rest = Array.from({ length: st.pages - 1 }, (_, i) => i + 2);
-          // three at a time, so the server isn't flooded
-          for (let i = 0; i < rest.length; i += 3) (await Promise.all(rest.slice(i, i + 3).map(async (p) => [p, cfg.items(await page(p))]))).forEach(([p, c]) => got.set(p, c));
-          // a page that came back short (the server was busy) is asked for again, one at a time
-          for (const p of rest) if (got.get(p).length < size && p < st.pages) got.set(p, cfg.items(await page(p)));
-          if (rest.length && !got.get(st.pages).length) got.set(st.pages, cfg.items(await page(st.pages)));
-          const rows = [...got.keys()].sort((a, b) => a - b).flatMap((p) => got.get(p)).map((c) => Object.fromEntries(cfg.keep.map((k) => [k, c[k]])));
-          if (key === st.key) { st.rows = index(rows); st.at = Date.now(); st.total = total || rows.length; }
-          idbPut(key, { at: Date.now(), rows, total });
+          for (const part of parts) {
+            if (key !== st.key) break; // the page moved to another month: stop, its own list loads next
+            st.partNo++; st.partName = cfg.partLabel ? cfg.partLabel(part) : "";
+            const kept = await loadPart(part, force);
+            all.push(...index(kept.rows)); totals.push(kept.total || 0); ats.push(kept.at);
+            if (key === st.key) { st.rows = all.slice(); st.total = totals.reduce((a, b) => a + b, 0); st.at = Math.min(...ats); st.partial = st.partNo < parts.length; draw(); }
+          }
         } catch (e) { st.error = `Couldn't load the list: ${e.message}`; }
         st.loading = null; draw();
       })();
@@ -282,10 +301,10 @@
       const head = el("div", "head");
       if (st.rows) {
         const mins = Math.floor((Date.now() - st.at) / 60000), missing = st.total - st.rows.length;
-        head.append(`Fast search${cfg.scope ? ` · ${cfg.scope(st.key)}` : ""} `, el("b", null, `${st.hits.length > 29 ? "30+" : st.hits.length} of ${st.rows.length.toLocaleString("id-ID")}${missing > 0 ? ` (${missing.toLocaleString("id-ID")} not loaded)` : ""}`),
-          st.loading ? ` · updating ${st.done}/${st.pages || "…"}` : ` · ${mins < 1 ? "just updated" : `${mins} min old`}`);
+        const progress = st.loading ? ` · ${st.parts > 1 ? `loading ${st.partName} (${st.partNo} of ${st.parts}) ` : "updating "}${st.done}/${st.pages || "…"}` : ` · ${mins < 1 ? "just updated" : `${mins} min old`}`;
+        head.append(`Fast search${cfg.scope ? ` · ${cfg.scope(st.key)}` : ""} `, el("b", null, `${st.hits.length > 29 ? "30+" : st.hits.length} of ${st.rows.length.toLocaleString("id-ID")}${!st.loading && missing > 0 ? ` (${missing.toLocaleString("id-ID")} not loaded)` : ""}`), progress);
         const b = el("button", null, "Update"); b.type = "button"; b.onclick = () => load(true); head.append(b);
-      } else head.append(st.error ? st.error : `Loading ${cfg.noun} ${st.done}/${st.pages || "…"}`);
+      } else head.append(st.error ? st.error : `Loading ${cfg.noun}${st.parts > 1 ? ` · ${st.partName} (${st.partNo} of ${st.parts})` : ""} ${st.done}/${st.pages || "…"}`);
       const list = el("ul");
       st.hits.forEach((r, i) => {
         const li = el("li"); li.setAttribute("role", "option"); li.setAttribute("aria-selected", String(i === st.sel));
@@ -296,7 +315,7 @@
       });
       const parts = [head];
       if (st.hits.length) parts.push(list);
-      else if (st.rows) parts.push(el("div", "empty", "Nobody matches all of those words"));
+      else if (st.rows) parts.push(el("div", "empty", st.loading ? "Nobody yet in what's loaded; older months are still coming" : "Nobody matches all of those words"));
       const foot = el("div", "foot"); foot.append(el("kbd", null, "↑↓"), " choose · ", el("kbd", null, "Enter"), " show in the table · ", el("kbd", null, "Esc"), " close");
       if (st.hits.length) parts.push(foot);
       st.box.replaceChildren(...parts);
@@ -325,7 +344,7 @@
       if (!u.pathname.startsWith(cfg.api)) return;
       if (auth) { const first = !st.auth; st.auth = auth; if (first && st.error) { st.error = ""; load(); } }
       const key = cfg.key(Object.fromEntries(u.searchParams));
-      if (key !== st.key) { st.key = key; st.rows = null; st.total = 0; } // another month: its own list, loaded on the next search
+      if (key !== st.key) { st.key = key; st.rows = null; st.total = 0; st.partial = false; } // another month: its own list, loaded on the next search
     };
   }
 
@@ -372,7 +391,11 @@
     fastSearch({
       path: "/finance/invoices", api: "/api/finance/invoices/", input: 'input[placeholder*="No. Invoice"]', noun: "invoices",
       key: (q) => { const now = new Date(); return `inv-${q.year || now.getFullYear()}-${q.month || now.getMonth() + 1}`; },
-      scope: (key) => { const [, y, m] = key.split("-"); return `${MONTHS[Number(m) - 1]} ${y}`; },
+      scope: (key) => { const [, y, m] = key.split("-"); return m === "all" ? `all of ${y}` : `${MONTHS[Number(m) - 1]} ${y}`; },
+      // "Semua Bulan" (month=all) is a whole year, ~70,000 invoices: loaded month by month, newest first, each month kept on its own
+      parts: (key) => { const [, y, m] = key.split("-"); if (m !== "all") return [key]; const now = new Date(), last = Number(y) === now.getFullYear() ? now.getMonth() + 1 : 12;
+        return Array.from({ length: last }, (_, i) => `inv-${y}-${last - i}`); },
+      partLabel: (part) => { const [, y, m] = part.split("-"); return `${MONTHS[Number(m) - 1]} ${y}`; },
       pageSize: 200, // the most the server gives at once
       url: (key, p, size) => { const [, y, m] = key.split("-"); return `/api/finance/invoices/list?month=${m}&year=${y}&page=${p}&pageSize=${size}`; },
       total: (j) => j.total || 0, items: (j) => j.invoices || [],
