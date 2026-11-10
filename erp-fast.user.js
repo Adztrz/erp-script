@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.7
+// @version      2.8
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -543,8 +543,9 @@
 
   // ---------- the Dock: a floating button (Alt+K) with customer lookup, pages and tools ----------
   // Everything here reads what this script already keeps in the browser (the LDN customer list, this month's invoices)
-  // and pages you've seen in the sidebar. It asks the server only to pay (when you press the buttons) and for the
-  // outage radar (a 20 KB router feed every 5 minutes, from one ERP tab). "Open in …" goes to the page and fills that page's own search box when it arrives.
+  // and pages you've seen in the sidebar. It asks the server only to pay and to work a modem (when you press the
+  // buttons), to look modems up (the OLTs' cached ONT lists, every 2 hours when used) and for the outage radar
+  // (a 20 KB router feed every 5 minutes, from one ERP tab). "Open in …" goes to the page and fills that page's own search box when it arrives.
   (() => {
     const RECENT = "erpDock.recent", PAGES = "erpDock.pages", PENDING = "erpDock.pending";
     const ls = { get: (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } }, set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
@@ -559,7 +560,7 @@
 
     // ---- data from what's kept ----
     let customers = null, custAt = 0, invoices = null, invKey = "";
-    const prep = (rows) => { for (const r of rows) { r._name = fold(r.nama); r._hay = ` ${r._name} ${fold(r.username)} ${fold(r.address)} ${fold(r.desa)} ${fold(r.kecamatanErp)} ${fold(r.router)} ${fold(r.paket)} ${digits(r.phone)} ${fold(r.ip)} `;
+    const prep = (rows) => { for (const r of rows) { r._name = fold(r.nama); r._hay = ` ${r._name} ${fold(r.username)} ${fold(r.address)} ${fold(r.desa)} ${fold(r.kecamatanErp)} ${fold(r.router)} ${fold(r.paket)} ${digits(r.phone)} ${fold(r.ip)} ${fold(r.ontSerial)} `;
       r._words = [...new Set(r._hay.trim().split(" ").filter((x) => x.length > 1 && !/^\d+$/.test(x)).map(sound))]; r._sound = ` ${r._words.join(" ")} `; } return rows; };
     async function data() {
       const kept = await idbGet("all");
@@ -776,6 +777,13 @@
       .erp-dock .ticks { display: flex; justify-content: space-between; font: 11px "JetBrains Mono", ui-monospace, monospace; color: var(--muted); }
       .erp-dock .desa { grid-template-columns: minmax(0, 1fr) 120px auto; }
       .erp-dock .meter { height: 4px; border-radius: 2px; background: var(--hair); overflow: hidden; } .erp-dock .meter i { display: block; height: 100%; background: #ff6a5c; }
+      /* Modem */
+      .erp-dock .modem .facts { margin: 10px 0; }
+      .erp-dock .modem .actions { margin: 4px 0 0; }
+      .erp-dock .modem form { display: grid; gap: 8px; margin-top: 10px; }
+      .erp-dock .pw { display: flex; align-items: center; gap: 8px; margin-top: 8px; padding: 8px 10px; border-radius: 8px; background: var(--raised); color: var(--paper); font: 13px "JetBrains Mono", ui-monospace, monospace; }
+      .erp-dock .pw span { flex: 1; overflow-wrap: anywhere; }
+      .erp-dock .rx { font-variant-numeric: tabular-nums; }
       @media (max-width: 760px) { .erp-dock .row2 { grid-template-columns: 1fr; } .erp-dock .mrow { min-height: 36px; } }
       @media (max-width: 760px) { .erp-dock .top kbd { display: none; } .erp-dock .shut { width: 40px; height: 40px; } .erp-dock .item { min-height: 44px; } .erp-dock { left: 8px !important; right: 8px !important; width: auto; bottom: 8px !important; top: auto !important; max-height: 80vh; transform-origin: bottom center; } }
       @media (prefers-reduced-motion: reduce) { .erp-dock, .erp-dock *, .erp-dock-fab, .erp-dock-fab * { animation: none !important; transition: none !important; } }`;
@@ -1304,10 +1312,176 @@
       b.onclick = () => { view.mode = "radar"; view.nas = null; view.card = null; drawBody(); }; return b;
     }
 
+    // ---- Modems: any ONT by its SN, its OLT port and signal, and remote work on it ----
+    // The ERP's own calls: each OLT's cached ONT list (46 OLTs, ~11,000 ONTs, kept 2 hours), live signal per ONT,
+    // reboot through the OLT by SN, and for modems on TR-069 (GenieACS): the WiFi password, a WiFi change and a reboot.
+    // Nothing on a modem changes until its button is pressed twice.
+    let onts = null, ontsLoading = null, acs = null, acsLoading = null;
+    const snNorm = (x) => String(x ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+    const lower = (x) => String(x ?? "").toLowerCase().trim();
+    function refreshOnts() {
+      return (ontsLoading ||= (async () => {
+        const pr = (await api("/api/olt/profiles")).data || [], rows = [], queue = [...pr];
+        await Promise.all([0, 1, 2, 3].map(async () => { while (queue.length) { const p = queue.shift();
+          try { for (const o of (await api(`/api/olt/profiles/${p.id}/onts?cached=1`)).data || []) if (o.serialNumber) rows.push({ sn: snNorm(o.serialNumber), raw: o.serialNumber, pid: p.id, olt: p.name,
+            pon: [o.frame, o.slot, o.port].filter((x) => x != null).join("/"), id: o.ontId, st: o.status, rx: o.rxPower ?? null, dist: o.distance ?? o.signalDistance ?? null,
+            pppoe: o.pppoeUsername || "", name: o.customerName || "", model: o.model || o.vendor || p.vendor || "", seen: o.signalPolledAt || o.lastSeenAt || null }); } catch { /* that OLT is skipped */ } } }));
+        const v = { at: Date.now(), rows }; idbPut("onts", v); onts = indexOnts(v);
+        if (panel && !document.activeElement?.closest?.(".modem")) drawBody();
+        return onts;
+      })().finally(() => { ontsLoading = null; }));
+    }
+    const indexOnts = (v) => ({ at: v.at, rows: v.rows, bySn: new Map(v.rows.map((o) => [o.sn, o])), byUser: new Map(v.rows.filter((o) => o.pppoe).map((o) => [lower(o.pppoe), o])) });
+    async function ontIndex() {
+      if (!onts) { const kept = await idbGet("onts"); if (kept?.rows) onts = indexOnts(kept); }
+      if (!onts || Date.now() - onts.at > 2 * 3600000) { const p = refreshOnts(); if (!onts) await p; }
+      return onts;
+    }
+    function acsIndex() {
+      if (acs && Date.now() - acs.at < 15 * 60000) return Promise.resolve(acs);
+      return (acsLoading ||= api("/api/olt/acs/devices").then((j) => {
+        const rows = (j.data || []).map((d) => ({ id: d._id, sn: snNorm(d.serialNumber), model: [d.manufacturer, d.productClass].filter(Boolean).join(" "), inform: d.lastInform,
+          ssid: d.ssid24 || d.ssid || "", ssid5: d.ssid5g || "", pppoe: d.pppoeUsername || d.wan?.usernameModem || "" }));
+        return (acs = { at: Date.now(), bySn: new Map(rows.map((d) => [d.sn, d])), byUser: new Map(rows.filter((d) => d.pppoe).map((d) => [lower(d.pppoe), d])) });
+      }).catch(() => (acs = { at: Date.now(), bySn: new Map(), byUser: new Map(), failed: true })).finally(() => { acsLoading = null; }));
+    }
+    // a customer's modem: the SN on file, else the ONT or TR-069 device that logs in with their username
+    function modemOf(r) {
+      const sn = snNorm(r.ontSerial), u = lower(r.username);
+      const ont = (sn && onts?.bySn.get(sn)) || onts?.byUser.get(u) || null;
+      const dev = acs?.bySn.get(ont?.sn || sn) || acs?.byUser.get(u) || null;
+      return { sn: ont?.sn || dev?.sn || sn, ont, dev };
+    }
+    let custBySn = null;
+    function customerOf(sn, ont, dev) {
+      if (!customers) return null;
+      if (!custBySn || custBySn.n !== customers) { custBySn = new Map(customers.filter((c) => c.ontSerial).map((c) => [snNorm(c.ontSerial), c])); custBySn.n = customers; }
+      const u = lower(ont?.pppoe || dev?.pppoe);
+      return custBySn.get(sn) || (u && customers.find((c) => lower(c.username) === u)) || null;
+    }
+    const snLike = (q) => { const t = q.trim(); return /^[a-z0-9:-]{5,}$/i.test(t) && /\d/.test(t) && !/^0?8\d{8,}$/.test(t); };
+    function findModems(q, max = 6) {
+      const n = snNorm(q), out = [], seen = new Set();
+      for (const o of onts?.rows ?? []) { if (out.length >= max) break; if (o.sn.includes(n) && !seen.has(o.sn)) { seen.add(o.sn); out.push({ sn: o.sn, ont: o, dev: acs?.bySn.get(o.sn) }); } }
+      for (const d of acs?.bySn.values() ?? []) { if (out.length >= max) break; if (d.sn.includes(n) && !seen.has(d.sn)) { seen.add(d.sn); out.push({ sn: d.sn, ont: null, dev: d }); } }
+      for (const c of customers ?? []) { if (out.length >= max) break; const sn = snNorm(c.ontSerial); if (sn && sn.includes(n) && !seen.has(sn)) { seen.add(sn); out.push({ sn, ont: null, dev: null, cust: c }); } }
+      return out.map((m) => ({ ...m, cust: m.cust || customerOf(m.sn, m.ont, m.dev) }));
+    }
+    const rxClass = (rx) => (rx == null ? "" : rx >= -26 ? "good" : rx >= -28 ? "warn" : "late");
+    const dbm = (rx) => (rx == null || rx === 0 ? "–" : `${Number(rx).toFixed(1).replace(".", ",")} dBm`);
+    const when = (t) => { if (!t) return ""; const m = Math.floor((Date.now() - new Date(t)) / 60000); return m < 1 ? "just now" : m < 120 ? `${m} min ago` : m < 2880 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} days ago`; };
+    const ontState = (o) => (!o ? "" : /online|working/i.test(o.st) ? "on" : /los|dying|offline/i.test(o.st) ? "iso" : "off");
+    function modemItem(m, i) {
+      const b = el("button", "item rise"); b.type = "button"; b.style.setProperty("--i", String(i));
+      b.append(el("span", `dot ${ontState(m.ont)}`), el("span", "t", m.cust?.nama || m.ont?.name || m.dev?.model || m.sn), el("span", "r", m.ont?.raw || m.sn),
+        el("span", "s", [m.ont?.model || m.dev?.model, m.ont && `${m.ont.olt} · ${m.ont.pon}:${m.ont.id}`, m.ont?.rx ? dbm(m.ont.rx) : "", m.cust ? m.cust.username : "no customer linked"].filter(Boolean).join(" · ")));
+      b.onclick = () => { if (m.cust) { view.card = m.cust; remember(m.cust); } else view.modem = m.sn; view.sel = 0; draw(); };
+      return b;
+    }
+    // the modem box: on a customer's card, or alone for a modem no customer is linked to
+    const mods = new Map(); // key → { el, st, live, pw, form, msg }
+    function modemBox(key, r) {
+      let m = mods.get(key);
+      if (!m) { m = { el: el("div", "near modem rise"), rb: { armed: 0 }, wf: { armed: 0 }, key, r }; m.el.style.setProperty("--i", "3"); mods.set(key, m); } // reboot and WiFi each arm on their own
+      m.r = r; modemDraw(m);
+      if (!onts || !acs) Promise.all([ontIndex(), acsIndex()]).then(() => modemDraw(m)).catch((e) => { m.msg = { bad: true, text: e.message }; modemDraw(m); });
+      return m.el;
+    }
+    function modemDraw(m) {
+      const redraw = () => modemDraw(m), focus = document.activeElement?.dataset?.k, parts = [];
+      const head = el("div", "row"), e = el("div", "eyebrow"); e.style.margin = "0"; e.append("Modem"); head.append(e); parts.push(head);
+      if (!onts || !acs) { parts.push(el("p", "note", "Looking the modem up on the OLTs… (the first time takes about 10 seconds)")); m.el.replaceChildren(...parts); return; }
+      const { sn, ont, dev } = m.r ? modemOf(m.r) : { sn: m.key, ont: onts.bySn.get(m.key), dev: acs.bySn.get(m.key) };
+      if (!ont && !dev) { parts.push(el("p", "note", sn ? `${sn} isn't on any OLT's list or on TR-069.` : "No modem serial on file, and no ONT or TR-069 modem logs in with this username.")); m.el.replaceChildren(...parts); return; }
+      const live = m.live, st = live?.status || ont?.st, pill = el("span", "pill");
+      pill.append(el("span", `dot ${ontState({ st })}`), st ? st[0].toUpperCase() + st.slice(1) : "TR-069 only"); head.append(pill);
+      const facts = el("dl", "facts"), fact = (label, value, opts = {}) => { if (!value) return; const dd = el("dd", opts.cls || null);
+        if (value instanceof Node) dd.append(value); else dd.append(value);
+        if (opts.copy) { const c = el("button", "copy", "Copy"); c.type = "button"; c.onclick = () => copy(String(opts.copy), c); dd.append(c); }
+        if (opts.extra) dd.append(opts.extra); facts.append(el("dt", null, label), dd); };
+      fact("SN", ont?.raw || sn, { cls: "mono", copy: ont?.raw || sn });
+      fact("Model", ont?.model || dev?.model);
+      if (ont) fact("OLT", `${ont.olt} · PON ${ont.pon} · ONU ${ont.id}`);
+      if (ont) {
+        const rx = live?.rxPower ?? ont.rx, sig = el("span"); sig.append(el("span", `rx ${rxClass(rx)}`, dbm(rx)));
+        const more = [live?.rxPowerOlt ? `OLT side ${dbm(live.rxPowerOlt)}` : "", (live?.distance ?? ont.dist) ? `${Math.round(live?.distance ?? ont.dist)} m` : "", live ? (live.lastUpdated ? when(live.lastUpdated) : "now") : when(ont.seen)].filter(Boolean);
+        if (more.length) sig.append(el("span", "sub", ` · ${more.join(" · ")}`));
+        const read = el("button", "copy", m.reading ? "Reading…" : "Read now"); read.type = "button"; read.disabled = !!m.reading; read.dataset.k = `${m.key}read`;
+        read.onclick = async () => { m.reading = true; redraw();
+          try { const j = await api(`/api/olt/profiles/${ont.pid}/onts/${encodeURIComponent(ont.raw)}/signal`); m.live = j.data || null; m.msg = j.cached ? { text: "The OLT only had a stored reading." } : null; }
+          catch (err) { m.msg = { bad: true, text: `Couldn't read the signal: ${err.message}` }; }
+          m.reading = false; redraw(); };
+        fact("Signal", sig, { extra: read });
+      }
+      if (dev) fact("TR-069", `last report ${when(dev.inform) || "never"}${dev.ssid ? ` · WiFi ${dev.ssid}${dev.ssid5 ? ` / ${dev.ssid5}` : ""}` : ""}`);
+      else fact("TR-069", "not connected: WiFi can't be changed from here, reboot goes through the OLT");
+      if (m.r && ont?.pppoe && lower(ont.pppoe) !== lower(m.r.username)) fact("Note", `the OLT has this ONT under ${ont.pppoe}`, { cls: "warn" });
+      parts.push(facts);
+      // actions
+      const acts = el("div", "actions"), btn = (label, fn, k) => { const b = el("button", "btn", label); b.type = "button"; b.onclick = fn; b.dataset.k = `${m.key}${k}`; acts.append(b); return b; };
+      if (dev) {
+        btn(m.pw ? "Hide password" : m.pwBusy ? "Opening…" : "WiFi password", async () => {
+          if (m.pw) { m.pw = null; return redraw(); }
+          m.pwBusy = true; redraw();
+          try { const j = await api(`/api/olt/acs/devices/${encodeURIComponent(dev.id)}/sandi-wifi`, {}); m.pw = j.data?.sandi ? j.data : { none: true }; clearTimeout(m.pwTimer); m.pwTimer = setTimeout(() => { m.pw = null; redraw(); }, 30000); }
+          catch (err) { m.msg = { bad: true, text: `Password not shown: ${err.message}` }; }
+          m.pwBusy = false; redraw(); }, "pw");
+        btn(m.form ? "Cancel" : "Change WiFi", () => { m.form = m.form ? null : { pita: dev.ssid5 ? "keduanya" : "2.4GHz", ssid: dev.ssid, ssid5: dev.ssid5, password: "" }; m.wf.armed = 0; redraw(); }, "wifi");
+      }
+      const viaAcs = dev && Date.now() - new Date(dev.inform) < 15 * 60000, via = viaAcs ? "TR-069" : ont ? "the OLT" : null;
+      if (via) {
+        const rb = armButton(m.rb, `Reboot (via ${via})`, "Click again: reboot · offline ~1 min", async () => {
+          m.rb.armed = 0; m.msg = { text: "Sending the reboot…" }; redraw();
+          try {
+            const j = viaAcs ? await api(`/api/olt/acs/devices/${encodeURIComponent(dev.id)}`, { action: "reboot" }) : await api("/api/admin/reboot-onu-by-sn", { serialNumber: ont.raw });
+            const q = j.data?.status;
+            m.msg = { good: true, text: q === "queued-offline" ? "The modem isn't answering TR-069: the reboot waits until it does." : q === "queued-natbound" ? "Queued: it reboots at the modem's next report (within ~5 min)." : `Reboot sent via ${via}. Back in 1–3 minutes.` };
+          } catch (err) { m.msg = { bad: true, text: `Reboot failed: ${err.message}` }; }
+          redraw(); }, redraw, `${m.key}reboot`);
+        rb.classList.remove("wide", "primary"); if (!rb.classList.contains("arm")) rb.classList.add("btn"); acts.append(rb);
+      }
+      parts.push(acts);
+      if (m.pw) { const box = el("div", "pw"); if (m.pw.none) box.append(el("span", null, "No WiFi password on record for this modem."));
+        else { box.append(el("span", null, `${m.pw.ssid ? `${m.pw.ssid} · ` : ""}${m.pw.sandi}`)); const c = el("button", "copy", "Copy"); c.type = "button"; c.onclick = () => copy(m.pw.sandi, c); box.append(c); }
+        parts.push(box, el("p", "note", "Hidden again in 30 seconds. Only give it to this modem's customer.")); }
+      if (m.form && dev) parts.push(wifiForm(m, dev, redraw));
+      if (m.msg) parts.push(el("p", `note ${m.msg.bad ? "late" : m.msg.good ? "good" : ""}`, m.msg.text));
+      m.el.replaceChildren(...parts);
+      if (focus && m.el.isConnected) m.el.querySelector(`[data-k="${focus}"]`)?.focus();
+    }
+    function wifiForm(m, dev, redraw) {
+      const f = m.form, form = el("form"); form.onsubmit = (ev) => ev.preventDefault();
+      const seg = el("div", "seg");
+      for (const [v, l] of [["2.4GHz", "2,4 GHz"], ["5GHz", "5 GHz"], ["keduanya", "Both"]]) { const b = el("button", null, l); b.type = "button"; b.setAttribute("aria-pressed", String(f.pita === v)); b.onclick = () => { f.pita = v; m.wf.armed = 0; redraw(); }; seg.append(b); }
+      const lab = (t, x) => { const l = el("label", "lbl"); l.append(t, x); return l; };
+      const inp = (k, ph, val) => { const i = el("input", "field"); i.value = val ?? ""; i.placeholder = ph; i.dataset.k = `${m.key}${k}`; i.autocomplete = "off"; i.spellcheck = false; i.oninput = () => { f[k] = i.value; m.wf.armed = 0; }; return i; };
+      const parts = [lab("Band", seg)];
+      if (f.pita !== "5GHz") parts.push(lab("WiFi name (2,4 GHz)", inp("ssid", "keep as it is", f.ssid)));
+      if (f.pita !== "2.4GHz") parts.push(lab("WiFi name (5 GHz)", inp("ssid5", dev.ssid5 ? "keep as it is" : "this modem reports no 5 GHz", f.ssid5)));
+      const pw = inp("password", "new password, 8–63 characters (empty keeps it)", f.password);
+      const gen = el("button", "copy", "Make one"); gen.type = "button";
+      gen.onclick = () => { const a = "abcdefghjkmnpqrstuvwxyz23456789"; f.password = Array.from(crypto.getRandomValues(new Uint8Array(10)), (x) => a[x % a.length]).join(""); m.wf.armed = 0; redraw(); };
+      const pl = lab("New password", pw); pl.append(gen); parts.push(pl);
+      const body = { action: "wifi-update", pita: f.pita };
+      if (f.pita !== "5GHz" && f.ssid?.trim() && f.ssid.trim() !== dev.ssid) body.ssid = f.ssid.trim();
+      if (f.pita !== "2.4GHz" && f.ssid5?.trim() && f.ssid5.trim() !== dev.ssid5) body.ssid5g = f.ssid5.trim();
+      if (f.password) body.password = f.password;
+      const bad = f.password && (f.password.length < 8 || f.password.length > 63), what = [body.ssid || body.ssid5g ? "name" : "", body.password ? "password" : ""].filter(Boolean).join(" and ");
+      const go = armButton(m.wf, bad ? "The password needs 8–63 characters" : what ? `Change the WiFi ${what}` : "Change the name or type a new password", `Click again: send to the modem${body.password ? ` (new password: ${body.password})` : ""}`, async () => {
+        m.wf.armed = 0; m.msg = { text: "Sending to the modem…" }; redraw();
+        try { const j = await api(`/api/olt/acs/devices/${encodeURIComponent(dev.id)}`, body), q = j.data?.status;
+          m.msg = { good: true, text: q === "queued-offline" ? "The modem isn't answering TR-069: the change waits until it reports again." : q === "queued-natbound" ? "Queued: it applies at the modem's next report (within ~5 min)." : `Sent. The modem applies it in a few seconds${body.password ? "; the customer's devices need the new password" : ""}.` };
+          m.form = null; acs = null; // read the device list again next time
+        } catch (err) { m.msg = { bad: true, text: `Not changed: ${err.message}` }; }
+        redraw(); }, redraw, `${m.key}wifigo`);
+      go.disabled = bad || !what; parts.push(go);
+      form.append(...parts); return form;
+    }
+
     function draw() {
       if (!panel) return;
-      const top = el("div", "top"), input = el("input"); input.placeholder = "Customer, page or tool…"; input.value = view.q; input.setAttribute("aria-label", "Search the Dock");
-      input.oninput = () => { view.q = input.value; view.sel = 0; view.card = null; view.mode = null; drawBody(); };
+      const top = el("div", "top"), input = el("input"); input.placeholder = "Customer, modem SN, page or tool…"; input.value = view.q; input.setAttribute("aria-label", "Search the Dock");
+      input.oninput = () => { view.q = input.value; view.sel = 0; view.card = null; view.mode = null; view.modem = null; drawBody(); };
       input.onpaste = (e) => { const t = e.clipboardData?.getData("text") || ""; if (t.split("\n").filter((x) => x.trim()).length >= 2) { e.preventDefault(); openBulk(t); } }; // a pasted list: Bulk Lunas
       const shut = el("button", "shut"); shut.type = "button"; shut.setAttribute("aria-label", "Close the Dock"); shut.title = "Close (Esc)"; shut.append(svg(ICON.x)); shut.onclick = () => { close(); fab?.focus(); };
       top.append(svg(ICON.search), input, el("kbd", null, "Esc"), shut);
@@ -1325,6 +1499,8 @@
       panel.classList.toggle("wide", view.mode === "bulk");
       if (view.mode === "bulk") { parts.push(bulkView()); body.replaceChildren(...parts); items = []; return bulkDraw(); }
       if (view.card) parts.push(cardView(view.card));
+      else if (view.modem) { const w = el("div", "card"), back = el("button", "back", "← Back"); back.type = "button"; back.onclick = () => { view.modem = null; drawBody(); };
+        w.append(back, modemBox(view.modem, null)); parts.push(w); }
       else if (view.mode === "radar") parts.push(...radarView());
       else if (!view.q.trim()) parts.push(...homeView());
       else parts.push(...resultsView(view.q));
@@ -1352,12 +1528,16 @@
       return out;
     }
     function resultsView(q) {
-      const out = [], cs = findCustomers(q), ps = findPages(q);
+      const sn = snLike(q), out = [], cs = sn ? findCustomers(q).filter((r) => r._hay.includes(fold(q))) : findCustomers(q), ps = sn ? [] : findPages(q);
       if (cs.length) { const e = el("div", "eyebrow"); e.append("Customers"); out.push(e, ...cs.map(custItem)); }
       if (ps.length) { const e = el("div", "eyebrow"); e.append("Pages"); out.push(e, ...ps.map(pageItem)); }
+      if (sn) {
+        if (onts && acs) { const ms = findModems(q); if (ms.length) { const e = el("div", "eyebrow"); e.append("Modems"); out.unshift(e, ...ms.map(modemItem)); } }
+        else { out.push(el("p", "note", "Looking modems up on the OLTs…")); Promise.all([ontIndex(), acsIndex()]).then(() => { if (view.q === q && !view.card) drawBody(); }); }
+      }
       const tool = /^(bul|lun|bay|tan|pay|mas|mar)/.test(fold(q)), net = /^(rad|out|gan|mat|rou|off|jar|dow|put)/.test(fold(q));
       if (tool || net) { const e = el("div", "eyebrow"); e.append("Tools"); out.push(e); if (net) out.push(radarItem(0)); if (tool) out.push(toolItem(1)); }
-      if (!cs.length && !ps.length && !tool && !net) out.push(el("p", "note", customers ? "Nothing matches all of those words." : "No customer list yet: open LDN Radius → Pelanggan once."));
+      if (!cs.length && !ps.length && !tool && !net && !snLike(q)) out.push(el("p", "note", customers ? "Nothing matches all of those words." : "No customer list yet: open LDN Radius → Pelanggan once."));
       return out;
     }
     function cardView(r) {
@@ -1380,7 +1560,7 @@
       act("Open in LDN", () => openIn.ldn(r), true); act("Invoices", () => openIn.invoices(r)); act("Map Terpadu", () => openIn.map(r)); act("Master", () => openIn.master(r));
       const loc = where(r); if (loc) { const a = el("a", "btn", "Google Maps"); a.href = `https://www.google.com/maps?q=${loc.lat},${loc.lng}`; a.target = "_blank"; a.rel = "noreferrer"; acts.append(a); }
       const bill = payBox(r); billDraw(bills.get(r.username));
-      wrap.append(back, who, facts, acts, bill, nearView(r));
+      wrap.append(back, who, facts, acts, bill, modemBox(`u:${r.username}`, r), nearView(r));
       return wrap;
     }
     function nearView(r) {
@@ -1425,10 +1605,10 @@
       if (!panel || !panel.contains(document.activeElement) && document.activeElement !== document.body) return;
       // typing anywhere in the open Dock goes to its search box, no click needed
       if (view.mode !== "bulk" && /^\S$/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName ?? "") && !document.activeElement?.isContentEditable) {
-        if (view.card || view.mode) { view.card = null; view.mode = null; drawBody(); }
+        if (view.card || view.mode || view.modem) { view.card = null; view.mode = null; view.modem = null; drawBody(); }
         panel.querySelector("input")?.focus(); return; // the key then lands in the box
       }
-      if (e.key === "Escape") { e.preventDefault(); if (view.mode === "bulk" && bulk?.phase !== "paying") { view.mode = null; drawBody(); panel.querySelector("input")?.focus(); } else if (view.mode === "radar" && !view.card) { if (view.nas) view.nas = null; else view.mode = null; drawBody(); panel.querySelector("input")?.focus(); } else if (view.card) { view.card = null; drawBody(); panel.querySelector("input")?.focus(); } else { close(); fab?.focus(); } }
+      if (e.key === "Escape") { e.preventDefault(); if (view.mode === "bulk" && bulk?.phase !== "paying") { view.mode = null; drawBody(); panel.querySelector("input")?.focus(); } else if (view.modem && !view.card) { view.modem = null; drawBody(); panel.querySelector("input")?.focus(); } else if (view.mode === "radar" && !view.card) { if (view.nas) view.nas = null; else view.mode = null; drawBody(); panel.querySelector("input")?.focus(); } else if (view.card) { view.card = null; drawBody(); panel.querySelector("input")?.focus(); } else { close(); fab?.focus(); } }
       else if (/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement?.tagName ?? "") && document.activeElement !== panel.querySelector(".top input")) return; // a form field in the Dock keeps its keys
       else if ((e.key === "ArrowDown" || e.key === "ArrowUp") && items.length) { e.preventDefault(); view.sel = (view.sel + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
         items.forEach((x, i) => x.setAttribute("aria-selected", String(i === view.sel))); items[view.sel].scrollIntoView({ block: "nearest" }); }
