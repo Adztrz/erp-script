@@ -184,7 +184,7 @@
 
   /** One fast search: where it shows, how its list is loaded, what each row says. */
   function fastSearch(cfg) {
-    const st = { auth: null, key: cfg.key({}), rows: null, at: 0, loading: null, done: 0, pages: 0, error: "", total: 0, partial: false, partNo: 0, parts: 0, partName: "", box: null, input: null, hits: [], sel: 0, query: "", picking: false, shown: new Set(), count: "", closing: null };
+    const st = { auth: null, key: cfg.key({}), rows: null, at: 0, loading: null, done: 0, pages: 0, error: "", total: 0, partial: false, partNo: 0, parts: 0, partName: "", box: null, input: null, hits: [], sel: 0, query: "", picking: false, shown: new Set(), count: "", sig: "" };
 
     function index(rows) {
       for (const r of rows) {
@@ -289,7 +289,7 @@
     // closing folds the box away; a reduced-motion user (or a box already going) just loses it
     function close() {
       const box = st.box; if (!box) return;
-      st.box = null; st.shown = new Set(); st.count = "";
+      st.box = null; st.shown = new Set(); st.count = ""; st.sig = "";
       if (calm()) return void box.remove();
       box.classList.add("out"); setTimeout(() => box.remove(), 180);
     }
@@ -339,7 +339,10 @@
       // results: new ones rise in one after another; ones that stay don't move
       const body = box.querySelector(".body"), seen = st.shown, now = new Set();
       let list = body.querySelector("ul"), pill;
-      if (st.hits.length) {
+      // only when the results themselves change: a redraw for loading progress leaves the rows (and their animation) alone
+      const sig = `${words.join(" ")}|${st.hits.map(cfg.id).join(",")}`;
+      if (st.hits.length && sig === st.sig && list) { list.querySelectorAll("li").forEach((li, i) => li.setAttribute("aria-selected", String(i === st.sel))); now.clear(); seen.forEach((x) => now.add(x)); }
+      else if (st.hits.length) {
         if (!list) { list = el("ul"); pill = el("div", "pill"); list.append(pill); body.replaceChildren(list); }
         pill = list.querySelector(".pill");
         const rows = [];
@@ -359,7 +362,7 @@
         const old = body.querySelector(".empty");
         if (!old || old.textContent !== msg) body.replaceChildren(...(msg ? [el("div", "empty", msg)] : []));
       }
-      st.shown = now;
+      st.shown = now; st.sig = sig;
       box.querySelector(".foot").hidden = !st.hits.length;
       if (fresh && !calm()) box.classList.add("opening");
       place();
