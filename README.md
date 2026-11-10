@@ -18,14 +18,15 @@ The bar follows the Faust design (Night Ledger: near-black card, bone dot label,
 
 A floating button above the site's own corner button (or **Alt+K**, anywhere in the ERP) opens one search box for customers, pages and tools:
 
-- **Customers**: from the LDN customer list this script keeps (spelling-tolerant, any word order). Each customer opens a card with status (online / offline / isolir), username, phone (copy or WhatsApp), address, area, plan, router, IP, active since, expiry, ONT serial, and this month's invoice from the kept invoices.
+- **Customers**: from the LDN customer list this script keeps (spelling-tolerant, any word order). Each customer opens a card with status (online / offline / isolir), username, phone (copy or WhatsApp), address, area, plan, router, IP, active since, expiry, ONT serial and partner.
+- **Pay** (on the card): the customer's unpaid months, asked from the server when the card opens (about 3 s), oldest ticked, with RADIUS recharge. Pick the method, date and note and press **Mark … Lunas** twice: the same request as the ERP's Tandai Lunas Manual, oldest first, with the result on each month. No need to go to Invoices.
 - **Open in …**: LDN Radius (on the Pelanggan tab), Invoices, Map Terpadu or Master Pelanggan, with that page's own search filled in when it arrives; Google Maps from the customer's location.
 - **Nearby**: everyone within 100 m, 300 m or 1 km of the customer, counted online / offline / isolir, on a small dot map, nearest first. For checking an area when someone reports an outage.
 - **Pages**: any ERP page by name, learned from the sidebar as you browse.
 - **Home**: customers, online and isolir counts from the kept list, shortcuts, and your recent customers.
 - **Bulk Lunas**: paste a list of usernames (into the Dock's search, or Tools → Bulk Lunas). Each one is looked up on the server (all months, about 3 s each, five at a time) and shows the customer, what's paid and every unpaid month with its amount, the oldest ticked. Ticking a month ticks the older ones too, since the ERP pays oldest first. A username that isn't exact gets the closest match (left unticked, in amber) or a choice of likely ones; a customer listed twice is shown once. RADIUS recharge is checked with the ERP's own preview and on where it can be. Pick the method (Tunai, Transfer Bank, Setor Reseller, Setor Teknisi), the payment date and a note, then press **Mark … Lunas** twice. It sends the same request as the ERP's Tandai Lunas Manual, one invoice at a time, oldest first, and shows the result on each line (Lunas, recharged, or why the server skipped it). It can be stopped part way.
 
-Apart from Bulk Lunas, it never asks the server on its own: it reads what's kept in this browser. Open LDN Radius → Pelanggan once to fill the customer list (the first time takes about 2 minutes), and Invoices once for invoices.
+Apart from paying (the card's Pay and Bulk Lunas), it never asks the server on its own: it reads what's kept in this browser. Open LDN Radius → Pelanggan once to fill the customer list (the first time takes about 2 minutes), and Invoices once for invoices.
 
 ## Install
 

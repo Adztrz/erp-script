@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.3
+// @version      2.4
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -584,7 +584,6 @@
       }
       return out.sort((a, b) => a[0] - b[0] || (a[1]._name < b[1]._name ? -1 : 1)).slice(0, max).map((x) => x[1]);
     }
-    const invoiceOf = (r) => invoices?.filter((v) => (v.radiusUsername && v.radiusUsername === r.username) || (!v.radiusUsername && fold(v.customerName) === r._name)) ?? [];
     const pages = () => { const m = new Map(START); for (const [h, t] of Object.entries(ls.get(PAGES, {}))) m.set(h, t); return [...m]; };
     function findPages(q, max = 5) {
       const words = fold(q).split(" ").filter(Boolean); if (!words.length) return [];
@@ -841,7 +840,7 @@
       if (!r.ok || j.success === false) throw new Error(j.error || j.message || `HTTP ${r.status}`);
       return j;
     }
-    const newBulk = () => ({ phase: "input", rows: [], method: METHODS[0], date: todayIso(), note: "", armed: 0, stop: false, el: null });
+    const newBulk = () => ({ phase: "input", rows: [], method: METHODS[0], date: todayIso(), note: "", defaultNote: "Bulk Lunas (Dock)", armed: 0, stop: false, el: null });
     function openBulk(text) {
       if (!bulk || (bulk.phase !== "paying" && text)) bulk = newBulk();
       view.mode = "bulk"; view.card = null; drawBody();
@@ -910,25 +909,103 @@
       }
     }
     // ticking a month ticks the older ones too (the server pays oldest first); unticking clears the newer ones
-    function tickMonth(row, i, on) { row.invs.forEach((v, j) => { if (on ? j <= i : j >= i) v.on = on; }); bulk.armed = 0; bulkDraw(); }
+    function tickMonth(row, i, on, st, redraw) { row.invs.forEach((v, j) => { if (on ? j <= i : j >= i) v.on = on; }); st.armed = 0; redraw(); }
     const chosen = () => bulk.rows.filter((r) => r.state === "found").flatMap((r) => r.invs.filter((v) => v.on && !v.result?.ok).map((v) => [r, v]));
-    async function pay() {
-      const queue = chosen(); if (!queue.length) return;
-      bulk.phase = "paying"; bulk.stop = false; bulk.armed = 0; bulk.done = 0; bulk.total = queue.length; bulkDraw();
-      for (const [, v] of queue) {
-        if (bulk.stop) break;
-        v.result = { busy: true }; bulkDraw();
+    const pay = () => payQueue(chosen(), bulk, bulkDraw, "Bulk Lunas (Dock)");
+    // pays a list of [row, invoice], one request each in order; st holds the method, date, note and progress
+    async function payQueue(queue, st, redraw, defaultNote) {
+      if (!queue.length) return;
+      st.phase = "paying"; st.stop = false; st.armed = 0; st.done = 0; st.total = queue.length; redraw();
+      for (const [row, v] of queue) {
+        if (st.stop) break;
+        v.result = { busy: true }; redraw();
         try {
-          const j = await api("/api/finance/invoices/bulk-mark-paid", { invoiceNumbers: [v.no], paymentMethod: bulk.method, notes: bulk.note.trim() || "Bulk Lunas (Dock)",
-            paymentDate: bulk.date || undefined, rechargeMap: v.recharge ? { [v.no]: true } : {} });
+          const j = await api("/api/finance/invoices/bulk-mark-paid", { invoiceNumbers: [v.no], paymentMethod: st.method, notes: st.note.trim() || defaultNote,
+            paymentDate: st.date || undefined, rechargeMap: v.recharge ? { [v.no]: true } : {} });
           const sum = j.summary || {}, older = (j.tertuaDulu || [])[0], waiting = (j.results || []).find((x) => x?.belumDiproses), failed = (j.rechargeGagal || [])[0];
           const skip = (j.results || []).find((x) => x?.status === "skip" || x?.status === "error");
+          if (sum.marked) row.paidTo = v.period || row.paidTo;
           v.result = sum.marked ? { ok: true, text: sum.recharged ? "Lunas · recharged" : "Lunas", warn: failed ? `RADIUS recharge failed: ${failed.reason}` : "" }
             : older ? { text: `Skipped: ${older.reason}` } : waiting ? { text: "Not processed yet (server restarting): try again" } : { text: `Skipped${skip?.reason ? `: ${skip.reason}` : ""}` };
         } catch (e) { v.result = { text: e.message || "Failed" }; }
-        bulk.done++; bulkDraw();
+        st.done++; redraw();
       }
-      bulk.phase = "done"; bulkDraw();
+      st.phase = "done"; redraw();
+    }
+    // a customer's unpaid months, each with its RADIUS recharge and, once paid, the result
+    function monthRows(r, key, busy, st, redraw) {
+      return r.invs.map((v, i) => {
+        const m = el("label", "mrow"), cb = el("input"); cb.type = "checkbox"; cb.checked = v.on; cb.disabled = busy || v.result?.ok; cb.dataset.k = `${key}-${i}`;
+        cb.onchange = () => tickMonth(r, i, cb.checked, st, redraw);
+        const t = el("span"); t.append(v.period || v.no, " ", el("span", v.status === "Jatuh Tempo" ? "late" : "sub", v.status === "Jatuh Tempo" ? "· overdue" : ""));
+        m.append(cb, t, el("span", "mono", rupiah(v.amount)));
+        const x = el("span", "x");
+        if (v.radius?.canRecharge) {
+          const l = el("label"), rc = el("input"); rc.type = "checkbox"; rc.checked = v.recharge; rc.disabled = busy || v.result?.ok; rc.dataset.k = `${key}-${i}-r`;
+          rc.onchange = () => { v.recharge = rc.checked; st.armed = 0; redraw(); }; rc.onclick = (ev) => ev.stopPropagation();
+          l.append(rc, v.radius.alreadyCovered ? "recharge (already covered)" : `recharge RADIUS (expires ${v.radius.expiryDate || "?"})`); x.append(l);
+        } else if (v.radius) x.append(el("span", null, v.radius.failed ? "RADIUS preview failed: pays without recharge" : "no RADIUS account linked"));
+        if (v.hutang) x.append(el("span", "warn", `promised to pay by ${String(v.hutang).slice(0, 10)}`));
+        if (v.result?.busy) x.append(el("span", null, "Paying…"));
+        else if (v.result) { x.append(el("span", v.result.ok ? "good" : "late", v.result.text)); if (v.result.warn) x.append(el("span", "warn", v.result.warn)); }
+        m.append(x); return m;
+      });
+    }
+    // method, payment date and note
+    function payFields(st, busy, key, redraw) {
+      const method = el("select", "field"); method.disabled = busy; method.dataset.k = `${key}method`;
+      for (const m of METHODS) { const o = el("option", null, m); o.value = m; o.selected = m === st.method; method.append(o); }
+      method.onchange = () => { st.method = method.value; st.armed = 0; redraw(); };
+      const date = el("input", "field"); date.type = "date"; date.value = st.date; date.max = todayIso(); date.disabled = busy; date.dataset.k = `${key}date`;
+      date.onchange = () => { st.date = date.value; st.armed = 0; redraw(); };
+      const note = el("input", "field"); note.placeholder = st.defaultNote; note.value = st.note; note.disabled = busy; note.dataset.k = `${key}note`;
+      note.oninput = () => { st.note = note.value; st.armed = 0; };
+      const lab = (t, f) => { const l = el("label", "lbl"); l.append(t, f); return l; };
+      const two = el("div", "row2"); two.append(lab("Method", method), lab("Payment date", date));
+      return [two, lab("Note", note)];
+    }
+    // press once to arm (5 s), again to pay
+    function armButton(st, label, armedLabel, onPay, redraw, key) {
+      const armed = st.armed > Date.now();
+      const btn = el("button", `btn wide ${armed ? "arm" : "primary"}`, armed ? armedLabel : label); btn.type = "button"; btn.dataset.k = key;
+      btn.onclick = () => { if (st.armed > Date.now()) onPay(); else { st.armed = Date.now() + 5000; redraw(); setTimeout(() => { if (st.armed && st.armed <= Date.now()) { st.armed = 0; redraw(); } }, 5100); } };
+      return btn;
+    }
+    // ---- Pay from the customer card ----
+    const bills = new Map(); // username → { row, st, el }
+    function payBox(r) {
+      let b = bills.get(r.username);
+      if (!b || (b.st.phase !== "paying" && Date.now() - b.at > 60000)) { // a minute old: ask again
+        b = { at: Date.now(), row: { token: r.username, pick: r.username, state: "looking", invs: [] },
+          st: { method: METHODS[0], date: todayIso(), note: "", defaultNote: "Lunas (Dock)", phase: "looking", armed: 0 }, el: el("div", "near bill rise") };
+        b.el.style.setProperty("--i", "2"); bills.set(r.username, b);
+        const load = async () => { b.row.state = "looking"; b.st.phase = "looking"; billDraw(b); await lookup(b.row); await radius(b.row.invs); b.st.phase = "review"; billDraw(b); };
+        b.load = load; load();
+      }
+      return b.el;
+    }
+    function billDraw(b) {
+      const { row, st } = b, focus = document.activeElement?.dataset?.k, busy = st.phase !== "review" && st.phase !== "done", redraw = () => billDraw(b);
+      const open = row.invs.filter((v) => !v.result?.ok), ch = open.filter((v) => v.on), total = ch.reduce((a, v) => a + v.amount, 0);
+      const head = el("div", "row"), e = el("div", "eyebrow"); e.style.margin = "0"; e.append("Pay");
+      head.append(e, el("span", "sub", row.state === "found" ? (open.length ? `${open.length} unpaid · ${rupiah(open.reduce((a, v) => a + v.amount, 0))}` : `Nothing unpaid${row.paidTo ? ` · paid to ${row.paidTo}` : ""}`) : ""));
+      const parts = [head];
+      if (row.state === "looking") parts.push(el("p", "note", "Loading this customer's bills…"));
+      else if (row.state === "error") { parts.push(el("p", "note late", row.err)); const again = el("button", "btn", "Try again"); again.type = "button"; again.onclick = () => b.load(); parts.push(again); }
+      else if (row.state !== "found") parts.push(el("p", "note", "No invoices for this username."));
+      else {
+        parts.push(...monthRows(row, `c${row.user}`, busy, st, redraw));
+        if (open.length) {
+          const f = el("div", "bform"); f.append(...payFields(st, busy, `c${row.user}`, redraw)); parts.push(f);
+          const what = ch.length === 1 ? ch[0].period : `${ch.length} months`, rc = ch.filter((v) => v.recharge).length;
+          if (st.phase === "paying") { const s = el("button", "btn wide", `Paying ${Math.min(st.done + 1, st.total)} of ${st.total}…`); s.type = "button"; s.disabled = true; parts.push(s); }
+          else { const btn = armButton(st, ch.length ? `Mark ${what} Lunas · ${rupiah(total)}${rc ? " · recharge" : ""}` : "Tick a month to pay",
+              `Click again: ${what} paid by ${st.method}, ${rupiah(total)}`, () => payQueue(ch.map((v) => [row, v]), st, redraw, st.defaultNote), redraw, `c${row.user}pay`);
+            btn.disabled = !ch.length; btn.style.marginTop = "10px"; parts.push(btn); }
+        } else if (st.phase === "done") parts.push(el("p", "note good", "Paid."));
+      }
+      b.el.replaceChildren(...parts);
+      if (focus && b.el.isConnected) b.el.querySelector(`[data-k="${focus}"]`)?.focus();
     }
     function bulkView() {
       if (bulk.el) return bulk.el;
@@ -959,22 +1036,7 @@
           if (r.guess && r.invs.length) box.append(el("div", "sub warn", "Not the exact username you pasted: tick it if this is the right customer"));
           box.append(el("div", "sub", [r.where, r.paidTo ? `paid to ${r.paidTo}` : "nothing paid yet"].filter(Boolean).join(" · ")));
           if (!r.invs.length) box.append(el("div", "sub good", "Nothing unpaid"));
-          for (const [i, v] of r.invs.entries()) {
-            const m = el("label", "mrow"), cb = el("input"); cb.type = "checkbox"; cb.checked = v.on; cb.disabled = busy || v.result?.ok; cb.dataset.k = `${ri}-${i}`;
-            cb.onchange = () => tickMonth(r, i, cb.checked);
-            const t = el("span"); t.append(v.period || v.no, " ", el("span", v.status === "Jatuh Tempo" ? "late" : "sub", v.status === "Jatuh Tempo" ? "· overdue" : ""));
-            m.append(cb, t, el("span", "mono", rupiah(v.amount)));
-            const x = el("span", "x");
-            if (v.radius?.canRecharge) {
-              const l = el("label"), rc = el("input"); rc.type = "checkbox"; rc.checked = v.recharge; rc.disabled = busy || v.result?.ok; rc.dataset.k = `${ri}-${i}-r`;
-              rc.onchange = () => { v.recharge = rc.checked; bulk.armed = 0; bulkDraw(); }; rc.onclick = (ev) => ev.stopPropagation();
-              l.append(rc, v.radius.alreadyCovered ? "recharge (already covered)" : `recharge RADIUS (expires ${v.radius.expiryDate || "?"})`); x.append(l);
-            } else if (v.radius) x.append(el("span", null, v.radius.failed ? "RADIUS preview failed: pays without recharge" : "no RADIUS account linked"));
-            if (v.hutang) x.append(el("span", "warn", `promised to pay by ${String(v.hutang).slice(0, 10)}`));
-            if (v.result?.busy) x.append(el("span", null, "Paying…"));
-            else if (v.result) { x.append(el("span", v.result.ok ? "good" : "late", v.result.text)); if (v.result.warn) x.append(el("span", "warn", v.result.warn)); }
-            m.append(x); box.append(m);
-          }
+          box.append(...monthRows(r, ri, busy, bulk, bulkDraw));
         } else {
           h.append(el("b", null, r.token), el("span", "mono", { looking: "looking…", none: "not found", pick: "which one?", dupe: "listed twice", error: "failed" }[r.state])); box.append(h);
           if (r.state === "error") box.append(el("div", "sub late", r.err));
@@ -997,16 +1059,7 @@
       if (bulk.rows.length && bulk.phase !== "looking") {
         const found = bulk.rows.filter((r) => r.state === "found").length, open = bulk.rows.length - found - bulk.rows.filter((r) => r.state === "dupe").length;
         const sum = el("div", "sum"); sum.append(el("span", null, `${found} of ${bulk.rows.length} found${open ? ` · ${open} need a look` : ""}`), el("b", null, `${ch.length} invoices · ${rupiah(total)}`));
-        const method = el("select", "field"); method.disabled = busy; method.dataset.k = "method";
-        for (const m of METHODS) { const o = el("option", null, m); o.value = m; o.selected = m === bulk.method; method.append(o); }
-        method.onchange = () => { bulk.method = method.value; bulk.armed = 0; bulkDraw(); };
-        const date = el("input", "field"); date.type = "date"; date.value = bulk.date; date.max = todayIso(); date.disabled = busy; date.dataset.k = "date";
-        date.onchange = () => { bulk.date = date.value; bulk.armed = 0; bulkDraw(); };
-        const note = el("input", "field"); note.placeholder = "Bulk Lunas (Dock)"; note.value = bulk.note; note.disabled = busy; note.dataset.k = "note";
-        note.oninput = () => { bulk.note = note.value; bulk.armed = 0; };
-        const lab = (t, f) => { const l = el("label", "lbl"); l.append(t, f); return l; };
-        const two = el("div", "row2"); two.append(lab("Method", method), lab("Payment date", date));
-        fields.push(two, lab("Note", note)); parts.push(sum);
+        fields.push(...payFields(bulk, busy, "", bulkDraw)); parts.push(sum);
         if (bulk.phase === "paying") {
           const bar = el("div", "bar"), i = el("i"); i.style.width = `${(bulk.done / bulk.total) * 100}%`; bar.append(i);
           const stop = el("button", "btn wide", bulk.stop ? "Stopping after this one…" : `Paying ${bulk.done + 1} of ${bulk.total} · Stop`); stop.type = "button"; stop.disabled = bulk.stop;
@@ -1017,11 +1070,9 @@
             const all = bulk.rows.flatMap((r) => r.invs.filter((v) => v.result)), ok = all.filter((v) => v.result.ok).length;
             parts.push(el("div", `sum ${ok === all.length ? "good" : "warn"}`, `${ok} marked Lunas${all.length - ok ? ` · ${all.length - ok} not: see the red lines` : ""}`));
           }
-          const armed = bulk.armed > Date.now();
-          const btn = el("button", `btn wide ${armed ? "arm" : "primary"}`, !ch.length ? "Tick the months to pay" : armed
-            ? `Click again: mark ${ch.length} paid (${people} customers, ${rupiah(total)})` : `Mark ${ch.length} Lunas · ${rupiah(total)}${recharges ? ` · ${recharges} recharge` : ""}`);
-          btn.type = "button"; btn.disabled = !ch.length; btn.dataset.k = "pay";
-          btn.onclick = () => { if (bulk.armed > Date.now()) pay(); else { bulk.armed = Date.now() + 5000; bulkDraw(); setTimeout(() => bulk?.armed && bulk.armed <= Date.now() && (bulk.armed = 0, bulkDraw()), 5100); } };
+          const btn = armButton(bulk, ch.length ? `Mark ${ch.length} Lunas · ${rupiah(total)}${recharges ? ` · ${recharges} recharge` : ""}` : "Tick the months to pay",
+            `Click again: mark ${ch.length} paid (${people} customers, ${rupiah(total)})`, pay, bulkDraw, "pay");
+          btn.disabled = !ch.length;
           parts.push(btn);
         }
       }
@@ -1098,15 +1149,13 @@
       fact("Phone", r.phone, { mono: true, copy: true, link: wa(r.phone) ? ["WhatsApp", wa(r.phone)] : null });
       fact("Address", r.address); fact("Area", [r.desa, r.kecamatanErp].filter(Boolean).join(", "));
       fact("Plan", r.paket); fact("Router", r.router); fact("IP", r.ip, { mono: true, copy: true });
-      fact("Active since", r.tglAktif); fact("Expires", r.expirasi); fact("ONT", r.ontSerial, { mono: true, copy: true }); fact("Partner", r.mitra);
-      const inv = invoiceOf(r);
-      if (inv.length) for (const v of inv.slice(0, 2)) fact(`Invoice ${v.period || ""}`.trim(), `${v.status || "?"} · ${rupiah(v.amount)}${v.dueDate ? ` · due ${String(v.dueDate).slice(0, 10)}` : ""}`);
-      else if (invoices) fact("Invoice", "none this month in the kept list");
+      fact("Active since", r.tglAktif); fact("Expires", r.expirasi && !isNaN(new Date(r.expirasi)) ? new Date(r.expirasi).toLocaleString("id-ID", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : r.expirasi); fact("ONT", r.ontSerial, { mono: true, copy: true }); fact("Partner", r.mitra);
       const acts = el("div", "actions rise"); acts.style.setProperty("--i", "2");
       const act = (label, fn, primary) => { const b = el("button", `btn${primary ? " primary" : ""}`, label); b.type = "button"; b.onclick = fn; acts.append(b); };
       act("Open in LDN", () => openIn.ldn(r), true); act("Invoices", () => openIn.invoices(r)); act("Map Terpadu", () => openIn.map(r)); act("Master", () => openIn.master(r));
       const loc = where(r); if (loc) { const a = el("a", "btn", "Google Maps"); a.href = `https://www.google.com/maps?q=${loc.lat},${loc.lng}`; a.target = "_blank"; a.rel = "noreferrer"; acts.append(a); }
-      wrap.append(back, who, facts, acts, nearView(r));
+      const bill = payBox(r); billDraw(bills.get(r.username));
+      wrap.append(back, who, facts, bill, acts, nearView(r));
       return wrap;
     }
     function nearView(r) {
@@ -1155,6 +1204,7 @@
         panel.querySelector("input")?.focus(); return; // the key then lands in the box
       }
       if (e.key === "Escape") { e.preventDefault(); if (view.mode === "bulk" && bulk?.phase !== "paying") { view.mode = null; drawBody(); panel.querySelector("input")?.focus(); } else if (view.card) { view.card = null; drawBody(); panel.querySelector("input")?.focus(); } else { close(); fab?.focus(); } }
+      else if (/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement?.tagName ?? "") && document.activeElement !== panel.querySelector(".top input")) return; // a form field in the Dock keeps its keys
       else if ((e.key === "ArrowDown" || e.key === "ArrowUp") && items.length) { e.preventDefault(); view.sel = (view.sel + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
         items.forEach((x, i) => x.setAttribute("aria-selected", String(i === view.sel))); items[view.sel].scrollIntoView({ block: "nearest" }); }
       else if (e.key === "Enter" && document.activeElement?.tagName === "INPUT" && items[view.sel]) { e.preventDefault(); items[view.sel].click(); }
