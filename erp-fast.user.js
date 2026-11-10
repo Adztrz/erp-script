@@ -274,7 +274,9 @@
       const soundHit = (r, i) => r._sound.includes(" " + sounds[i]);
       const slack = (w) => (w.length >= 9 ? 2 : w.length >= 4 ? 1 : 0); // letters that may be off: 1 from 4 letters, 2 from 9
       const out = [], seen = new Set();
+      let best = 0; // matches that can't be outranked (score 0); once there are 30, the rest of the list can't change the answer
       for (const r of st.rows) {
+        if (best >= 30) break;
         let score;
         if (num.length >= 6 && r._hay.includes(num)) score = 0;
         // exact letters: name starts with what you typed, then every word in the name, then anywhere
@@ -282,7 +284,7 @@
         // spelled another way (winna / wina, soemarno / sumarno)
         else if (words.every((w, i) => r._hay.includes(w) || (soft(w) && soundHit(r, i)))) score = sounds.every((w) => r._nameWords.some((x) => x.startsWith(w))) ? 3 : 4;
         else continue;
-        out.push([score, r]); seen.add(r);
+        out.push([score, r]); seen.add(r); if (score === 0) best++;
       }
       // a letter or two off, only when the passes above found next to nobody (it's the slow part on a big list)
       if (out.length < 5) for (const r of st.rows) {
@@ -291,7 +293,7 @@
         const inName = words.every((w, i) => r._name.includes(w) || (soft(w) && (r._nameWords.some((x) => x.startsWith(sounds[i])) || (slack(w) && fuzzyHit(sounds[i], r._nameWords, slack(w))))));
         out.push([inName ? 5 : 6, r]);
       }
-      return out.sort((a, b) => a[0] - b[0] || a[1]._name.localeCompare(b[1]._name)).slice(0, 30).map((x) => x[1]);
+      return out.sort((a, b) => a[0] - b[0] || (a[1]._name < b[1]._name ? -1 : a[1]._name > b[1]._name ? 1 : 0)).slice(0, 30).map((x) => x[1]);
     }
 
     function place() {
