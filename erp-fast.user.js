@@ -234,7 +234,7 @@
       // spelling-tolerant matching needs a real word: 4+ letters, matched at the start of a word in the record
       const soft = (w) => w.length >= 4;
       const soundHit = (r, i) => r._sound.includes(" " + sounds[i]);
-      const slack = (w) => (w.length >= 9 ? 2 : w.length >= 5 ? 1 : 0); // letters that may be off: 1 from 5 letters, 2 from 9
+      const slack = (w) => (w.length >= 9 ? 2 : w.length >= 4 ? 1 : 0); // letters that may be off: 1 from 4 letters, 2 from 9
       const out = [], seen = new Set();
       for (const r of st.rows) {
         let score;
