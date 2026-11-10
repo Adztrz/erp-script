@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.15
+// @version      2.16
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -721,7 +721,8 @@
       .erp-dock .map { position: relative; height: 240px; margin: 10px 0 6px; border-radius: 8px; overflow: hidden; background: #0f1214; box-shadow: inset 0 0 0 1px var(--hair); }
       .erp-dock .map .tiles img { position: absolute; width: 256px; height: 256px; max-width: none; pointer-events: none; user-select: none; }
       .erp-dock .map .tiles img { filter: invert(1) hue-rotate(180deg) brightness(.78) contrast(.92) saturate(.35); } /* OSM's light map, made dark */
-      .erp-dock .map.sat .tiles img { filter: brightness(.8) saturate(.9); }
+      .erp-dock .map.sat .tiles img, .erp-dock .map.carto .tiles img { filter: none; } .erp-dock .map.sat .tiles img { filter: brightness(.8) saturate(.9); }
+      .erp-dock .keyrow { display: flex; gap: 6px; align-items: center; margin: 0 0 8px; font-size: 12px; color: var(--muted); } .erp-dock .keyrow .field { height: 30px; flex: 1; }
       .erp-dock .mdot.pon { box-shadow: 0 0 0 2px var(--bone); }
       .erp-dock .map .basemap { position: absolute; top: 8px; left: 8px; z-index: 4; background: rgba(9,11,12,.88); }
       .erp-dock .ponbox { margin: 2px 0 8px; } .erp-dock .ponbox .note { margin: 4px 10px 8px; }
@@ -1684,7 +1685,7 @@
       for (const [key, label] of [["on", "online"], ["off", "offline"], ["iso", "isolir"]]) { const s = el("span"); s.append(el("b", null, String(cnt[key])), ` ${label}`); counts.append(s); }
       const map = el("div", "map"); map.setAttribute("role", "group"); map.setAttribute("aria-label", `Map of ${n.list.length} customers within ${view.radius} metres`);
       const pon = el("div", "ponbox");
-      box.append(counts, map, pon);
+      box.append(counts, map, cartoKeyRow(() => drawBody()), pon);
       const rows = [];
       for (const [i, x] of n.list.slice(0, 8).entries()) { const it = custItem(x.r, i); it.querySelector(".r").textContent = `${Math.round(x.d)} m`;
         it.addEventListener("mouseenter", () => map.hl?.(i, true)); it.addEventListener("mouseleave", () => map.hl?.(i, false)); rows.push(it); box.append(it); }
@@ -1696,7 +1697,7 @@
     // stand out, or the satellite view Peta Terpadu uses (Google hybrid) for finding the house. This customer in the
     // middle, rings at half and full radius, every neighbour a dot; a dot and its row in the list light up together,
     // a dot opens that customer, and customers on the same PON port are outlined.
-    const BASEMAP = "erpDock.basemap";
+    const BASEMAP = "erpDock.basemap", CARTO_KEY = "erpDock.cartoKey"; // your own CARTO key, kept only in this browser (the script is public)
     const TILES = {
       dark: { url: (x, y, z) => `https://tile.openstreetmap.org/${z}/${x}/${y}.png`, max: 19, attr: "© OpenStreetMap" }, // CARTO now wants a key
       sat: { url: (x, y, z) => `https://mt${(x + y) % 4}.google.com/vt/lyrs=y&hl=id&x=${x}&y=${y}&z=${z}`, max: 20, attr: "Google" },
@@ -1705,7 +1706,8 @@
       const w = box.clientWidth, h = box.clientHeight; if (!w) return;
       if (view.zoomFor !== r.username) { view.zoom = 0; view.zoomFor = r.username; }
       const mpp0 = 156543.03392 * Math.cos(n.c.lat * Math.PI / 180); // metres per pixel at zoom 0
-      const kind = ls.get(BASEMAP, "dark") === "sat" ? "sat" : "dark", T = TILES[kind];
+      const kind = ls.get(BASEMAP, "dark") === "sat" ? "sat" : "dark", key = ls.get(CARTO_KEY, ""), carto = kind === "dark" && key;
+      const T = carto ? { url: (x, y, z) => `https://basemaps.cartocdn.com/rastertiles/dark_all/${z}/${x}/${y}.png?key=${encodeURIComponent(key)}`, max: 20, attr: "© OpenStreetMap © CARTO" } : TILES[kind];
       const z = Math.max(12, Math.min(T.max, Math.floor(Math.log2((mpp0 * Math.min(w, h) * 0.46) / radius)) + (view.zoom || 0)));
       const size = 256 * 2 ** z, world = (p) => { const sin = Math.sin(p.lat * Math.PI / 180); return [((p.lng + 180) / 360) * size, (0.5 - Math.log((1 + sin) / (1 - sin)) / (4 * Math.PI)) * size]; };
       const [cx, cy] = world(n.c), left = cx - w / 2, top = cy - h / 2, mpp = mpp0 / 2 ** z;
@@ -1737,11 +1739,22 @@
       const zoom = el("div", "zoom");
       for (const [t, dz, label] of [["+", 1, "Zoom in"], ["−", -1, "Zoom out"]]) { const b = el("button", null, t); b.type = "button"; b.setAttribute("aria-label", label);
         b.disabled = (dz > 0 && z >= T.max) || (dz < 0 && z <= 12); b.onclick = () => { view.zoom = (view.zoom || 0) + dz; tileMap(box, r, n, radius, rows); }; zoom.append(b); }
-      box.classList.toggle("sat", kind === "sat");
+      box.classList.toggle("sat", kind === "sat"); box.classList.toggle("carto", !!carto);
       box.replaceChildren(tiles, ring(0.5, "half"), ring(1, ""), ...dots, me, tip, zoom, base, el("span", "attr", T.attr));
     }
     // the customers on the same OLT PON port: when many of them are down together it's the line (PON, splitter, ODP),
     // not one house. Statuses come from the OLTs' cached ONT lists (kept 2 hours).
+    // paste your CARTO key once; it stays in this browser's storage and goes only to CARTO's tile server
+    function cartoKeyRow(redraw) {
+      const row = el("div", "keyrow"), key = ls.get(CARTO_KEY, "");
+      if (key) { const rm = el("button", "copy", "Remove"); rm.type = "button"; rm.onclick = () => { ls.set(CARTO_KEY, ""); redraw(); }; row.append("Dark map from CARTO with your key", rm); return row; }
+      if (!view.keyOpen) { const b = el("button", "copy", "Use a CARTO key"); b.type = "button"; b.onclick = () => { view.keyOpen = true; redraw(); }; row.append(b); return row; }
+      const inp = el("input", "field"); inp.type = "password"; inp.placeholder = "CARTO API key"; inp.autocomplete = "off"; inp.setAttribute("aria-label", "CARTO API key"); inp.dataset.k = "cartokey";
+      const save = el("button", "btn", "Save"); save.type = "button";
+      save.onclick = () => { const v = inp.value.trim(); if (!v) return; ls.set(CARTO_KEY, v); ls.set(BASEMAP, "dark"); view.keyOpen = false; redraw(); };
+      inp.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); save.click(); } };
+      row.append(inp, save); setTimeout(() => inp.focus(), 0); return row;
+    }
     function ponLine(box, r, map) {
       if (!onts) { box.replaceChildren(el("p", "note", "Finding this customer's PON port on the OLTs… (the first time takes ~6 s)"));
         ontIndex().then(() => { if (box.isConnected) ponLine(box, r, map); }).catch(() => box.replaceChildren()); return; }
