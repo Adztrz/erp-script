@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.14
+// @version      2.15
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -720,6 +720,7 @@
       .erp-dock canvas { display: block; width: 100%; height: 170px; margin: 10px 0 6px; }
       .erp-dock .map { position: relative; height: 240px; margin: 10px 0 6px; border-radius: 8px; overflow: hidden; background: #0f1214; box-shadow: inset 0 0 0 1px var(--hair); }
       .erp-dock .map .tiles img { position: absolute; width: 256px; height: 256px; max-width: none; pointer-events: none; user-select: none; }
+      .erp-dock .map .tiles img { filter: invert(1) hue-rotate(180deg) brightness(.78) contrast(.92) saturate(.35); } /* OSM's light map, made dark */
       .erp-dock .map.sat .tiles img { filter: brightness(.8) saturate(.9); }
       .erp-dock .mdot.pon { box-shadow: 0 0 0 2px var(--bone); }
       .erp-dock .map .basemap { position: absolute; top: 8px; left: 8px; z-index: 4; background: rgba(9,11,12,.88); }
@@ -1691,13 +1692,13 @@
       if (n.list.length > 8) box.append(el("p", "note", `and ${n.list.length - 8} more within ${view.radius < 1000 ? `${view.radius} m` : "1 km"}`));
       return box;
     }
-    // A tile map drawn without a map library: a dark street map (CARTO, OpenStreetMap data) where the status colours
+    // A tile map drawn without a map library: a dark street map (OpenStreetMap's own tiles, darkened here; no key) where the status colours
     // stand out, or the satellite view Peta Terpadu uses (Google hybrid) for finding the house. This customer in the
     // middle, rings at half and full radius, every neighbour a dot; a dot and its row in the list light up together,
     // a dot opens that customer, and customers on the same PON port are outlined.
     const BASEMAP = "erpDock.basemap";
     const TILES = {
-      dark: { url: (x, y, z) => `https://${"abcd"[(x + y) % 4]}.basemaps.cartocdn.com/dark_all/${z}/${x}/${y}.png`, max: 19, attr: "© OpenStreetMap © CARTO" },
+      dark: { url: (x, y, z) => `https://tile.openstreetmap.org/${z}/${x}/${y}.png`, max: 19, attr: "© OpenStreetMap" }, // CARTO now wants a key
       sat: { url: (x, y, z) => `https://mt${(x + y) % 4}.google.com/vt/lyrs=y&hl=id&x=${x}&y=${y}&z=${z}`, max: 20, attr: "Google" },
     };
     function tileMap(box, r, n, radius, rows) {
