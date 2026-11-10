@@ -197,7 +197,7 @@
     // One list is loaded in parts when cfg.parts says so (invoices for "all months": month by month, newest first).
     // Each part is kept on its own, so a month already opened is reused, and the search works on what's loaded so far.
     async function loadPart(part, force) {
-      if (!force) { const kept = await idbGet(part); if (kept?.rows && Date.now() - kept.at < SEARCH_TTL) return kept; }
+      if (!force) { const kept = await idbGet(part); if (kept?.rows && Date.now() - kept.at < (cfg.ttl ? cfg.ttl(part) : SEARCH_TTL)) return kept; }
       const size = cfg.pageSize;
       st.done = 0; st.pages = 0;
       const page = async (p) => {
@@ -396,6 +396,9 @@
       parts: (key) => { const [, y, m] = key.split("-"); if (m !== "all") return [key]; const now = new Date(), last = Number(y) === now.getFullYear() ? now.getMonth() + 1 : 12;
         return Array.from({ length: last }, (_, i) => `inv-${y}-${last - i}`); },
       partLabel: (part) => { const [, y, m] = part.split("-"); return `${MONTHS[Number(m) - 1]} ${y}`; },
+      // this month and last change (payments come in); older months hardly do, so they're kept a day
+      ttl: (part) => { const [, y, m] = part.split("-"), now = new Date(), age = (now.getFullYear() - Number(y)) * 12 + now.getMonth() + 1 - Number(m);
+        return age >= 2 ? 24 * 60 * 60 * 1000 : SEARCH_TTL; },
       pageSize: 200, // the most the server gives at once
       url: (key, p, size) => { const [, y, m] = key.split("-"); return `/api/finance/invoices/list?month=${m}&year=${y}&page=${p}&pageSize=${size}`; },
       total: (j) => j.total || 0, items: (j) => j.invoices || [],
