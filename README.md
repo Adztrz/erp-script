@@ -1,6 +1,6 @@
 # ERP script
 
-A Tampermonkey userscript that makes four slow parts of an ERP web app usable, without changing the site.
+A Tampermonkey userscript that makes slow parts of an ERP web app usable, without changing the site.
 
 | Page | Problem (measured 10 Nov 2026) | What the script does |
 |---|---|---|
@@ -8,6 +8,7 @@ A Tampermonkey userscript that makes four slow parts of an ERP web app usable, w
 | Planning | Downloads 11 MB of network assets (backbone, OLT, ODP…) on every visit | Reuses them for 15 minutes; the bar shows how old they are and has Refresh |
 | LDN Radius → Pelanggan search | Asks the server on every search (1–4 s) and matches the typed text as one piece: an extra space, words in another order or a trailing `.` find nobody (0 of 5 in a test) | A **fast search** dropdown under the box: all customers are loaded once (13,520; a page that comes back short is asked for again; about 2 minutes the first time, then kept 30 minutes and refreshed in the background) and searched as you type in ~30–80 ms, any word order, spacing and punctuation ignored, forgiving of spelling (double letters: winna = wina; old spellings: oe = u, dj = j, tj = c; one letter off from 4 letters, two from 9), across name, username, phone, address, village, router and plan (5 of 5 in the same test). ↑↓ and Enter (or a click) put that customer's username into the site's search, so the table shows them |
 | Finance → Invoices search | Same as LDN: one server request per search (~2.8 s), the typed text matched as one piece (an extra space, another word order or a trailing `.` find nobody: 0 of 5) | The same **fast search**, for the month the page shows (it follows the month you pick): about 12,000 invoices a month, loaded once (about a minute; the server gives 200 per request, about one request a second). For **Semua Bulan** it loads month by month, newest first, and searches whatever has arrived (a whole year takes about 11 minutes the first time); each month is kept on its own, this month and last for 30 minutes, older months for a day, then searched in ~30–60 ms across invoice number, WinPay ID, name, RADIUS username, contract, village, router, plan and phone. Each result shows status, amount and period. Enter puts the invoice number into the site's search, so the table shows that invoice |
+| Idle logout with several tabs open | The ERP logs out after 120 minutes without a click, key, touch or scroll, counted in **each tab on its own**, and a logout in one tab signs out every tab, so a forgotten background tab ends the session you're working in | Real activity in any ERP tab counts for all of them (passed between tabs at most every 30 s). Only real input travels: 120 minutes of doing nothing still logs you out |
 
 The page searches and filters only what it has loaded, so for an older work order choose **All**.
 
@@ -34,5 +35,7 @@ It runs before the page (`@run-at document-start`, `@grant none`) and wraps `win
 - `GET /api/pg-read/workOrders`: lowers `limit` to the chosen amount (never raises it).
 - `GET /api/pg-read/networkAssets` on `/planning`: answered from the browser's Cache Storage (`erp-fast-assets`) when the copy is under 15 minutes old.
 - Fast search (LDN Radius and Invoices): it reads the page's own sign-in header from its requests (kept in memory, never saved), loads `/api/admin/ldn-radius/customers` (500 at a time) or `/api/finance/invoices/list` for the shown month (200 at a time), three requests at once, re-asking for any page that comes back short, and keeps a slim copy in this browser's IndexedDB (`erp-fast`). No passwords are loaded.
+
+- Idle clock: real `mousedown`/`keydown`/`touchstart`/`scroll` in one tab is announced on a `BroadcastChannel` (`erp-fast-activity`) and raised as a `scroll` in the other ERP tabs, which the ERP's own idle timer listens for.
 
 Nothing else is changed and nothing is sent anywhere.
