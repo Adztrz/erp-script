@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.10
+// @version      2.11
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -873,7 +873,8 @@
       const text = await r.text().catch(() => ""); let j = {};
       try { j = text ? JSON.parse(text) : {}; } catch { /* not JSON: a gateway error page or a crash */ }
       if (!r.ok || j.success === false) {
-        const said = j.error || j.message || j.alasan || j.pesan || text.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 160);
+        const page = /<title>([^<]*)<\/title>/i.exec(text)?.[1].replace(/\s*\|\s*/g, ": ").trim(); // an HTML error page (Cloudflare): its title says enough
+        const said = j.error || j.message || j.alasan || j.pesan || page || text.replace(/\s+/g, " ").trim().slice(0, 160);
         throw new Error(`${said || "no reason given"} (HTTP ${r.status}${r.status >= 500 ? ", on the ERP server's side" : ""})`);
       }
       return j;
