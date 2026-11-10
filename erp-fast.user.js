@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — faster Work Orders, Planning, and LDN and invoice search
 // @namespace    adztrz
-// @version      1.11
+// @version      1.12
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -138,8 +138,9 @@
   // misspelt name rarely does. Here each list is loaded once (kept 30 minutes in this browser, refreshed in the
   // background) and searched as you type: any word order, spacing and punctuation ignored, forgiving of spelling.
   // Picking a result puts its username / invoice number into the site's own search box, so the table shows it.
-  const SEARCH_TTL = 30 * 60 * 1000, IDB = "erp-fast", IDB_STORE = "ldn";
-  const fold = (s) => String(s ?? "").normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const SEARCH_TTL = 2 * 60 * 60 * 1000, // a list counts as fresh for 2 hours (older invoice months longer, see ttl)
+    IDB = "erp-fast", IDB_STORE = "ldn";
+  const fold = (s) => String(s ?? "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
   const digits = (s) => { let d = String(s ?? "").replace(/\D/g, ""); if (d.startsWith("62")) d = "0" + d.slice(2); return d; };
   const rupiah = (n) => (Number.isFinite(Number(n)) ? `Rp ${Number(n).toLocaleString("id-ID")}` : "");
 
@@ -199,8 +200,10 @@
 
     // One list is loaded in parts when cfg.parts says so (invoices for "all months": month by month, newest first).
     // Each part is kept on its own, so a month already opened is reused, and the search works on what's loaded so far.
+    // A download saves its pages as they arrive (under "<part>~partial"), so leaving the page halfway and coming back
+    // carries on where it stopped instead of starting again. The finished list replaces the old copy in one go.
     async function loadPart(part, gen) {
-      const size = cfg.pageSize;
+      const size = cfg.pageSize, slim = (c) => Object.fromEntries(cfg.keep.map((k) => [k, c[k]]));
       st.done = 0; st.pages = 0;
       const page = async (p) => {
         if (gen !== st.gen) throw new Error("stale"); // another list was asked for: this one stops here
@@ -211,15 +214,25 @@
       };
       const first = await page(1), total = cfg.total(first);
       st.pages = Math.max(1, Math.ceil(total / size));
-      const got = new Map([[1, cfg.items(first)]]), rest = Array.from({ length: st.pages - 1 }, (_, i) => i + 2);
+      const got = new Map([[1, cfg.items(first).map(slim)]]);
+      // carry on from an earlier, unfinished download of the same list (same size, under a day old)
+      const half = await idbGet(`${part}~partial`);
+      if (half?.pages && half.total === total && Date.now() - half.at < 24 * 60 * 60 * 1000)
+        for (const [n, rows] of Object.entries(half.pages)) if (Number(n) > 1 && rows.length) got.set(Number(n), rows);
+      st.done = got.size;
+      const save = () => idbPut(`${part}~partial`, { at: half?.at && half.total === total ? half.at : Date.now(), total, pages: Object.fromEntries(got) });
+      const rest = Array.from({ length: st.pages - 1 }, (_, i) => i + 2).filter((p) => !got.has(p));
       // three at a time, so the server isn't flooded
-      for (let i = 0; i < rest.length; i += 3) (await Promise.all(rest.slice(i, i + 3).map(async (p) => [p, cfg.items(await page(p))]))).forEach(([p, c]) => got.set(p, c));
+      for (let i = 0; i < rest.length; i += 3) {
+        (await Promise.all(rest.slice(i, i + 3).map(async (p) => [p, cfg.items(await page(p)).map(slim)]))).forEach(([p, c]) => got.set(p, c));
+        if (i % 9 === 6) save(); // every nine pages: often enough to resume, not a rewrite per page
+      }
       // a page that came back short (the server was busy) is asked for again, one at a time
-      for (const p of rest) if (got.get(p).length < size && p < st.pages) got.set(p, cfg.items(await page(p)));
-      if (rest.length && !got.get(st.pages).length) got.set(st.pages, cfg.items(await page(st.pages)));
-      const rows = [...got.keys()].sort((a, b) => a - b).flatMap((p) => got.get(p)).map((c) => Object.fromEntries(cfg.keep.map((k) => [k, c[k]])));
+      for (let p = 2; p < st.pages; p++) if ((got.get(p)?.length ?? 0) < size) got.set(p, cfg.items(await page(p)).map(slim));
+      if (st.pages > 1 && !got.get(st.pages)?.length) got.set(st.pages, cfg.items(await page(st.pages)).map(slim));
+      const rows = [...got.keys()].sort((a, b) => a - b).flatMap((p) => got.get(p));
       const kept = { at: Date.now(), rows, total: total || rows.length };
-      idbPut(part, kept);
+      idbPut(part, kept); idbPut(`${part}~partial`, null);
       return kept;
     }
 
@@ -343,11 +356,12 @@
       if (st.rows) {
         const mins = Math.floor((Date.now() - st.at) / 60000), missing = st.total - st.rows.length;
         const count = `${st.hits.length > 29 ? "30+" : st.hits.length} of ${st.rows.length.toLocaleString("id-ID")}${!st.loading && missing > 0 ? ` (${missing.toLocaleString("id-ID")} not loaded)` : ""}`;
-        const progress = st.loading ? ` · ${st.parts > 1 ? `loading ${st.partName} (${st.partNo} of ${st.parts}) ` : "updating "}${st.done}/${st.pages || "…"}` : ` · ${mins < 1 ? "just updated" : `${mins} min old`}`;
+        const age = mins < 1 ? "just updated" : mins < 120 ? `${mins} min old` : `${Math.round(mins / 60)} h old`;
+        const progress = st.loading ? ` · ${age}, refreshing${st.parts > 1 ? ` ${st.partName} (${st.partNo} of ${st.parts})` : ""} ${st.done}/${st.pages || "…"}` : ` · ${age}`;
         const b = el("b", count !== st.count && st.count && !calm() ? "pop" : null, count); st.count = count;
         head.append(cfg.scope ? ` · ${cfg.scope(st.key)} ` : " ", b, progress);
         const up = el("button", null, "Update"); up.type = "button"; up.onclick = () => load(true); head.append(up);
-      } else head.append(` ${st.error ? st.error : `Loading ${cfg.noun}${st.parts > 1 ? ` · ${st.partName} (${st.partNo} of ${st.parts})` : ""} ${st.done}/${st.pages || "…"}`}`);
+      } else head.append(` ${st.error ? st.error : `First download of ${cfg.noun}${st.parts > 1 ? ` · ${st.partName} (${st.partNo} of ${st.parts})` : ""} ${st.done}/${st.pages || "…"}, saved as it comes`}`);
 
       // a thin bone line for the page being loaded, with light sweeping across it
       const bar = box.querySelector(".bar");
@@ -507,9 +521,9 @@
       parts: (key) => { const [, y, m] = key.split("-"); if (m !== "all") return [key]; const now = new Date(), last = Number(y) === now.getFullYear() ? now.getMonth() + 1 : 12;
         return Array.from({ length: last }, (_, i) => `inv-${y}-${last - i}`); },
       partLabel: (part) => { const [, y, m] = part.split("-"); return `${MONTHS[Number(m) - 1]} ${y}`; },
-      // this month and last change (payments come in); older months hardly do, so they're kept a day
+      // this month and last change (payments come in); older months hardly do, so they're kept a week
       ttl: (part) => { const [, y, m] = part.split("-"), now = new Date(), age = (now.getFullYear() - Number(y)) * 12 + now.getMonth() + 1 - Number(m);
-        return age >= 2 ? 24 * 60 * 60 * 1000 : SEARCH_TTL; },
+        return age >= 2 ? 7 * 24 * 60 * 60 * 1000 : SEARCH_TTL; }, // months before last: a week
       pageSize: 200, // the most the server gives at once
       url: (key, p, size) => { const [, y, m] = key.split("-"); return `/api/finance/invoices/list?month=${m}&year=${y}&page=${p}&pageSize=${size}`; },
       total: (j) => j.total || 0, items: (j) => j.invoices || [],
