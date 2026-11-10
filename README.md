@@ -12,7 +12,7 @@ A Tampermonkey userscript that makes slow parts of an ERP web app usable, withou
 
 The page searches and filters only what it has loaded, so for an older work order choose **All**.
 
-The bar follows the Faust design (Night Ledger: near-black card, bone dot label, graphite segments, blue focus ring).
+The bar follows the Faust design (Night Ledger: near-black card, bone dot label, graphite segments, blue focus ring). The fast search moves the Faust way too: the box unfolds with a slight un-blur, its label types itself in with a faint blinking cursor, new results rise in one after another (ones that stay don't move), the selection slides between rows, a bone progress line with a light sweep shows loading, and the box folds away on close. All of it is off under the system's reduced-motion setting.
 
 ## Install
 
