@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.24
+// @version      2.25
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -805,8 +805,8 @@
       .erp-dock .techs { margin: 0 4px 12px; display: grid; gap: 6px; }
       .erp-dock .techs .team { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 8px; align-items: baseline; font-size: 13px; }
       .erp-dock .techs .team b { font-weight: 500; color: var(--paper); } .erp-dock .techs .team .sub { grid-column: 2; font-size: 12px; color: var(--muted); }
-      .erp-dock .tag { font-size: 11px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; padding: 1px 6px; border-radius: 4px; background: rgba(255,255,255,.06); color: var(--body); }
-      .erp-dock .tag.field { color: var(--green); background: rgba(85,188,130,.1); } .erp-dock .tag.area { color: #e0b252; background: rgba(224,178,82,.1); }
+      .erp-dock .tag { align-self: start; white-space: nowrap; font-size: 11px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; padding: 1px 6px; border-radius: 4px; background: rgba(255,255,255,.06); color: var(--body); }
+      .erp-dock .tag.k-field { color: var(--green); background: rgba(85,188,130,.1); } .erp-dock .tag.k-area { color: #e0b252; background: rgba(224,178,82,.1); }
       .erp-dock .pw.msg { white-space: pre-wrap; font: 12px/1.5 "JetBrains Mono", ui-monospace, monospace; display: block; }
       .erp-dock .report .actions { margin: 8px 0 0; }
       .erp-dock .hrow { cursor: default; } .erp-dock .hrow:hover { background: none; }
@@ -1752,7 +1752,7 @@
         if (!teams.length) return box.replaceChildren(head, el("p", "note warn", r.desa ? `No team covers ${titleCase(r.desa)} yet, and nothing nearby to go by (HRD → Pemetaan Wilayah Teknisi).` : "No village or location on file, so no team can be matched."));
         const rows = teams.map((t) => { const row = el("div", "team"), kind = teamKind(t.name);
           const names = t.members.map((m) => (m.lead ? `${titleCase(m.n)} (lead)` : titleCase(m.n))).join(", ");
-          row.append(el("span", `tag ${kind}`, { field: "Field", area: "Area head", backbone: "Backbone", office: "Office" }[kind]), el("b", null, t.name === "Tanpa tim" ? "Placed individually (no team)" : t.name), el("span", "sub", names || "no members"));
+          row.append(el("span", `tag k-${kind}`, /* not "field": that is the input style */ { field: "Field", area: "Area head", backbone: "Backbone", office: "Office" }[kind]), el("b", null, t.name === "Tanpa tim" ? "Placed individually (no team)" : t.name), el("span", "sub", names || "no members"));
           return row; });
         box.replaceChildren(head, ...(how ? [el("p", "note warn", how)] : []), ...rows);
       };
