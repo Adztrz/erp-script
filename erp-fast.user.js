@@ -373,7 +373,9 @@
         pill = list.querySelector(".pill");
         const go = () => { pill.style.transform = `translateY(${on.offsetTop}px)`; pill.style.height = `${on.offsetHeight}px`; pill.classList.add("on"); };
         if (fresh || !pill.classList.contains("on")) { pill.style.transition = "none"; go(); void pill.offsetHeight; pill.style.transition = ""; } else go();
-        on.scrollIntoView({ block: "nearest" });
+        // keep the chosen row in view by scrolling the list only (scrollIntoView would scroll the whole page too)
+        if (on.offsetTop < list.scrollTop) list.scrollTop = on.offsetTop - 4;
+        else if (on.offsetTop + on.offsetHeight > list.scrollTop + list.clientHeight) list.scrollTop = on.offsetTop + on.offsetHeight - list.clientHeight + 4;
       }
     }
 
@@ -391,7 +393,7 @@
       else if (e.key === "Enter" && st.hits[st.sel]) { e.preventDefault(); e.stopPropagation(); pick(st.hits[st.sel]); }
       else if (e.key === "Escape") { e.preventDefault(); close(); }
     }, true);
-    addEventListener("resize", place); addEventListener("scroll", place, true);
+    addEventListener("resize", place); document.addEventListener("scroll", place, { capture: true, passive: true });
 
     // the page's own requests: its sign-in (kept in memory only, never saved) and, for invoices, which month it shows
     return function seen(u, auth) {
