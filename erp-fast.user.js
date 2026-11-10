@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.18
+// @version      2.19
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -802,6 +802,9 @@
       .erp-dock .dot.silent { background: transparent; box-shadow: inset 0 0 0 1px var(--muted); }
       .erp-dock canvas.big { width: 100%; height: 96px; margin: 6px 0 2px; }
       .erp-dock .ticks { display: flex; justify-content: space-between; font: 11px "JetBrains Mono", ui-monospace, monospace; color: var(--muted); }
+      .erp-dock .pw.msg { white-space: pre-wrap; font: 12px/1.5 "JetBrains Mono", ui-monospace, monospace; display: block; }
+      .erp-dock .report .actions { margin: 8px 0 0; }
+      .erp-dock .hrow { cursor: default; } .erp-dock .hrow:hover { background: none; }
       .erp-dock .desa { grid-template-columns: minmax(0, 1fr) 120px auto; } .erp-dock .desa .s { grid-column: 1 / -1; }
       .erp-dock .meter { height: 4px; border-radius: 2px; background: var(--hair); overflow: hidden; } .erp-dock .meter i { display: block; height: 100%; background: #ff6a5c; }
       /* Modem */
@@ -1306,6 +1309,8 @@
       const parts = [];
       const e = el("div", "eyebrow"); e.style.margin = "0 0 8px"; e.append(`Offline now `, el("b", null, `${off.length} of ${mine.length} active customers`)); parts.push(e);
       if (fresh >= 10) parts.push(el("p", "note good", `${fresh} customers reconnected in the last 15 minutes: the line is coming back.`));
+      const rx = radar?.list.find((r) => r.ip === ip);
+      if (off.length) parts.push(reportBox({ title: x_name(ip), down: off.length, total: mine.length, since: rx?.level === "down" || rx?.level === "drop" ? rx.since : null, custs: off }));
       // a map: online faint green, offline red
       const pts = mine.map((c) => ({ c, p: where(c), on: !off.includes(c) })).filter((z) => z.p);
       if (pts.length > 5) { const cv = el("canvas"); cv.style.height = "200px"; cv.setAttribute("aria-label", `${off.length} offline customers on a map of ${x_name(ip)}`); parts.push(cv); requestAnimationFrame(() => fitPlot(cv, pts)); }
@@ -1357,15 +1362,18 @@
       return (ontsLoading ||= (async () => {
         const pr = (await api("/api/olt/profiles")).data || [], rows = [], queue = [...pr];
         await Promise.all([0, 1, 2, 3].map(async () => { while (queue.length) { const p = queue.shift();
-          try { for (const o of (await api(`/api/olt/profiles/${p.id}/onts?cached=1`)).data || []) if (o.serialNumber) rows.push({ sn: snNorm(o.serialNumber), raw: o.serialNumber, pid: p.id, olt: p.name,
-            pon: [o.frame, o.slot, o.port].filter((x) => x != null).join("/"), id: o.ontId, st: o.status, rx: o.rxPower ?? null, dist: o.distance ?? o.signalDistance ?? null,
-            pppoe: o.pppoeUsername || "", name: o.customerName || "", model: o.model || o.vendor || p.vendor || "", seen: o.signalPolledAt || o.lastSeenAt || null }); } catch { /* that OLT is skipped */ } } }));
-        const v = { at: Date.now(), rows }; idbPut("onts", v); onts = indexOnts(v);
+          try { for (const o of (await api(`/api/olt/profiles/${p.id}/onts?cached=1`)).data || []) if (o.serialNumber) rows.push(ontRow(o, p)); } catch { /* that OLT is skipped */ } } }));
+        // each OLT's own record: whether the ERP can reach it, and why not
+        const olts = pr.map((p) => ({ id: p.id, name: p.name, ip: p.ipAddress || "", ok: p.lastTestSuccess, err: p.lastDiscoveryError || p.lastTestError || "", disc: p.lastDiscoveryAt || null }));
+        const v = { at: Date.now(), rows, olts }; idbPut("onts", v); onts = indexOnts(v);
         if (panel && !document.activeElement?.closest?.(".modem")) drawBody();
         return onts;
       })().finally(() => { ontsLoading = null; }));
     }
-    const indexOnts = (v) => ({ at: v.at, rows: v.rows, bySn: new Map(v.rows.map((o) => [o.sn, o])), byUser: new Map(v.rows.filter((o) => o.pppoe).map((o) => [lower(o.pppoe), o])) });
+    const ontRow = (o, p) => ({ sn: snNorm(o.serialNumber), raw: o.serialNumber, pid: p.id, olt: p.name, pon: [o.frame, o.slot, o.port].filter((x) => x != null).join("/"), id: o.ontId,
+      st: o.status, rx: o.rxPower ?? null, dist: o.distance ?? o.signalDistance ?? null, pppoe: o.pppoeUsername || "", name: o.customerName || "", model: o.model || o.vendor || p.vendor || "",
+      seen: o.signalPolledAt || o.lastSeenAt || null });
+    const indexOnts = (v) => ({ at: v.at, rows: v.rows, olts: v.olts || [], bySn: new Map(v.rows.map((o) => [o.sn, o])), byUser: new Map(v.rows.filter((o) => o.pppoe).map((o) => [lower(o.pppoe), o])) });
     async function ontIndex() {
       if (!onts) { const kept = await idbGet("onts"); if (kept?.rows) onts = indexOnts(kept); }
       if (!onts || Date.now() - onts.at > 2 * 3600000) { const p = refreshOnts(); if (!onts) await p; }
@@ -1681,15 +1689,113 @@
       const pts = g.all.map((o) => { const c = customerOf(o.sn, o, null); return c && where(c) ? { c, p: where(c), on: o.st === "online" } : null; }).filter(Boolean);
       if (pts.length > 3) { const cv = el("canvas"); cv.style.height = "200px"; cv.setAttribute("aria-label", `Map of ${pts.length} customers on this port, offline in red`); wrap.append(cv); setTimeout(() => fitPlot(cv, pts), 0); }
       out.push(wrap);
+      if (g.off) out.push(reportBox({ title: `${g.olt} · PON ${g.pon}`, down: g.off, total: g.all.length, age: g.fresh ? `OLT ${lalu(g.fresh)}` : "",
+        custs: g.all.filter((o) => o.st !== "online").map((o) => customerOf(o.sn, o, null)).filter(Boolean) }));
       const order = [...g.all].sort((a, b) => (a.st === "online") - (b.st === "online") || (usable(a) ? a.rx : 0) - (usable(b) ? b.rx : 0));
       const e = el("div", "eyebrow"); e.append("Modems, offline and weakest first"); out.push(e);
       order.forEach((o, i) => out.push(ontItem(o, i)));
       return out;
     }
+    // ---- Outage report: the text for the technicians' group, and a notice and phone list for the customers ----
+    const wib = (t = Date.now()) => new Date(t).toLocaleString("id-ID", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+    const lalu = (t) => { const m = Math.floor((Date.now() - new Date(t)) / 60000); return m < 1 ? "baru saja" : m < 120 ? `${m} menit lalu` : m < 2880 ? `${Math.round(m / 60)} jam lalu` : `${Math.round(m / 1440)} hari lalu`; };
+    const phone62 = (p) => { let d = String(p ?? "").replace(/\D/g, ""); if (d.startsWith("0")) d = "62" + d.slice(1); return d.length >= 10 ? d : ""; };
+    function reportBox({ title, down, total, since, custs, age }) {
+      const box = el("div", "near report"), e = el("div", "eyebrow"); e.style.margin = "0 0 8px"; e.append("Outage report"); box.append(e);
+      const title1 = (d) => String(d).toLowerCase().replace(/(^|\s)\S/g, (x) => x.toUpperCase()); // KASIHAN and Kasihan are one village
+      const vil = new Map(); for (const c of custs) { const d = c.desa ? title1(c.desa.trim()) : "?"; vil.set(d, (vil.get(d) || 0) + 1); }
+      const villages = [...vil].sort((a, b) => b[1] - a[1]), pts = custs.map(where).filter(Boolean);
+      const mid = pts.length ? { lat: pts.reduce((a, p) => a + p.lat, 0) / pts.length, lng: pts.reduce((a, p) => a + p.lng, 0) / pts.length } : null;
+      const text = [`*GANGGUAN* · ${title}`, `${down} dari ${total} offline${since ? ` sejak ${hhmm(since)}` : ""}${age ? ` (data ${age})` : ""}`,
+        villages.length ? `Desa: ${villages.slice(0, 8).map(([d, n]) => `${d} (${n})`).join(", ")}${villages.length > 8 ? ", …" : ""}` : "",
+        custs.length === down ? `Pelanggan terdampak: ${custs.length}` : `Pelanggan terdampak yang terdata: ${custs.length} dari ${down} modem offline`, mid ? `Lokasi: https://www.google.com/maps?q=${mid.lat.toFixed(6)},${mid.lng.toFixed(6)}` : "", `Dilaporkan ${wib()} WIB`].filter(Boolean).join("\n");
+      const notice = `Pelanggan Yth, saat ini sedang ada gangguan jaringan di area ${villages.slice(0, 3).map(([d]) => d).filter((d) => d !== "?").join(", ") || "Anda"}. Tim teknisi kami sedang menanganinya. Mohon maaf atas ketidaknyamanannya. Terima kasih.`;
+      const phones = [...new Set(custs.map((c) => phone62(c.phone)).filter(Boolean))];
+      const pre = el("div", "pw msg"); pre.textContent = text; box.append(pre);
+      const acts = el("div", "actions"), btn = (label, fn) => { const b = el("button", "btn", label); b.type = "button"; b.onclick = () => fn(b); acts.append(b); return b; };
+      btn("Copy report", (b) => copy(text, b));
+      const wa = el("a", "btn primary", "WhatsApp ↗"); wa.href = `https://wa.me/?text=${encodeURIComponent(text)}`; wa.target = "_blank"; wa.rel = "noreferrer noopener"; acts.prepend(wa);
+      if (phones.length) btn(`Copy ${phones.length} phone numbers`, (b) => copy(phones.join("\n"), b));
+      if (custs.length) btn("Copy customer notice", (b) => copy(notice, b));
+      box.append(acts); return box;
+    }
+
+    // ---- Data health: which numbers to trust ----
+    // OLT polling age (a list not read for days makes the PON board and signal watch stale), routers whose session feed
+    // is dead (the radar can't see them), and customers whose RO on file isn't where their session is (Remote ONU and
+    // the radar's RO grouping go wrong for them).
+    let polling = new Set(), wrongRo = null;
+    async function readOlt(pid, name) {
+      polling.add(pid); drawBody();
+      try {
+        const j = await api(`/api/olt/profiles/${pid}/onts`), d = j.data || [], p = { id: pid, name, vendor: "" };
+        if (j.stale || j.fallback) view.healthMsg = { bad: true, text: `${name}: the ERP couldn't reach the OLT (${j.message || "no reason given"}), so it gave its old copy. The OLT's connection needs fixing on the ERP side.` };
+        else { const rows = [...onts.rows.filter((o) => o.pid !== pid), ...d.filter((o) => o.serialNumber).map((o) => ontRow(o, p))];
+          const v = { at: onts.at, rows, olts: onts.olts }; idbPut("onts", v); onts = indexOnts(v); view.healthMsg = { good: true, text: `${name}: read ${d.length} modems from the OLT just now.` }; }
+      } catch (err) { view.healthMsg = { bad: true, text: `${name} didn't answer: ${err.message}` }; }
+      polling.delete(pid); drawBody();
+    }
+    function healthView() {
+      const out = []; boardHead("Data health", out); if (!needOnts(out)) return out;
+      if (view.healthMsg) out.push(el("p", `note ${view.healthMsg.bad ? "late" : "good"}`, view.healthMsg.text));
+      // 1. OLT lists by age
+      const olts = new Map(); for (const o of onts.rows) { let g = olts.get(o.pid); if (!g) olts.set(o.pid, (g = { pid: o.pid, olt: o.olt, n: 0, newest: 0 })); g.n++; const t = o.seen ? new Date(o.seen).getTime() : 0; if (t > g.newest) g.newest = t; }
+      const list = [...olts.values()].sort((a, b) => a.newest - b.newest), age = (g) => Date.now() - g.newest;
+      const stale = list.filter((g) => age(g) > 24 * 3600000).length;
+      const e1 = el("div", "eyebrow"); e1.append("OLT lists ", el("b", null, stale ? `${stale} of ${list.length} older than a day` : `all ${list.length} read within a day`)); out.push(e1);
+      list.forEach((g, i) => {
+        const row = el("div", "item hrow rise"); row.style.setProperty("--i", String(Math.min(i, 14)));
+        const a = age(g), lv = !g.newest || a > 3 * 86400000 ? "iso" : a > 24 * 3600000 ? "drop" : a > 6 * 3600000 ? "off" : "on";
+        const read = el("button", "copy", polling.has(g.pid) ? "Reading…" : "Read now"); read.type = "button"; read.disabled = polling.has(g.pid);
+        read.title = "Ask the OLT for its modem list now (read-only; up to ~50 s)"; read.onclick = () => readOlt(g.pid, g.olt);
+        const info = onts.olts.find((x) => x.id === g.pid), why = a > 24 * 3600000 && info && info.ok === false && info.err ? ` · the ERP can't reach it${info.ip ? ` (${info.ip})` : ""}: ${info.err.replace(/\s+/g, " ").slice(0, 110)}…` : "";
+        row.append(el("span", `dot ${lv}`), el("span", "t", g.olt), read, el("span", "s", `${g.n} modems · newest reading ${g.newest ? when(g.newest) : "never"}${why}`));
+        out.push(row);
+      });
+      // 2. router session feeds (from the radar)
+      const e2 = el("div", "eyebrow"); e2.append("Router session feeds"); out.push(e2);
+      if (!radar) { out.push(el("p", "note", "Reading the routers…")); radarTick(true).then(() => view.mode === "health" && drawBody()); }
+      else {
+        if (!areas) areaNames().then(() => view.mode === "health" && drawBody());
+        const dead = radar.list.filter((x) => !x.healthy || x.level === "silent");
+        if (!dead.length) out.push(el("p", "note good", `All ${radar.list.length} routers are reporting sessions.`));
+        dead.forEach((x) => { const a = areaOf(x.name), row = el("div", "item hrow");
+          row.append(el("span", `dot ${(a?.active ?? 0) >= 20 ? "iso" : "off"}`), el("span", "t", x.name), el("span", "r", `${x.open} sessions`),
+            el("span", "s", (a?.active ?? 0) >= 20 ? `feed ${x.healthy ? "quiet" : "stopped"}, yet ${a.active} active customers on file: their sessions are counted on another router, or the feed is broken` : `feed ${x.healthy ? "quiet" : "stopped"}; few or no customers on file (likely retired)`));
+          out.push(row); });
+      }
+      // 3. customers on the wrong RO
+      const e3 = el("div", "eyebrow"); e3.append("Customers on the wrong RO"); out.push(e3);
+      if (!customers) out.push(el("p", "note", "Needs the customer list: open LDN Radius → Pelanggan once."));
+      else if (!wrongRo) { const b = el("button", "btn", "Check now (reads the live sessions, ~1 s)"); b.type = "button"; b.style.margin = "0 6px";
+        b.onclick = async () => { b.disabled = true; b.textContent = "Checking…"; try { wrongRo = findWrongRo(await liveSessions()); } catch (err) { view.healthMsg = { bad: true, text: err.message }; } drawBody(); }; out.push(b); }
+      else {
+        out.push(el("p", "note", `${wrongRo.list.length} of ${wrongRo.online.toLocaleString("id-ID")} online customers have a different RO on file than where their session is. The ERP's Remote ONU can't find them, and the radar counts them on the other router.`));
+        const csv = ["username,nama,ro_di_data,ro_sesi", ...wrongRo.list.map((x) => [x.c.username, `"${String(x.c.nama || "").replace(/"/g, "'")}"`, x.from || "(kosong)", x.to].join(","))].join("\n");
+        const acts = el("div", "actions"); acts.style.margin = "0 6px 6px"; const c = el("button", "btn", "Copy the list (CSV)"); c.type = "button"; c.onclick = () => copy(csv, c); acts.append(c); out.push(acts);
+        wrongRo.pairs.slice(0, 12).forEach(([k, l], i) => {
+          const b = el("button", "item desa rise"); b.type = "button"; b.style.setProperty("--i", String(i));
+          const m = el("span", "meter"), f = el("i"); f.style.width = `${Math.round((l.length / wrongRo.pairs[0][1].length) * 100)}%`; m.append(f);
+          b.append(el("span", "t", k), m, el("span", "r", String(l.length))); b.onclick = () => { view.roPair = view.roPair === k ? null : k; drawBody(); }; out.push(b);
+          if (view.roPair === k) l.slice(0, 50).forEach((x, j) => out.push(custItem(x.c, j)));
+        });
+      }
+      return out;
+    }
+    function findWrongRo(lv) {
+      const word = (x) => String(x || "").toUpperCase().replace(/^RO[\s-]+/, "").split(/[\s-]/)[0];
+      const list = []; let online = 0;
+      for (const c of customers) { const s = lv.by.get(String(c.username).toLowerCase()); if (!s || s.type !== "pppoe") continue; online++;
+        if (word(c.router) !== word(s.ro)) list.push({ c, from: c.router || "", to: s.ro }); }
+      const by = new Map(); for (const x of list) { const k = `${x.from || "(kosong)"} → ${x.to}`; by.set(k, [...(by.get(k) || []), x]); }
+      return { at: Date.now(), online, list, pairs: [...by].sort((a, b) => b[1].length - a[1].length) };
+    }
     function boardItem(i, mode) {
       const b = el("button", "item rise"); b.type = "button"; b.style.setProperty("--i", String(i));
-      const [t, s] = mode === "signal" ? ["Weak signal", "Modems below −28 / −26 dBm, and PON ports where several are weak"] : ["PON board", "Every PON port by share offline or weak signal; open one for its modems and map"];
-      b.append(svg(mode === "signal" ? "M4 18h2M8 14h2v4H8zM12 10h2v8h-2zM16 6h2v12h-2z" : "M4 6h16M4 12h16M4 18h16M8 4v4M14 10v4M10 16v4"), el("span", "t", t), el("span", "r", ""), el("span", "s", s));
+      const [t, s, icon] = { signal: ["Weak signal", "Modems below −28 / −26 dBm, and PON ports where several are weak", "M4 18h2M8 14h2v4H8zM12 10h2v8h-2zM16 6h2v12h-2z"],
+        pon: ["PON board", "Every PON port by share offline or weak signal; open one for its modems and map", "M4 6h16M4 12h16M4 18h16M8 4v4M14 10v4M10 16v4"],
+        health: ["Data health", "Which numbers to trust: OLT polling age, router session feeds, customers on the wrong RO", "M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7zM9 12l2 2 4-4"] }[mode];
+      b.append(svg(icon), el("span", "t", t), el("span", "r", ""), el("span", "s", s));
       b.onclick = () => { view.mode = mode; view.pon = null; view.from = null; view.card = null; drawBody(); }; return b;
     }
 
@@ -1720,6 +1826,7 @@
       else if (view.mode === "radar") parts.push(...radarView());
       else if (view.mode === "signal") parts.push(...signalView());
       else if (view.mode === "pon") parts.push(...ponBoard());
+      else if (view.mode === "health") parts.push(...healthView());
       else if (!view.q.trim()) parts.push(...homeView());
       else parts.push(...resultsView(view.q));
       body.replaceChildren(...parts);
@@ -1739,7 +1846,7 @@
       const g = el("div", "grid");
       SHORTCUTS.forEach(([label, path, icon], i) => { const t = el("button", "tile rise"); t.type = "button"; t.style.setProperty("--i", String(i)); t.append(svg(icon), label); t.onclick = () => go(path); g.append(t); });
       out.push(g);
-      const e4 = el("div", "eyebrow"); e4.append("Tools"); out.push(e4, radarItem(0), boardItem(1, "pon"), boardItem(2, "signal")); // Bulk Lunas shows when searched (or a list is pasted)
+      const e4 = el("div", "eyebrow"); e4.append("Tools"); out.push(e4, radarItem(0), boardItem(1, "pon"), boardItem(2, "signal"), boardItem(3, "health")); // Bulk Lunas shows when searched (or a list is pasted)
       const recent = ls.get(RECENT, []).map((u) => customers?.find((r) => r.username === u)).filter(Boolean);
       if (recent.length) { const e3 = el("div", "eyebrow"); e3.append("Recent customers"); out.push(e3, ...recent.slice(0, 5).map(custItem)); }
       if (!customers) out.push(el("p", "note", "To look customers up here, open LDN Radius → Pelanggan once: its fast search keeps the list in this browser."));
@@ -1754,9 +1861,9 @@
         else { out.push(el("p", "note", "Looking modems up on the OLTs…")); Promise.all([ontIndex(), acsIndex()]).then(() => { if (view.q === q && !view.card) drawBody(); }); }
       }
       const tool = /^(bul|lun|bay|tan|pay|mas|mar)/.test(fold(q)), net = /^(rad|out|gan|mat|rou|off|jar|dow|put)/.test(fold(q));
-      const sig = /^(sig|sin|red|rx|lem|wea|dbm|red)/.test(fold(q)), pn = /^(pon|odp|spl|olt|lin)/.test(fold(q));
-      if (tool || net || sig || pn) { const e = el("div", "eyebrow"); e.append("Tools"); out.push(e); if (net) out.push(radarItem(0)); if (pn) out.push(boardItem(1, "pon")); if (sig) out.push(boardItem(2, "signal")); if (tool) out.push(toolItem(3)); }
-      if (!cs.length && !ps.length && !tool && !net && !sig && !pn && !snLike(q)) out.push(el("p", "note", customers ? "Nothing matches all of those words." : "No customer list yet: open LDN Radius → Pelanggan once."));
+      const sig = /^(sig|sin|red|rx|lem|wea|dbm|red)/.test(fold(q)), pn = /^(pon|odp|spl|olt|lin)/.test(fold(q)), hl = /^(dat|hea|sta|pol|wro|sal|kes)/.test(fold(q));
+      if (tool || net || sig || pn || hl) { const e = el("div", "eyebrow"); e.append("Tools"); out.push(e); if (net) out.push(radarItem(0)); if (pn) out.push(boardItem(1, "pon")); if (sig) out.push(boardItem(2, "signal")); if (hl) out.push(boardItem(3, "health")); if (tool) out.push(toolItem(4)); }
+      if (!cs.length && !ps.length && !tool && !net && !sig && !pn && !hl && !snLike(q)) out.push(el("p", "note", customers ? "Nothing matches all of those words." : "No customer list yet: open LDN Radius → Pelanggan once."));
       return out;
     }
     function cardView(r) {
@@ -1923,7 +2030,7 @@
         if (view.card || view.mode || view.modem) { view.card = null; view.mode = null; view.modem = null; drawBody(); }
         panel.querySelector("input")?.focus(); return; // the key then lands in the box
       }
-      if (e.key === "Escape") { e.preventDefault(); if (view.mode === "bulk" && bulk?.phase !== "paying") { view.mode = null; drawBody(); panel.querySelector("input")?.focus(); } else if (view.modem && !view.card) { view.modem = null; drawBody(); panel.querySelector("input")?.focus(); } else if ((view.mode === "signal" || view.mode === "pon") && !view.card) { if (view.pon) { view.pon = null; if (view.from) { view.mode = view.from; view.from = null; } } else view.mode = null; drawBody(); panel.querySelector("input")?.focus(); } else if (view.mode === "radar" && !view.card) { if (view.nas) view.nas = null; else view.mode = null; drawBody(); panel.querySelector("input")?.focus(); } else if (view.card) { view.card = null; drawBody(); panel.querySelector("input")?.focus(); } else { close(); fab?.focus(); } }
+      if (e.key === "Escape") { e.preventDefault(); if (view.mode === "bulk" && bulk?.phase !== "paying") { view.mode = null; drawBody(); panel.querySelector("input")?.focus(); } else if (view.modem && !view.card) { view.modem = null; drawBody(); panel.querySelector("input")?.focus(); } else if ((view.mode === "signal" || view.mode === "pon" || view.mode === "health") && !view.card) { if (view.pon) { view.pon = null; if (view.from) { view.mode = view.from; view.from = null; } } else view.mode = null; drawBody(); panel.querySelector("input")?.focus(); } else if (view.mode === "radar" && !view.card) { if (view.nas) view.nas = null; else view.mode = null; drawBody(); panel.querySelector("input")?.focus(); } else if (view.card) { view.card = null; drawBody(); panel.querySelector("input")?.focus(); } else { close(); fab?.focus(); } }
       else if (/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement?.tagName ?? "") && document.activeElement !== panel.querySelector(".top input")) return; // a form field in the Dock keeps its keys
       else if ((e.key === "ArrowDown" || e.key === "ArrowUp") && items.length) { e.preventDefault(); view.sel = (view.sel + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
         items.forEach((x, i) => x.setAttribute("aria-selected", String(i === view.sel))); items[view.sel].scrollIntoView({ block: "nearest" }); }
