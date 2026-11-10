@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — faster Work Orders, Planning, and LDN and invoice search
 // @namespace    adztrz
-// @version      1.10
+// @version      1.11
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -184,7 +184,7 @@
 
   /** One fast search: where it shows, how its list is loaded, what each row says. */
   function fastSearch(cfg) {
-    const st = { auth: null, key: cfg.key({}), rows: null, at: 0, loading: null, done: 0, pages: 0, error: "", total: 0, partial: false, partNo: 0, parts: 0, partName: "", box: null, input: null, hits: [], sel: 0, query: "", picking: false, shown: new Set(), count: "", sig: "" };
+    const st = { auth: null, key: cfg.key({}), rows: null, at: 0, loading: null, done: 0, pages: 0, error: "", total: 0, partial: false, partNo: 0, parts: 0, partName: "", box: null, input: null, hits: [], sel: 0, query: "", picking: false, shown: new Set(), count: "", sig: "", gen: 0, byPart: null, reading: null };
 
     function index(rows) {
       for (const r of rows) {
@@ -199,10 +199,11 @@
 
     // One list is loaded in parts when cfg.parts says so (invoices for "all months": month by month, newest first).
     // Each part is kept on its own, so a month already opened is reused, and the search works on what's loaded so far.
-    async function loadPart(part) {
+    async function loadPart(part, gen) {
       const size = cfg.pageSize;
       st.done = 0; st.pages = 0;
       const page = async (p) => {
+        if (gen !== st.gen) throw new Error("stale"); // another list was asked for: this one stops here
         const r = await realFetch(cfg.url(part, p, size), { headers: { authorization: st.auth } });
         if (!r.ok) throw new Error(`The server said ${r.status}`);
         const j = await r.json(); st.done++; draw();
@@ -222,36 +223,46 @@
       return kept;
     }
 
+    // The parts of the current list (one, or a month each for "all months"), each with its own age, kept in memory once
+    // read, so typing costs nothing more than the search. A new list (another month) bumps st.gen, which stops the old
+    // download at its next page.
+    const ttlOf = (part) => (cfg.ttl ? cfg.ttl(part) : SEARCH_TTL);
     async function load(force = false) {
+      const key = st.key, gen = st.gen, parts = cfg.parts ? cfg.parts(key) : [key];
+      if (!st.byPart) {
+        // what this browser kept answers at once, however old; the fresh list replaces it part by part as it arrives.
+        // One read, shared by the keys typed while it runs.
+        st.reading ??= (async () => { const m = new Map(); (await Promise.all(parts.map(idbGet))).forEach((k, i) => { if (k?.rows) m.set(parts[i], { ...k, rows: index(k.rows) }); }); return m; })();
+        const kept = await st.reading;
+        if (gen !== st.gen) return;
+        if (!st.byPart) { st.byPart = kept; st.reading = null; show(parts); }
+      }
       if (st.loading) return st.loading;
-      if (!force && st.rows && !st.partial && Date.now() - st.at < SEARCH_TTL) return;
-      const key = st.key, parts = cfg.parts ? cfg.parts(key) : [key], byPart = new Map();
-      const show = () => {
-        if (key !== st.key) return;
-        const got = parts.filter((p) => byPart.has(p)).map((p) => byPart.get(p));
-        st.rows = got.flatMap((k) => k.rows); st.total = got.reduce((n, k) => n + (k.total || 0), 0);
-        st.at = Math.min(...got.map((k) => k.at)); st.partial = got.length < parts.length; draw();
-      };
-      // what this browser kept answers at once, however old; the fresh list replaces it part by part as it arrives
-      (await Promise.all(parts.map(idbGet))).forEach((k, i) => { if (k?.rows) byPart.set(parts[i], { ...k, rows: index(k.rows) }); });
-      if (byPart.size) show();
-      if (!st.auth) { if (!byPart.size) { st.error = "Open this list once so the search can sign in"; draw(); } return; }
+      const due = parts.filter((p) => force || !st.byPart.has(p) || Date.now() - st.byPart.get(p).at > ttlOf(p));
+      if (!due.length) return; // all fresh: nothing to do
+      if (!st.auth) { if (!st.rows) { st.error = "Open this list once so the search can sign in"; draw(); } return; }
       st.loading = (async () => {
         st.error = ""; st.partNo = 0; st.parts = parts.length;
         try {
           for (const part of parts) {
-            if (key !== st.key) break; // the page moved to another month: stop, its own list loads next
+            if (gen !== st.gen) return; // the page moved to another list
             st.partNo++; st.partName = cfg.partLabel ? cfg.partLabel(part) : "";
-            const kept = byPart.get(part), fresh = kept && Date.now() - kept.at < (cfg.ttl ? cfg.ttl(part) : SEARCH_TTL);
-            if (fresh && !force) continue;
-            const got = await loadPart(part);
-            byPart.set(part, { ...got, rows: index(got.rows) });
-            show();
+            if (!due.includes(part)) continue;
+            const got = await loadPart(part, gen);
+            if (gen !== st.gen) return;
+            st.byPart.set(part, { ...got, rows: index(got.rows) });
+            show(parts);
           }
-        } catch (e) { st.error = `Couldn't load the list: ${e.message}`; }
-        st.loading = null; draw();
+        } catch (e) { if (gen === st.gen && e.message !== "stale") st.error = `Couldn't load the list: ${e.message}`; }
+        finally { if (gen === st.gen) { st.loading = null; draw(); } }
       })();
       return st.loading;
+    }
+    function show(parts) {
+      const got = parts.filter((p) => st.byPart.has(p)).map((p) => st.byPart.get(p));
+      if (!got.length) return;
+      st.rows = got.flatMap((k) => k.rows); st.total = got.reduce((n, k) => n + (k.total || 0), 0);
+      st.at = Math.min(...got.map((k) => k.at)); st.partial = got.length < parts.length; draw();
     }
 
     function search(q) {
@@ -405,7 +416,7 @@
       if (!u.pathname.startsWith(cfg.api)) return;
       if (auth) { const first = !st.auth; st.auth = auth; if (first && (st.error || st.rows)) { st.error = ""; load(); } } // refresh what the saved copy showed
       const key = cfg.key(Object.fromEntries(u.searchParams));
-      if (key !== st.key) { st.key = key; st.rows = null; st.total = 0; st.partial = false; } // another month: its own list, loaded on the next search
+      if (key !== st.key) { st.key = key; st.gen++; st.rows = null; st.byPart = null; st.reading = null; st.total = 0; st.partial = false; st.loading = null; if (st.box) load(); } // another month: its own list
     };
   }
 
