@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         ERP — faster Work Orders, Planning, and LDN and invoice search
+// @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      1.12
+// @version      2.0
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -507,7 +507,8 @@
       key: () => "all", pageSize: 500,
       url: (key, p, size) => `/api/admin/ldn-radius/customers?page=${p}&pageSize=${size}`,
       total: (j) => j.total || 0, items: (j) => j.customers || [],
-      keep: ["username", "nama", "phone", "address", "desa", "kecamatanErp", "district", "router", "paket", "isolir", "online", "expirasi", "isInactive"],
+      keep: ["username", "nama", "phone", "address", "desa", "kecamatanErp", "district", "router", "paket", "isolir", "online", "expirasi", "isInactive",
+        "lat", "lng", "ip", "tglAktif", "ontSerial", "mitra", "customerDocId"], // the Dock shows these, and finds neighbours by lat/lng
       name: (r) => r.nama, id: (r) => r.username, pick: (r) => r.username,
       hay: (r) => [r.username, r.address, r.desa, r.kecamatanErp, r.district, r.router, r.paket], numbers: (r) => [r.phone],
       dot: (r) => (r.isolir ? "iso" : r.online ? "on" : ""), sub: (r) => [r.paket, r.desa, r.router, r.phone],
@@ -534,6 +535,366 @@
       sub: (r) => [r.status, rupiah(r.amount), r.period, r.desa, r.radiusUsername],
     }),
   ];
+
+  // ---------- the Dock: a floating button (Alt+K) with customer lookup, pages and tools ----------
+  // Everything here reads what this script already keeps in the browser (the LDN customer list, this month's invoices)
+  // and pages you've seen in the sidebar; it never asks the server on its own. "Open in …" goes to the page and fills
+  // that page's own search box when it arrives.
+  (() => {
+    const RECENT = "erpDock.recent", PAGES = "erpDock.pages", PENDING = "erpDock.pending";
+    const ls = { get: (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } }, set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
+    const MONTHS_ID = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
+    // a few pages to start with; the sidebar teaches the rest as you browse
+    const START = [["/finance/invoices", "Daftar Invoice Pelanggan"], ["/ldn-radius", "LDN Radius (Panel)"], ["/customer-map", "Peta Jaringan Terpadu"],
+      ["/ldn-radius/map", "Peta Pelanggan (LDN)"], ["/customers/master", "Master Pelanggan"], ["/marketing/prospective-customers", "Calon Pelanggan"],
+      ["/work-orders", "Daftar Tugas Harian (SPK)"], ["/planning", "Pusat Pembuatan SPK"], ["/customers/isolated", "Pelanggan Isolir"], ["/dashboard", "Dasbor"]];
+    const SHORTCUTS = [["Invoices", "/finance/invoices", "M3 4h18v16H3zM7 8h10M7 12h10M7 16h6"], ["LDN Pelanggan", "/ldn-radius", "M4 6h16M4 12h16M4 18h10"],
+      ["Map Terpadu", "/customer-map", "M9 4 3 6v14l6-2 6 2 6-2V4l-6 2zM9 4v14M15 6v14"], ["Work Orders", "/work-orders", "M9 11l3 3 8-8M20 12v7H4V5h11"],
+      ["Planning", "/planning", "M4 4h16v6H4zM4 14h7v6H4zM15 14h5v6h-5z"], ["Isolir", "/customers/isolated", "M12 3l9 16H3zM12 10v4M12 17h.01"]];
+
+    // ---- data from what's kept ----
+    let customers = null, custAt = 0, invoices = null, invKey = "";
+    const prep = (rows) => { for (const r of rows) { r._name = fold(r.nama); r._hay = ` ${r._name} ${fold(r.username)} ${fold(r.address)} ${fold(r.desa)} ${fold(r.kecamatanErp)} ${fold(r.router)} ${fold(r.paket)} ${digits(r.phone)} ${fold(r.ip)} `;
+      r._words = [...new Set(r._hay.trim().split(" ").filter((x) => x.length > 1 && !/^\d+$/.test(x)).map(sound))]; r._sound = ` ${r._words.join(" ")} `; } return rows; };
+    async function data() {
+      const kept = await idbGet("all");
+      if (kept?.rows && kept.at !== custAt) { customers = prep(kept.rows); custAt = kept.at; }
+      const now = new Date(), key = `inv-${now.getFullYear()}-${now.getMonth() + 1}`;
+      if (key !== invKey || !invoices) { const k = await idbGet(key); if (k?.rows) { invoices = k.rows; invKey = key; } }
+    }
+    function findCustomers(q, max = 6) {
+      if (!customers) return [];
+      const words = fold(q).split(" ").filter(Boolean), num = digits(q); if (!words.length) return [];
+      const sounds = words.map(sound), out = [];
+      for (const r of customers) {
+        let score = -1;
+        if (num.length >= 6 && r._hay.includes(num)) score = 0;
+        else if (words.every((w) => r._hay.includes(w))) score = r._name.startsWith(words.join(" ")) ? 0 : words.every((w) => r._name.includes(w)) ? 1 : 2;
+        else if (words.every((w, i) => r._hay.includes(w) || (w.length >= 4 && r._sound.includes(" " + sounds[i])))) score = 3;
+        if (score >= 0) out.push([score, r]);
+      }
+      if (out.length < 3) for (const r of customers) {
+        if (out.some((x) => x[1] === r)) continue;
+        if (words.every((w, i) => r._hay.includes(w) || (w.length >= 4 && fuzzyHit(sounds[i], r._words, w.length >= 9 ? 2 : 1)))) out.push([4, r]);
+      }
+      return out.sort((a, b) => a[0] - b[0] || (a[1]._name < b[1]._name ? -1 : 1)).slice(0, max).map((x) => x[1]);
+    }
+    const invoiceOf = (r) => invoices?.filter((v) => (v.radiusUsername && v.radiusUsername === r.username) || (!v.radiusUsername && fold(v.customerName) === r._name)) ?? [];
+    const pages = () => { const m = new Map(START); for (const [h, t] of Object.entries(ls.get(PAGES, {}))) m.set(h, t); return [...m]; };
+    function findPages(q, max = 5) {
+      const words = fold(q).split(" ").filter(Boolean); if (!words.length) return [];
+      return pages().map(([h, t]) => { const hay = ` ${fold(t)} ${fold(h)} `; const ok = words.every((w) => hay.includes(w)); return ok ? [fold(t).startsWith(words[0]) ? 0 : 1, h, t] : null; })
+        .filter(Boolean).sort((a, b) => a[0] - b[0] || a[2].length - b[2].length).slice(0, max).map(([, h, t]) => ({ h, t }));
+    }
+    // learn the pages from the sidebar as they show up
+    const learn = () => { const m = ls.get(PAGES, {}); let n = 0;
+      for (const a of document.querySelectorAll('a[href^="/"]')) { const t = a.innerText.trim().replace(/\s+/g, " "); const h = a.getAttribute("href");
+        if (!t || t.length > 60 || /^\d|^CTR-/.test(t) || h.includes("?") || m[h] === t) continue; m[h] = t; n++; }
+      if (n) ls.set(PAGES, m); };
+
+    // ---- going somewhere and filling its search ----
+    function go(path, fill) {
+      if (fill) sessionStorage.setItem(PENDING, JSON.stringify({ path, ...fill, at: Date.now() }));
+      close();
+      if (location.pathname === path) return void runPending();
+      if (window.next?.router?.push) window.next.router.push(path); else location.assign(path);
+    }
+    const press = (el) => { for (const t of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"]) el.dispatchEvent(new (t.startsWith("pointer") ? PointerEvent : MouseEvent)(t, { bubbles: true, cancelable: true, button: 0 })); };
+    function runPending() {
+      let p; try { p = JSON.parse(sessionStorage.getItem(PENDING)); } catch { return; }
+      if (!p || location.pathname !== p.path) return;
+      if (Date.now() - p.at > 30000) return void sessionStorage.removeItem(PENDING);
+      if (p.tab) { // a tab inside the page (LDN: Pelanggan)
+        const tab = [...document.querySelectorAll('button[role="tab"], button')].find((b) => b.innerText.trim() === p.tab && b.parentElement?.innerText.includes(p.tabNear || ""));
+        if (tab && tab.getAttribute("aria-selected") !== "true") { press(tab); return void setTimeout(runPending, 400); }
+      }
+      const input = [...document.querySelectorAll("input")].find((i) => (p.input ? i.matches(p.input) : /cari|search/i.test(i.placeholder || "") && !/modul|menu/i.test(i.placeholder || "")));
+      if (!input) return void setTimeout(runPending, 400);
+      sessionStorage.removeItem(PENDING);
+      const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+      set.call(input, p.value); input.dispatchEvent(new Event("input", { bubbles: true })); input.scrollIntoView({ block: "center" });
+    }
+    const openIn = {
+      ldn: (r) => go("/ldn-radius", { tab: "Pelanggan", tabNear: "Per Desa", input: 'input[placeholder*="username PPPoE"]', value: r.username }),
+      invoices: (r) => go("/finance/invoices", { input: 'input[placeholder*="No. Invoice"]', value: r.username }),
+      map: (r) => go("/customer-map", { input: 'input[placeholder*="Cari nama"]', value: r.nama }),
+      master: (r) => go("/customers/master", { value: r.nama }),
+    };
+
+    // ---- nearby ----
+    const num = (v) => { const x = parseFloat(v); return Number.isFinite(x) && x !== 0 ? x : null; };
+    const metres = (a, b) => { const R = 6371000, t = Math.PI / 180, dLat = (b.lat - a.lat) * t, dLng = (b.lng - a.lng) * t;
+      const h = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * t) * Math.cos(b.lat * t) * Math.sin(dLng / 2) ** 2; return 2 * R * Math.asin(Math.sqrt(h)); };
+    const where = (r) => { const lat = num(r.lat), lng = num(r.lng); return lat && lng ? { lat, lng } : null; };
+    function nearby(r, radius) {
+      const c = where(r); if (!c || !customers) return null;
+      const dLat = radius / 111000, dLng = radius / (111000 * Math.cos(c.lat * Math.PI / 180)), out = [];
+      for (const x of customers) { if (x === r) continue; const p = where(x); if (!p || Math.abs(p.lat - c.lat) > dLat || Math.abs(p.lng - c.lng) > dLng) continue;
+        const d = metres(c, p); if (d <= radius) out.push({ r: x, d, p }); }
+      return { c, list: out.sort((a, b) => a.d - b.d) };
+    }
+    const state = (r) => (r.isolir ? "iso" : r.online ? "on" : "off");
+
+    // ---- drawing ----
+    let fab = null, panel = null, corner = null, view = { q: "", sel: 0, card: null, radius: 300 }, items = [];
+    const css = `
+      .erp-dock, .erp-dock-fab { --canvas: #07090b; --card: #090b0c; --raised: #1a1d1e; --edge: #363738; --hair: #262727; --bone: #e9e1dc; --paper: #efefed; --body: #b3b0af; --muted: #8a8b8a;
+        --green: #55bc82; --red: #f12614; --blue: #3e7edf; --soft: cubic-bezier(.1, 0, .1, 1); --out: cubic-bezier(.22, 1, .36, 1);
+        font: 400 14px/1.45 Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; font-feature-settings: "cv11", "tnum"; -webkit-font-smoothing: antialiased; }
+      .erp-dock-fab { position: fixed; z-index: 2147483002; width: 48px; height: 48px; border-radius: 12px; border: 0; cursor: pointer; display: grid; place-items: center;
+        background: var(--card); color: var(--bone); box-shadow: inset 0 0 0 1px var(--edge), 0 12px 24px rgba(0,0,0,.35), 0 2px 4px rgba(0,0,0,.3);
+        transition: transform .25s var(--out), box-shadow .25s var(--out); animation: erp-dock-in .6s var(--soft) both; }
+      .erp-dock-fab:hover { transform: translateY(-2px); box-shadow: inset 0 0 0 1px #696a68, 0 16px 28px rgba(0,0,0,.4), 0 2px 4px rgba(0,0,0,.3); }
+      .erp-dock-fab:active { transform: scale(.94); }
+      .erp-dock-fab:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
+      .erp-dock-fab svg { width: 22px; height: 22px; transition: transform .35s var(--out), opacity .2s; }
+      .erp-dock-fab[aria-expanded="true"] svg.open { transform: rotate(90deg) scale(.6); opacity: 0; } .erp-dock-fab svg.x { position: absolute; transform: rotate(-90deg) scale(.6); opacity: 0; }
+      .erp-dock-fab[aria-expanded="true"] svg.x { transform: none; opacity: 1; }
+      @keyframes erp-dock-in { from { opacity: 0; transform: translateY(12px) scale(.9); filter: blur(2px); } }
+      .erp-dock { position: fixed; z-index: 2147483002; width: min(440px, calc(100vw - 32px)); max-height: min(640px, calc(100vh - 120px)); display: flex; flex-direction: column;
+        border-radius: 10px; background: var(--card); color: var(--body); overflow: hidden; transform-origin: bottom right;
+        box-shadow: inset 0 0 0 1px var(--edge), 0 40px 32px rgba(0,0,0,.18), 0 22px 18px rgba(0,0,0,.2), 0 12px 10px rgba(0,0,0,.2), 0 6px 5px rgba(0,0,0,.18), 0 2px 2px rgba(0,0,0,.2);
+        animation: erp-dock-open .42s var(--out) both; }
+      .erp-dock.out { animation: erp-dock-close .16s cubic-bezier(.4, 0, 1, 1) both; pointer-events: none; }
+      @keyframes erp-dock-open { from { opacity: 0; transform: translateY(10px) scale(.96); filter: blur(3px); } }
+      @keyframes erp-dock-close { to { opacity: 0; transform: translateY(6px) scale(.97); filter: blur(1px); } }
+      .erp-dock .top { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--hair); }
+      .erp-dock .top svg { width: 16px; height: 16px; color: var(--muted); flex: none; }
+      .erp-dock .top input { flex: 1; min-width: 0; height: 32px; border: 0; outline: 0; background: none; color: var(--paper); font: inherit; font-size: 15px; }
+      .erp-dock .top input::placeholder { color: var(--muted); }
+      .erp-dock kbd { font: 11px "JetBrains Mono", ui-monospace, monospace; padding: 1px 5px; border-radius: 4px; box-shadow: inset 0 0 0 1px var(--edge); color: var(--body); }
+      .erp-dock .scroll { overflow: auto; padding: 6px 6px 10px; }
+      .erp-dock .eyebrow { display: flex; align-items: center; gap: 8px; margin: 10px 10px 6px; font-size: 12px; font-weight: 500; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+      .erp-dock .eyebrow::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--bone); }
+      .erp-dock .eyebrow b { font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--paper); }
+      .erp-dock .item { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; gap: 2px 10px; align-items: center; width: 100%; padding: 8px 10px; border: 0; border-radius: 6px;
+        background: none; color: var(--body); font: inherit; text-align: left; cursor: pointer; }
+      .erp-dock .item[aria-selected="true"], .erp-dock .item:hover { background: var(--raised); }
+      .erp-dock .item .t { color: var(--paper); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .erp-dock .item .r { font: 12px "JetBrains Mono", ui-monospace, monospace; color: var(--muted); }
+      .erp-dock .item .s { grid-column: 2 / 4; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .erp-dock .item svg { width: 16px; height: 16px; color: var(--muted); }
+      .erp-dock .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); justify-self: center; }
+      .erp-dock .dot.on { background: var(--green); box-shadow: 0 0 0 3px rgba(85,188,130,.15); } .erp-dock .dot.iso { background: var(--red); box-shadow: 0 0 0 3px rgba(241,38,20,.15); }
+      .erp-dock .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; padding: 0 6px; }
+      .erp-dock .tile { display: grid; justify-items: start; gap: 8px; padding: 12px; border: 0; border-radius: 8px; background: var(--canvas); box-shadow: inset 0 0 0 1px var(--hair);
+        color: var(--paper); font: inherit; font-size: 13px; font-weight: 500; text-align: left; cursor: pointer; transition: box-shadow .2s, transform .15s var(--out); }
+      .erp-dock .tile:hover, .erp-dock .tile[aria-selected="true"] { box-shadow: inset 0 0 0 1px #696a68; transform: translateY(-1px); }
+      .erp-dock .tile svg { width: 18px; height: 18px; color: var(--bone); }
+      .erp-dock .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; padding: 0 6px; }
+      .erp-dock .stat { padding: 10px 12px; border-radius: 8px; background: var(--canvas); box-shadow: inset 0 0 0 1px var(--hair); }
+      .erp-dock .stat b { display: block; font-size: 20px; font-weight: 500; letter-spacing: -.01em; color: var(--paper); font-variant-numeric: tabular-nums; }
+      .erp-dock .stat span { font-size: 12px; color: var(--muted); }
+      .erp-dock .stat.on b { color: var(--green); } .erp-dock .stat.iso b { color: #ff6a5c; }
+      .erp-dock .note { margin: 8px 10px; font-size: 12px; color: var(--muted); }
+      /* the customer card */
+      .erp-dock .card { padding: 4px 8px 8px; }
+      .erp-dock .back { border: 0; background: none; color: var(--muted); font: inherit; font-size: 13px; cursor: pointer; padding: 4px 4px 8px; }
+      .erp-dock .back:hover { color: var(--paper); }
+      .erp-dock .who { display: flex; align-items: center; gap: 10px; padding: 0 4px; }
+      .erp-dock .who h3 { margin: 0; font-size: 18px; font-weight: 500; letter-spacing: -.01em; color: var(--paper); line-height: 1.25; }
+      .erp-dock .pill { display: inline-flex; align-items: center; gap: 6px; padding: 1px 8px; border-radius: 999px; background: rgba(255,255,255,.05); font-size: 12px; color: var(--body); white-space: nowrap; }
+      .erp-dock .facts { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 6px 12px; margin: 12px 4px; font-size: 13px; }
+      .erp-dock .facts dt { color: var(--muted); } .erp-dock .facts dd { margin: 0; color: var(--paper); overflow-wrap: anywhere; }
+      .erp-dock .mono { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 12px; }
+      .erp-dock .copy { margin-left: 6px; border: 0; background: none; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; padding: 0 4px; border-radius: 4px; }
+      .erp-dock .copy:hover { color: var(--paper); background: var(--raised); }
+      .erp-dock .actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 4px 12px; }
+      .erp-dock .btn { height: 32px; padding: 0 12px; border: 0; border-radius: 8px; background: none; color: var(--paper); font: inherit; font-size: 13px; font-weight: 500; cursor: pointer;
+        box-shadow: inset 0 0 0 1px var(--edge); transition: box-shadow .2s, transform .1s; text-decoration: none; display: inline-flex; align-items: center; }
+      .erp-dock .btn:hover { box-shadow: inset 0 0 0 1px #696a68; } .erp-dock .btn:active { transform: scale(.97); }
+      .erp-dock .btn.primary { background: var(--bone); color: var(--canvas); box-shadow: 0 1px 3px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.5); }
+      .erp-dock .btn:focus-visible, .erp-dock .item:focus-visible, .erp-dock .tile:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+      .erp-dock .seg { display: inline-flex; padding: 2px; gap: 2px; border-radius: 8px; background: var(--canvas); box-shadow: inset 0 0 0 1px var(--hair); }
+      .erp-dock .seg button { height: 26px; padding: 0 10px; border: 0; border-radius: 6px; background: none; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; }
+      .erp-dock .seg button[aria-pressed="true"] { background: var(--raised); color: var(--paper); }
+      .erp-dock .near { margin: 4px; padding: 12px; border-radius: 8px; background: var(--canvas); box-shadow: inset 0 0 0 1px var(--hair); }
+      .erp-dock .near .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+      .erp-dock canvas { display: block; width: 100%; height: 170px; margin: 10px 0 6px; }
+      .erp-dock .counts { display: flex; gap: 12px; font-size: 13px; } .erp-dock .counts b { color: var(--paper); font-weight: 500; }
+      .erp-dock .rise { animation: erp-dock-rise .45s var(--soft) both; animation-delay: calc(var(--i, 0) * 30ms); }
+      @keyframes erp-dock-rise { from { opacity: 0; transform: translateY(8px); filter: blur(2px); } }
+      .erp-dock .foot { padding: 8px 14px; border-top: 1px solid var(--hair); font-size: 12px; color: var(--muted); display: flex; gap: 10px; flex-wrap: wrap; }
+      @media (max-width: 760px) { .erp-dock { left: 8px !important; right: 8px !important; width: auto; bottom: 8px !important; top: auto !important; max-height: 80vh; transform-origin: bottom center; } }
+      @media (prefers-reduced-motion: reduce) { .erp-dock, .erp-dock *, .erp-dock-fab, .erp-dock-fab * { animation: none !important; transition: none !important; } }`;
+    const svg = (d, cls = "") => { const n = "http://www.w3.org/2000/svg", s = document.createElementNS(n, "svg"); s.setAttribute("viewBox", "0 0 24 24"); s.setAttribute("fill", "none");
+      s.setAttribute("stroke", "currentColor"); s.setAttribute("stroke-width", "1.5"); s.setAttribute("stroke-linecap", "round"); s.setAttribute("stroke-linejoin", "round"); s.setAttribute("aria-hidden", "true");
+      if (cls) s.setAttribute("class", cls); const p = document.createElementNS(n, "path"); p.setAttribute("d", d); s.append(p); return s; };
+    const ICON = { dock: "M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 17h6M17 14v6", x: "M6 6l12 12M18 6 6 18", search: "M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM20 20l-4-4", page: "M6 3h9l3 3v15H6zM9 9h6M9 13h6M9 17h4", go: "M5 12h14M13 6l6 6-6 6" };
+
+    function place() {
+      if (!fab) return;
+      // just above the site's own round button in the corner (Iris), or in the corner if there isn't one
+      // (only the site's fixed-position elements are looked at, and the one found is remembered: some pages are huge)
+      if (!corner?.isConnected) corner = [...document.querySelectorAll(".fixed")].find((e) => !e.closest(".erp-dock") && e.offsetWidth >= 44 && e.offsetWidth <= 72 && e.offsetHeight <= 72
+        && e.getBoundingClientRect().right > innerWidth - 120 && e.getBoundingClientRect().bottom > innerHeight - 260) || null;
+      const other = corner;
+      const r = other?.getBoundingClientRect();
+      const right = r ? Math.max(12, innerWidth - r.right + (r.width - 48) / 2) : 24, bottom = r ? innerHeight - r.top + 12 : 24;
+      fab.style.right = `${right}px`; fab.style.bottom = `${bottom}px`;
+      if (panel) { panel.style.right = `${right}px`; panel.style.bottom = `${bottom + 60}px`; }
+    }
+    function mount() {
+      if (fab?.isConnected) return;
+      if (!document.getElementById("erp-dock-css")) { const s = el("style"); s.id = "erp-dock-css"; s.textContent = css; document.head.append(s); }
+      fab = el("button", "erp-dock-fab"); fab.type = "button"; fab.title = "Dock (Alt+K)"; fab.setAttribute("aria-label", "Open the Dock"); fab.setAttribute("aria-expanded", "false");
+      fab.append(svg(ICON.dock, "open"), svg(ICON.x, "x")); fab.onclick = () => (panel ? close() : open());
+      document.body.append(fab); place();
+    }
+    async function open() {
+      if (panel) return;
+      panel = el("div", "erp-dock"); panel.setAttribute("role", "dialog"); panel.setAttribute("aria-label", "Dock");
+      document.body.append(panel); fab.setAttribute("aria-expanded", "true"); place();
+      view = { q: "", sel: 0, card: null, radius: view.radius };
+      draw(); panel.querySelector("input")?.focus();
+      await data(); draw();
+    }
+    function close() {
+      const p = panel; if (!p) return;
+      panel = null; fab?.setAttribute("aria-expanded", "false");
+      if (calm()) p.remove(); else { p.classList.add("out"); setTimeout(() => p.remove(), 170); }
+    }
+    const remember = (r) => { const list = ls.get(RECENT, []).filter((u) => u !== r.username); list.unshift(r.username); ls.set(RECENT, list.slice(0, 8)); };
+    const copy = (text, btn) => { navigator.clipboard?.writeText(text).then(() => { const t = btn.textContent; btn.textContent = "Copied"; setTimeout(() => (btn.textContent = t), 1200); }).catch(() => {}); };
+    const wa = (phone) => { let d = String(phone ?? "").replace(/\D/g, ""); if (d.startsWith("0")) d = "62" + d.slice(1); return d.length >= 9 ? `https://wa.me/${d}` : null; };
+    const ago = (t) => { const m = Math.floor((Date.now() - t) / 60000); return m < 1 ? "just now" : m < 120 ? `${m} min ago` : `${Math.round(m / 60)} h ago`; };
+    const k = (n) => (n >= 10000 ? `${(n / 1000).toFixed(1).replace(".", ",")}k` : n.toLocaleString("id-ID"));
+
+    function custItem(r, i) {
+      const b = el("button", "item rise"); b.type = "button"; b.style.setProperty("--i", String(i));
+      b.append(el("span", `dot ${state(r)}`), el("span", "t", r.nama || r.username), el("span", "r", r.username), el("span", "s", [r.paket, r.desa, r.router].filter(Boolean).join(" · ")));
+      b.onclick = () => { view.card = r; view.sel = 0; remember(r); draw(); };
+      return b;
+    }
+    function pageItem(p, i) {
+      const b = el("button", "item rise"); b.type = "button"; b.style.setProperty("--i", String(i));
+      b.append(svg(ICON.page), el("span", "t", p.t), el("span", "r", p.h)); b.onclick = () => go(p.h); return b;
+    }
+
+    function draw() {
+      if (!panel) return;
+      const top = el("div", "top"), input = el("input"); input.placeholder = "Customer, page or tool…"; input.value = view.q; input.setAttribute("aria-label", "Search the Dock");
+      input.oninput = () => { view.q = input.value; view.sel = 0; view.card = null; drawBody(); };
+      top.append(svg(ICON.search), input, el("kbd", null, "Esc"));
+      const body = el("div", "scroll"), foot = el("div", "foot");
+      foot.append(el("span", null, customers ? `${customers.length.toLocaleString("id-ID")} customers · ${ago(custAt)}` : "Customer list: open LDN → Pelanggan once"), el("span", null, invoices ? `Invoices ${MONTHS_ID[Number(invKey.split("-")[2]) - 1]} kept` : "Invoices: open Invoices once"));
+      panel.replaceChildren(top, body, foot);
+      drawBody();
+    }
+    function drawBody() {
+      const body = panel?.querySelector(".scroll"); if (!body) return;
+      items = []; const parts = [];
+      if (view.card) parts.push(cardView(view.card));
+      else if (!view.q.trim()) parts.push(...homeView());
+      else parts.push(...resultsView(view.q));
+      body.replaceChildren(...parts);
+      items = [...body.querySelectorAll(".item, .tile")];
+      items.forEach((x, i) => x.setAttribute("aria-selected", String(i === view.sel)));
+    }
+    function homeView() {
+      const out = [];
+      if (customers) {
+        const on = customers.filter((r) => r.online && !r.isolir).length, iso = customers.filter((r) => r.isolir).length;
+        const e = el("div", "eyebrow"); e.append("Customers ", el("b", null, ago(custAt))); out.push(e);
+        const s = el("div", "stats");
+        for (const [cls, n, l] of [["", customers.length, "customers"], ["on", on, "online"], ["iso", iso, "isolir"]]) { const d = el("div", `stat ${cls} rise`); d.append(el("b", null, k(n)), el("span", null, l)); s.append(d); }
+        out.push(s);
+      }
+      const e2 = el("div", "eyebrow"); e2.append("Go to"); out.push(e2);
+      const g = el("div", "grid");
+      SHORTCUTS.forEach(([label, path, icon], i) => { const t = el("button", "tile rise"); t.type = "button"; t.style.setProperty("--i", String(i)); t.append(svg(icon), label); t.onclick = () => go(path); g.append(t); });
+      out.push(g);
+      const recent = ls.get(RECENT, []).map((u) => customers?.find((r) => r.username === u)).filter(Boolean);
+      if (recent.length) { const e3 = el("div", "eyebrow"); e3.append("Recent customers"); out.push(e3, ...recent.slice(0, 5).map(custItem)); }
+      if (!customers) out.push(el("p", "note", "To look customers up here, open LDN Radius → Pelanggan once: its fast search keeps the list in this browser."));
+      return out;
+    }
+    function resultsView(q) {
+      const out = [], cs = findCustomers(q), ps = findPages(q);
+      if (cs.length) { const e = el("div", "eyebrow"); e.append("Customers"); out.push(e, ...cs.map(custItem)); }
+      if (ps.length) { const e = el("div", "eyebrow"); e.append("Pages"); out.push(e, ...ps.map(pageItem)); }
+      if (!cs.length && !ps.length) out.push(el("p", "note", customers ? "Nothing matches all of those words." : "No customer list yet: open LDN Radius → Pelanggan once."));
+      return out;
+    }
+    function cardView(r) {
+      const wrap = el("div", "card");
+      const back = el("button", "back", "← Back"); back.type = "button"; back.onclick = () => { view.card = null; drawBody(); panel.querySelector("input")?.focus(); };
+      const who = el("div", "who rise"); const pill = el("span", "pill"); pill.append(el("span", `dot ${state(r)}`), r.isolir ? "Isolir" : r.online ? "Online" : "Offline");
+      who.append(el("h3", null, r.nama || r.username), pill);
+      const facts = el("dl", "facts rise"); facts.style.setProperty("--i", "1");
+      const fact = (label, value, opts = {}) => { if (!value) return; const dd = el("dd", opts.mono ? "mono" : null, value);
+        if (opts.copy) { const c = el("button", "copy", "Copy"); c.type = "button"; c.onclick = () => copy(String(value), c); dd.append(c); }
+        if (opts.link) { const a = el("a", "copy", opts.link[0]); a.href = opts.link[1]; a.target = "_blank"; a.rel = "noreferrer"; dd.append(a); }
+        facts.append(el("dt", null, label), dd); };
+      fact("Username", r.username, { mono: true, copy: true });
+      fact("Phone", r.phone, { mono: true, copy: true, link: wa(r.phone) ? ["WhatsApp", wa(r.phone)] : null });
+      fact("Address", r.address); fact("Area", [r.desa, r.kecamatanErp].filter(Boolean).join(", "));
+      fact("Plan", r.paket); fact("Router", r.router); fact("IP", r.ip, { mono: true, copy: true });
+      fact("Active since", r.tglAktif); fact("Expires", r.expirasi); fact("ONT", r.ontSerial, { mono: true, copy: true }); fact("Partner", r.mitra);
+      const inv = invoiceOf(r);
+      if (inv.length) for (const v of inv.slice(0, 2)) fact(`Invoice ${v.period || ""}`.trim(), `${v.status || "?"} · ${rupiah(v.amount)}${v.dueDate ? ` · due ${String(v.dueDate).slice(0, 10)}` : ""}`);
+      else if (invoices) fact("Invoice", "none this month in the kept list");
+      const acts = el("div", "actions rise"); acts.style.setProperty("--i", "2");
+      const act = (label, fn, primary) => { const b = el("button", `btn${primary ? " primary" : ""}`, label); b.type = "button"; b.onclick = fn; acts.append(b); };
+      act("Open in LDN", () => openIn.ldn(r), true); act("Invoices", () => openIn.invoices(r)); act("Map Terpadu", () => openIn.map(r)); act("Master", () => openIn.master(r));
+      const loc = where(r); if (loc) { const a = el("a", "btn", "Google Maps"); a.href = `https://www.google.com/maps?q=${loc.lat},${loc.lng}`; a.target = "_blank"; a.rel = "noreferrer"; acts.append(a); }
+      wrap.append(back, who, facts, acts, nearView(r));
+      return wrap;
+    }
+    function nearView(r) {
+      const box = el("div", "near rise"); box.style.setProperty("--i", "3");
+      const head = el("div", "row"), e = el("div", "eyebrow"); e.style.margin = "0"; e.append("Nearby");
+      const seg = el("div", "seg"); for (const m of [100, 300, 1000]) { const b = el("button", null, m < 1000 ? `${m} m` : "1 km"); b.type = "button"; b.setAttribute("aria-pressed", String(view.radius === m)); b.onclick = () => { view.radius = m; drawBody(); }; seg.append(b); }
+      head.append(e, seg); box.append(head);
+      const n = nearby(r, view.radius);
+      if (!n) { box.append(el("p", "note", customers && !("lat" in r) ? "Locations arrive with the next refresh of the customer list (LDN → Pelanggan → Update)." : "This customer has no location saved.")); return box; }
+      const cnt = { on: 0, off: 0, iso: 0 }; n.list.forEach((x) => cnt[state(x.r)]++);
+      const counts = el("div", "counts"); counts.style.marginTop = "10px";
+      for (const [key, label] of [["on", "online"], ["off", "offline"], ["iso", "isolir"]]) { const s = el("span"); s.append(el("b", null, String(cnt[key])), ` ${label}`); counts.append(s); }
+      const cv = el("canvas"); cv.setAttribute("aria-label", `${n.list.length} customers within ${view.radius} metres`);
+      box.append(counts, cv);
+      requestAnimationFrame(() => plot(cv, n, view.radius));
+      for (const [i, x] of n.list.slice(0, 8).entries()) { const it = custItem(x.r, i); it.querySelector(".r").textContent = `${Math.round(x.d)} m`; box.append(it); }
+      if (n.list.length > 8) box.append(el("p", "note", `and ${n.list.length - 8} more within ${view.radius < 1000 ? `${view.radius} m` : "1 km"}`));
+      return box;
+    }
+    // a small dot map: this customer in the middle, neighbours by status, rings at half and full radius; dots arrive outward
+    function plot(cv, n, radius) {
+      const dpr = devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight; if (!w) return;
+      cv.width = w * dpr; cv.height = h * dpr; const g = cv.getContext("2d"); g.scale(dpr, dpr);
+      const cx = w / 2, cy = h / 2, R = Math.min(w, h) / 2 - 8, kx = Math.cos(n.c.lat * Math.PI / 180);
+      const pts = n.list.map((x) => ({ x: cx + ((x.p.lng - n.c.lng) * 111000 * kx / radius) * R, y: cy - ((x.p.lat - n.c.lat) * 111000 / radius) * R, s: state(x.r), d: x.d }));
+      const col = { on: "#55bc82", off: "#6d6f6f", iso: "#f12614" }, t0 = performance.now(), still = calm();
+      const frame = (t) => {
+        const k = still ? 1 : Math.min(1, (t - t0) / 700);
+        g.clearRect(0, 0, w, h);
+        g.strokeStyle = "#262727"; g.lineWidth = 1; for (const f of [0.5, 1]) { g.beginPath(); g.arc(cx, cy, R * f, 0, Math.PI * 2); g.stroke(); }
+        for (const p of pts) { const show = Math.min(1, Math.max(0, (k * 1.4 - p.d / radius * 0.8))); if (!show) continue;
+          g.globalAlpha = show; g.fillStyle = col[p.s]; g.beginPath(); g.arc(p.x, p.y, p.s === "off" ? 2 : 2.6, 0, Math.PI * 2); g.fill(); }
+        g.globalAlpha = 1; g.strokeStyle = "#e9e1dc"; g.lineWidth = 1.5; g.beginPath(); g.arc(cx, cy, 5, 0, Math.PI * 2); g.stroke();
+        if (k < 1 && cv.isConnected) requestAnimationFrame(frame);
+      };
+      requestAnimationFrame(frame);
+    }
+
+    // keys: Alt+K opens and closes; in the Dock, arrows move, Enter picks, Esc goes back or closes
+    document.addEventListener("keydown", (e) => {
+      if (e.altKey && !e.ctrlKey && !e.metaKey && e.key.toLowerCase() === "k") { e.preventDefault(); panel ? close() : open(); return; }
+      if (!panel || !panel.contains(document.activeElement) && document.activeElement !== document.body) return;
+      if (e.key === "Escape") { e.preventDefault(); if (view.card) { view.card = null; drawBody(); panel.querySelector("input")?.focus(); } else { close(); fab?.focus(); } }
+      else if ((e.key === "ArrowDown" || e.key === "ArrowUp") && items.length) { e.preventDefault(); view.sel = (view.sel + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+        items.forEach((x, i) => x.setAttribute("aria-selected", String(i === view.sel))); items[view.sel].scrollIntoView({ block: "nearest" }); }
+      else if (e.key === "Enter" && document.activeElement?.tagName === "INPUT" && items[view.sel]) { e.preventDefault(); items[view.sel].click(); }
+    }, true);
+    document.addEventListener("pointerdown", (e) => { if (panel && !panel.contains(e.target) && !fab.contains(e.target)) close(); }, true);
+    addEventListener("resize", place);
+
+    const tick = () => { if (!document.body) return; mount(); learn(); runPending(); place(); };
+    for (const m of ["pushState", "replaceState"]) { const orig = history[m]; history[m] = function () { const r = orig.apply(this, arguments); setTimeout(tick, 300); setTimeout(runPending, 1200); return r; }; }
+    addEventListener("popstate", () => setTimeout(tick, 300));
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", () => setTimeout(tick, 600)); else setTimeout(tick, 600);
+    setInterval(() => { if (document.visibilityState === "visible") { mount(); place(); learn(); } }, 5000);
+  })();
 
   // ---------- one idle clock for all ERP tabs ----------
   // The ERP logs out after 120 minutes without a click, key, touch or scroll, counted in each tab on its own; and a
