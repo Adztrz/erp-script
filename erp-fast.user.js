@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.9
+// @version      2.10
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -870,8 +870,12 @@
     async function api(path, body) {
       const auth = await token(); if (!auth) throw new Error("Not signed in yet: let the page load, then try again");
       const r = await realFetch(path, body ? { method: "POST", headers: { authorization: auth, "content-type": "application/json" }, body: JSON.stringify(body) } : { headers: { authorization: auth } });
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok || j.success === false) throw new Error(j.error || j.message || `HTTP ${r.status}`);
+      const text = await r.text().catch(() => ""); let j = {};
+      try { j = text ? JSON.parse(text) : {}; } catch { /* not JSON: a gateway error page or a crash */ }
+      if (!r.ok || j.success === false) {
+        const said = j.error || j.message || j.alasan || j.pesan || text.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 160);
+        throw new Error(`${said || "no reason given"} (HTTP ${r.status}${r.status >= 500 ? ", on the ERP server's side" : ""})`);
+      }
       return j;
     }
     const newBulk = () => ({ phase: "input", rows: [], method: METHODS[0], date: todayIso(), note: "", defaultNote: "Bulk Lunas (Dock)", armed: 0, stop: false, el: null });
@@ -1494,7 +1498,7 @@
               const min = Number(j.menit) > 0 ? Number(j.menit) : 5, secs = Number(j.kedaluwarsaDetik) || min * 60;
               w.tunnel = { url: String(j.url), until: Date.now() + secs * 1000, note: j.keterangan || "" };
               if (win && !win.closed) win.location.replace(w.tunnel.url); else window.open(w.tunnel.url, "_blank", "noopener");
-            }).catch((err) => { win?.close(); w.err = `Access not opened: ${err.message}`; }).finally(() => { w.opening = false; redraw(); });
+            }).catch((err) => { win?.close(); w.err = `Access not opened: ${err.message}. Dashbor NOC → Remote ONU → "Buka Akses 5 Menit" sends the same request.`; }).finally(() => { w.opening = false; redraw(); });
           }, redraw, `${m.key}tunnel`);
           go.classList.remove("wide", "primary"); if (w.opening) { go.disabled = true; go.textContent = "Opening…"; } acts.append(go);
         }
