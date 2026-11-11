@@ -38,6 +38,10 @@ Apart from paying (the card's Pay and Bulk Lunas) and the outage radar, it never
 
 Colours everywhere in the Dock: online green, isolir red, offline grey; red also marks an alarm (critical signal, a port mostly down, stale data) and amber a warning.
 
+## Monochrome theme
+
+The half-circle button at the top of the Dock turns the whole ERP black and bone, like Faust: near-black pages, graphite cards, bone for primary buttons, links and focus. Panels with hard-coded blue, violet or cyan (BOQ box, route cards, badges) turn to warm greys of the same lightness. Red, green and amber stay, so errors and status still read. It's applied before the page draws (no flash), remembered in this browser, and the button turns it off again.
+
 ## Bulk SPK (Planning)
 
 For "one team, one FDT to many FATs" messages. On Planning press **Bulk SPK** in the bar and paste the technicians' message:

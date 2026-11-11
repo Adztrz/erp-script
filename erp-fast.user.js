@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.32
+// @version      2.33
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -19,6 +19,90 @@
   let h = 0x811c9dc5;
   for (const c of location.hostname) { h ^= c.charCodeAt(0); h = Math.imul(h, 0x01000193) >>> 0; }
   if (h.toString(16) !== SITE) return;
+
+  // ---------- Monochrome: the whole site in Faust's black and bone (Dock → the half-circle button) ----------
+  // The ERP is shadcn: its colours are HSL variables (--background, --primary, …), swapped here for Faust's palette:
+  // near-black canvas #07090b, graphite cards, bone #e9e1dc as the one "colour" (primary buttons, focus, links).
+  // Panels that hard-code Tailwind blues/violets/cyans (BOQ box, route cards, badges) are rewritten from the site's own
+  // stylesheets: every such colour becomes a warm grey of the same lightness. Red, green and amber stay, slightly muted,
+  // so errors and status still read. Applied at page start (no flash) and to each stylesheet a page loads later.
+  const MONO = "erpDock.mono";
+  const monoOn = () => { try { return localStorage.getItem(MONO) === "1"; } catch { return false; } };
+  const MONO_VARS = `
+    html.erp-mono, html.erp-mono.dark { color-scheme: dark;
+      --background: 210 22% 4%; --foreground: 40 8% 93%; --card: 200 14% 4.5%; --card-foreground: 40 8% 93%;
+      --popover: 200 14% 5%; --popover-foreground: 40 8% 93%;
+      --primary: 23 23% 89%; --primary-foreground: 210 22% 4%; --primary-text: 23 23% 89%; --primary-text-terang: 23 23% 89%; --primary-text-gelap: 23 23% 89%;
+      --secondary: 200 7% 11%; --secondary-foreground: 40 8% 93%; --muted: 200 5% 13%; --muted-foreground: 20 3% 62%;
+      --accent: 200 6% 16%; --accent-foreground: 40 8% 93%;
+      --destructive: 5 70% 50%; --destructive-foreground: 0 0% 98%; --danger-foreground: 5 100% 75%; --danger-muted: 5 30% 13%;
+      --success: 146 42% 53%; --success-foreground: 146 40% 72%; --success-muted: 146 20% 12%;
+      --warning: 40 69% 60%; --warning-foreground: 40 70% 76%; --warning-muted: 40 25% 12%;
+      --info: 23 10% 70%; --info-foreground: 23 15% 82%; --info-muted: 200 5% 13%;
+      --border: 180 1% 15%; --border-strong: 210 2% 22%; --input: 200 5% 14%; --ring: 23 23% 89%;
+      --sidebar-background: 200 14% 4%; --sidebar-foreground: 40 8% 90%; --sidebar-primary: 23 23% 89%; --sidebar-primary-foreground: 210 22% 4%;
+      --sidebar-accent: 200 7% 11%; --sidebar-accent-foreground: 40 8% 96%; --sidebar-border: 180 1% 14%; --sidebar-ring: 23 23% 89%; }
+    html.erp-mono body { background: #07090b; }
+    html.erp-mono ::selection { background: rgba(233,225,220,.25); }`;
+  let monoSheet = null;
+  const monoDone = new WeakSet();
+  // a colour literal → its warm-grey twin, unless it is red, green or amber (those are only toned down a little)
+  function monoColour(r, g, b, a) {
+    const max = Math.max(r, g, b) / 255, min = Math.min(r, g, b) / 255, l = (max + min) / 2, d = max - min;
+    if (d < 0.08) return null; // already grey
+    let hue = 0; const R = r / 255, G = g / 255, B = b / 255;
+    hue = max === R ? ((G - B) / d) % 6 : max === G ? (B - R) / d + 2 : (R - G) / d + 4; hue = (hue * 60 + 360) % 360;
+    const keep = hue < 50 || hue >= 335 || (hue >= 85 && hue < 170); // red/orange/amber, green
+    if (keep) return null;
+    const L = Math.round(l * 100);
+    return `hsl(30 ${L > 50 ? 6 : 4}% ${L}%${a != null && a !== "1" ? ` / ${a}` : ""})`;
+  }
+  const hexRgb = (h) => { h = h.slice(1); if (h.length <= 4) h = [...h].map((c) => c + c).join(""); const n = parseInt(h.slice(0, 6), 16); return [n >> 16 & 255, n >> 8 & 255, n & 255, h.length === 8 ? String(+(parseInt(h.slice(6), 16) / 255).toFixed(3)) : null]; };
+  function monoValue(v) {
+    let changed = false;
+    const out = v.replace(/#(?:[0-9a-f]{8}|[0-9a-f]{6}|[0-9a-f]{3,4})\b|rgba?\(\s*(\d+)[\s,]+(\d+)[\s,]+(\d+)(?:\s*[,/]\s*([^)]+))?\)/gi, (m, r, g, b, a) => {
+      const [R, G, B, A] = r ? [+r, +g, +b, a?.trim() ?? null] : hexRgb(m);
+      const t = monoColour(R, G, B, A); if (!t) return m; changed = true; return t;
+    });
+    return changed ? out : null;
+  }
+  function monoSweep() {
+    if (!monoOn() || !monoSheet) return;
+    const add = [];
+    const walk = (rules, wrap) => {
+      for (const r of rules) {
+        if (r.cssRules && !r.selectorText) { const cond = r.conditionText || r.media?.mediaText; walk(r.cssRules, cond && r.constructor.name.includes("Media") ? `@media ${cond}` : wrap); continue; }
+        if (!r.selectorText || !r.style) continue;
+        const decl = [];
+        for (const prop of r.style) { const v = r.style.getPropertyValue(prop); if (!/#|rgb/i.test(v)) continue; const t = monoValue(v); if (t) decl.push(`${prop}: ${t}${r.style.getPropertyPriority(prop) ? " !important" : ""}`); }
+        if (!decl.length) continue;
+        const sel = r.selectorText.split(/,(?![^(]*\))/).map((x) => /^\s*(html|:root)\b/.test(x) ? x.replace(/^\s*(html|:root)/, "html.erp-mono") : `html.erp-mono ${x.trim()}`).join(", ");
+        const rule = `${sel} { ${decl.join("; ")} }`;
+        add.push(wrap ? `${wrap} { ${rule} }` : rule);
+      }
+    };
+    for (const sh of document.styleSheets) {
+      if (sh.ownerNode?.id?.startsWith("erp-") || monoDone.has(sh)) continue;
+      try { walk(sh.cssRules, null); monoDone.add(sh); } catch { /* another origin's sheet: skipped */ }
+    }
+    if (add.length) monoSheet.textContent += "\n" + add.join("\n");
+  }
+  function monoApply() {
+    const on = monoOn(), root = document.documentElement;
+    root.classList.toggle("erp-mono", on);
+    if (on && !monoSheet) {
+      // !important: the ERP also writes its brand colours inline on <html> (tenant theme), which beats a plain rule
+      monoSheet = document.createElement("style"); monoSheet.id = "erp-mono"; monoSheet.textContent = MONO_VARS.replace(/(--[\w-]+: [^;]+);/g, "$1 !important;");
+      (document.head || root).append(monoSheet);
+    }
+    if (on) monoSweep();
+  }
+  monoApply();
+  // pages load more stylesheets as you move around: sweep each once it has loaded
+  new MutationObserver((ms) => { if (!monoOn()) return; for (const m of ms) for (const n of m.addedNodes) if (n.tagName === "LINK" || n.tagName === "STYLE") { n.tagName === "LINK" ? n.addEventListener("load", monoSweep, { once: true }) : setTimeout(monoSweep, 0); } })
+    .observe(document.documentElement, { childList: true, subtree: true });
+  addEventListener("load", () => monoApply());
+  const monoToggle = () => { try { localStorage.setItem(MONO, monoOn() ? "0" : "1"); } catch {} monoApply(); };
 
   // Measured on 10 Nov 2026: Work Orders asked for limit=5000 (all recent) and limit=3000 (open), 11.6 MB, drew 6,347 rows
   // (205,000 elements) and froze the tab ~4.9 s. With 500 of each: 589 rows, 19,000 elements, ~0.4 s.
@@ -1024,7 +1108,7 @@
       .erp-dock .top input { flex: 1; min-width: 0; height: 32px; border: 0; outline: 0; background: none; color: var(--paper); font: inherit; font-size: 15px; }
       .erp-dock .top input::placeholder { color: var(--muted); }
       .erp-dock .shut { display: grid; place-items: center; width: 32px; height: 32px; margin-right: -6px; border: 0; border-radius: 8px; background: none; color: var(--muted); cursor: pointer; }
-      .erp-dock .shut:hover { background: var(--raised); color: var(--paper); } .erp-dock .shut svg { width: 16px; height: 16px; }
+      .erp-dock .shut:hover { background: var(--raised); color: var(--paper); } .erp-dock .shut[aria-pressed="true"] { color: var(--paper); } .erp-dock .shut svg { width: 16px; height: 16px; }
       .erp-dock kbd { font: 11px "JetBrains Mono", ui-monospace, monospace; padding: 1px 5px; border-radius: 4px; box-shadow: inset 0 0 0 1px var(--edge); color: var(--body); }
       .erp-dock .scroll { overflow: auto; padding: 6px 6px 10px; }
       .erp-dock .eyebrow { display: flex; align-items: center; gap: 8px; margin: 10px 10px 6px; font-size: 12px; font-weight: 500; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
@@ -2231,7 +2315,10 @@
       input.oninput = () => { view.q = input.value; view.sel = 0; view.card = null; view.mode = null; view.modem = null; drawBody(); };
       input.onpaste = (e) => { const t = e.clipboardData?.getData("text") || ""; if (t.split("\n").filter((x) => x.trim()).length >= 2) { e.preventDefault(); openBulk(t); } }; // a pasted list: Bulk Lunas
       const shut = el("button", "shut"); shut.type = "button"; shut.setAttribute("aria-label", "Close the Dock"); shut.title = "Close (Esc)"; shut.append(svg(ICON.x)); shut.onclick = () => { close(); fab?.focus(); };
-      top.append(svg(ICON.search), input, el("kbd", null, "Esc"), shut);
+      const mono = el("button", "shut"); mono.type = "button"; mono.setAttribute("aria-label", "Monochrome theme"); mono.setAttribute("aria-pressed", String(monoOn()));
+      mono.title = monoOn() ? "Monochrome on: back to the ERP's colours" : "Monochrome: the whole site in black and bone";
+      mono.append(svg("M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18zM12 3v18M12 8h4M12 12h5M12 16h4")); mono.onclick = () => { monoToggle(); draw(); };
+      top.append(svg(ICON.search), input, el("kbd", null, "Esc"), mono, shut);
       const body = el("div", "scroll"), foot = el("div", "foot");
       foot.append(el("span", null, customers ? `${customers.length.toLocaleString("id-ID")} customers · ${ago(custAt)}` : "Customer list: open LDN → Pelanggan once"), el("span", null, invoices ? `Invoices ${MONTHS_ID[Number(invKey.split("-")[2]) - 1]} kept` : "Invoices: open Invoices once"));
       const was = document.activeElement, keep = was === document.body || !was || panel.contains(was); // focus was in the Dock: the new box takes it
