@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.27
-// @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
+// @version      2.28
+// @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
 // @grant        none
@@ -62,7 +62,7 @@
       try {
         const box = await caches.open(CACHE), hit = await box.match(u.href);
         const at = Number(hit?.headers.get("x-erp-fast-at") || 0);
-        if (hit && Date.now() - at < TTL) { showAssets(at); return hit; }
+        if (hit && Date.now() - at < TTL) { showAssets(at); return narrow(u, hit); }
         const res = await realFetch.call(this, input, init);
         if (res.ok) {
           const body = await res.clone().blob(), h = new Headers(res.headers);
@@ -70,11 +70,54 @@
           await box.put(u.href, new Response(body, { status: res.status, statusText: res.statusText, headers: h }));
         }
         showAssets(Date.now());
-        return res;
+        return narrow(u, res);
       } catch { /* no cache: plain fetch */ }
     }
     return realFetch.call(this, input, init);
   };
+
+  // Planning → Rute Tarikan Kabel: "DARI Aset" and "KE Aset" each list every OLT/FDT/ODP/FAT/pole/ODC (5,095 on
+  // 11 Nov 2026) and the page redraws both lists on every key pressed anywhere in the form (~0.13 s a key, 2.1 s to show
+  // the section, ~3 s to open a list). Picking a district in the bar keeps that district's assets plus every OLT and ODC,
+  // so the lists hold a few hundred. Only the page's copy is narrowed; nothing is written anywhere.
+  const AREA = "erpFast.area";          // "" = all districts, else a kecamatan
+  const area = () => { try { return localStorage.getItem(AREA) || ""; } catch { return ""; } };
+  let areas = null;                     // [[kecamatan, count]] from the last full list
+  let areaKept = 0, areaAll = 0;
+  async function narrow(u, res) {
+    if (!res.ok || !/\bOLT\b/.test(u.searchParams.get("in") || "")) return res;
+    try {
+      const j = await res.clone().json();
+      if (!Array.isArray(j?.data)) return res;
+      // 1,948 of 5,095 have no kecamatan: placed by their village (1,414), else the nearest placed asset (140); the 394
+      // with neither are kept, except poles (372 of them), which a cable route never starts or ends at without a place
+      const low = (v) => String(v ?? "").trim().toLowerCase();
+      const names = new Map(), byDesa = new Map(), placed = [];
+      for (const a of j.data) if (a.kecamatan) {
+        names.set(low(a.kecamatan), names.get(low(a.kecamatan)) || String(a.kecamatan).trim());
+        if (a.desa) byDesa.set(low(a.desa), low(a.kecamatan));
+        if (a.lokasiKoordinat?.latitude != null) placed.push(a);
+      }
+      const where = (a) => {
+        if (a.kecamatan) return low(a.kecamatan);
+        if (byDesa.has(low(a.desa))) return byDesa.get(low(a.desa));
+        const p = a.lokasiKoordinat; if (p?.latitude == null) return "";
+        let best = Infinity, k = "";
+        for (const b of placed) { const q = b.lokasiKoordinat, d = (q.latitude - p.latitude) ** 2 + (q.longitude - p.longitude) ** 2; if (d < best) { best = d; k = low(b.kecamatan); } }
+        return k;
+      };
+      const tally = new Map(), at = j.data.map((a) => { const k = where(a); if (k) tally.set(k, (tally.get(k) || 0) + 1); return k; });
+      areas = [...tally].map(([k, n]) => [names.get(k), n]).sort((x, y) => x[0].localeCompare(y[0], "id"));
+      areaAll = j.data.length;
+      const want = area().toLowerCase();
+      if (!want || !tally.has(want)) { areaKept = 0; draw(); return res; }
+      j.data = j.data.filter((a, i) => a.tipeAset === "OLT" || a.tipeAset === "ODC" || at[i] === want || (!at[i] && a.tipeAset !== "Tiang"));
+      if ("count" in j) j.count = j.data.length;
+      areaKept = j.data.length; draw();
+      const h = new Headers(res.headers); h.delete("content-length"); h.set("content-type", "application/json");
+      return new Response(JSON.stringify(j), { status: res.status, statusText: res.statusText, headers: h });
+    } catch { return res; }
+  }
 
   // ---------- the little switch, bottom-right ----------
   let assetsAt = 0;
@@ -105,6 +148,9 @@
       text-transform: uppercase; color: var(--muted); white-space: nowrap; }
     #erp-fast .tag::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--bone); }
     #erp-fast .tag b { font-size: 13px; font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--paper); }
+    #erp-fast select { height: 30px; max-width: 210px; padding: 0 8px; border: 0; border-radius: 6px; background: var(--canvas); color: var(--paper);
+      box-shadow: inset 0 0 0 1px var(--edge); font: inherit; font-size: 13px; cursor: pointer; }
+    #erp-fast select:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
     #erp-fast .of { padding-right: 8px; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
     #erp-fast .seg { display: inline-flex; padding: 3px; gap: 2px; border-radius: 8px; background: var(--canvas); box-shadow: inset 0 0 0 1px var(--hair); }
     #erp-fast button { height: 30px; min-width: 44px; padding: 0 12px; border: 0; border-radius: 6px; background: none; color: var(--muted);
@@ -158,6 +204,15 @@
       const mins = assetsAt ? Math.floor((Date.now() - assetsAt) / 60000) : null;
       label("Assets", mins === null ? "Loading" : mins < 1 ? "Fresh" : `${mins} min old`);
       button(bar, "Refresh", null, async () => { try { await caches.delete(CACHE); } catch {} location.reload(); }, "solo");
+      if (areas?.length) {
+        const pick = document.createElement("select"); pick.title = "District whose assets the DARI / KE lists show (reloads the page)";
+        pick.setAttribute("aria-label", "District for asset lists");
+        pick.append(new Option(`All districts · ${areaAll.toLocaleString("id-ID")}`, ""));
+        for (const [k, n] of areas) pick.append(new Option(`${k} · ${n.toLocaleString("id-ID")}`, k, false, k.toLowerCase() === area().toLowerCase()));
+        if (!areaKept) pick.value = "";
+        pick.onchange = () => { try { localStorage.setItem(AREA, pick.value); } catch {} location.reload(); };
+        bar.append(pick);
+      }
     }
   }
 
