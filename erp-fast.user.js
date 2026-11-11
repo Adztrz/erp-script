@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.33
+// @version      2.34
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -1161,6 +1161,7 @@
       .erp-dock .near .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
       .erp-dock canvas { display: block; width: 100%; height: 170px; margin: 10px 0 6px; }
       .erp-dock .map { position: relative; height: 240px; margin: 10px 0 6px; border-radius: 8px; overflow: hidden; background: #0f1214; box-shadow: inset 0 0 0 1px var(--hair); }
+      .erp-dock .map { cursor: grab; touch-action: none; user-select: none; } .erp-dock .map.panning { cursor: grabbing; } .erp-dock .map.panning .mdot { pointer-events: none; }
       .erp-dock .map .tiles img { position: absolute; width: 256px; height: 256px; max-width: none; pointer-events: none; user-select: none; }
       .erp-dock .map .tiles img { filter: invert(1) hue-rotate(180deg) brightness(.78) contrast(.92) saturate(.35); } /* OSM's light map, made dark */
       .erp-dock .map.sat .tiles img, .erp-dock .map.carto .tiles img { filter: none; } .erp-dock .map.sat .tiles img { filter: brightness(.8) saturate(.9); }
@@ -1763,7 +1764,7 @@
       // where the offline ones are, on the map
       const pts = mine.map((c) => ({ c, p: where(c), on: !off.includes(c) })).filter((z) => z.p);
       if (pts.length) { parts.push(areaMap(pts, `${off.length} offline customers on a map of ${x_name(ip)}`));
-        parts.push(el("p", "note", `On the map: ${pts.length} of ${mine.length} customers (the ones with a saved location), offline in red.`)); }
+        parts.push(el("p", "note", `On the map: ${pts.length} of ${mine.length} customers (the ones with a saved location), offline in grey.`)); }
       // villages, most offline first
       const by = new Map(); for (const c of mine) { const d = c.desa || "No village"; const g = by.get(d) || { all: 0, off: [] }; g.all++; if (off.includes(c)) g.off.push(c); by.set(d, g); }
       const rows = [...by].filter(([, g]) => g.off.length).sort((a, b) => b[1].off.length - a[1].off.length || b[1].off.length / b[1].all - a[1].off.length / a[1].all);
@@ -2125,8 +2126,8 @@
         : g.crit >= 3 ? `${g.crit} modems with critical signal on this port: check the connectors and splitter on this line.` : "This port looks normal."));
       // where they are
       const pts = g.all.map((o) => { const c = customerOf(o.sn, o, null); return c && where(c) ? { c, p: where(c), on: o.st === "online" } : null; }).filter(Boolean);
-      if (pts.length) { wrap.append(areaMap(pts, `Map of ${pts.length} customers on this port, offline in red`));
-        wrap.append(el("p", "note", `On the map: ${pts.length} of ${g.all.length} modems, the ones linked to a customer with a saved location (offline in red). The rest have no customer match or no location.`)); }
+      if (pts.length) { wrap.append(areaMap(pts, `Map of ${pts.length} customers on this port, offline in grey`));
+        wrap.append(el("p", "note", `On the map: ${pts.length} of ${g.all.length} modems, the ones linked to a customer with a saved location (offline in grey). The rest have no customer match or no location.`)); }
       else wrap.append(el("p", "note", `None of the ${g.all.length} modems on this port is linked to a customer with a saved location, so there's nothing to map.`));
       out.push(wrap);
       if (g.off) out.push(reportBox({ title: `${g.olt} · PON ${g.pon}`, down: g.off, total: g.all.length, age: g.fresh ? `OLT ${lalu(g.fresh)}` : "",
@@ -2438,7 +2439,7 @@
       return { kind, carto, T };
     }
     // the same map for a group of customers (a PON port, a router's offline customers): fitted to where they are,
-    // offline red over online green; a dot shows the name and opens the customer
+    // offline grey over online green; a dot shows the name and opens the customer
     function areaMap(pts, label) {
       const box = el("div", "map"); box.setAttribute("role", "group"); box.setAttribute("aria-label", label);
       box.redraw = () => drawAreaMap(box, pts); setTimeout(box.redraw, 0); return box;
@@ -2451,7 +2452,8 @@
       const proj = (p, z) => { const size = 256 * 2 ** z, sin = Math.sin(p.lat * Math.PI / 180); return [((p.lng + 180) / 360) * size, (0.5 - Math.log((1 + sin) / (1 - sin)) / (4 * Math.PI)) * size]; };
       let z = T.max; while (z > 8) { const [x0, y0] = proj({ lat: b.n, lng: b.w }, z), [x1, y1] = proj({ lat: b.s, lng: b.e }, z); if (x1 - x0 <= w - 48 && y1 - y0 <= h - 48) break; z--; }
       z = Math.max(8, Math.min(T.max, z + (box.zoom || 0)));
-      const [cx, cy] = proj(mid, z), left = cx - w / 2, top = cy - h / 2, tiles = el("div", "tiles");
+      const size = 256 * 2 ** z, [cx, cy] = box.ctr ? [box.ctr[0] * size, box.ctr[1] * size] : proj(mid, z), left = cx - w / 2, top = cy - h / 2, tiles = el("div", "tiles");
+      box.geo = { size, cx, cy }; panMap(box);
       for (let tx = Math.floor(left / 256); tx * 256 < left + w; tx++) for (let ty = Math.floor(top / 256); ty * 256 < top + h; ty++) {
         const img = el("img"); img.src = T.url(tx, ty, z); img.alt = ""; img.draggable = false; img.style.left = `${tx * 256 - left}px`; img.style.top = `${ty * 256 - top}px`; tiles.append(img); }
       const tip = el("span", "tip"); tip.hidden = true;
@@ -2463,6 +2465,7 @@
         d.onclick = () => { view.card = z0.c; view.sel = 0; remember(z0.c); draw(); }; return d; });
       const zoom = el("div", "zoom"), full = box.classList.contains("full"), fs = el("button", null, full ? "⤡" : "⤢"); fs.type = "button"; fs.title = full ? "Back (F or Esc)" : "Full screen (F)"; fs.onclick = () => toggleFull(box); zoom.append(fs);
       for (const [t, dz, label] of [["+", 1, "Zoom in"], ["−", -1, "Zoom out"]]) { const bt = el("button", null, t); bt.type = "button"; bt.setAttribute("aria-label", label); bt.onclick = () => { box.zoom = (box.zoom || 0) + dz; box.redraw(); }; zoom.append(bt); }
+      zoom.append(recentre(box));
       const base = el("div", "seg basemap");
       for (const [k, label] of [["dark", "Map"], ["sat", "Satellite"]]) { const bt = el("button", null, label); bt.type = "button"; bt.setAttribute("aria-pressed", String(kind === k)); bt.onclick = () => { ls.set(BASEMAP, k); box.redraw(); }; base.append(bt); }
       box.classList.toggle("sat", kind === "sat"); box.classList.toggle("carto", carto);
@@ -2475,11 +2478,14 @@
       const { kind, carto, T } = tileSource();
       const z = Math.max(12, Math.min(T.max, Math.floor(Math.log2((mpp0 * Math.min(w, h) * 0.46) / radius)) + (view.zoom || 0)));
       const size = 256 * 2 ** z, world = (p) => { const sin = Math.sin(p.lat * Math.PI / 180); return [((p.lng + 180) / 360) * size, (0.5 - Math.log((1 + sin) / (1 - sin)) / (4 * Math.PI)) * size]; };
-      const [cx, cy] = world(n.c), left = cx - w / 2, top = cy - h / 2, mpp = mpp0 / 2 ** z;
+      if (box.ctrFor !== r.username) { box.ctr = null; box.ctrFor = r.username; }
+      const [cx, cy] = box.ctr ? [box.ctr[0] * size, box.ctr[1] * size] : world(n.c), left = cx - w / 2, top = cy - h / 2, mpp = mpp0 / 2 ** z;
+      box.geo = { size, cx, cy }; panMap(box);
+      const [mx, my] = world(n.c), hx = mx - left, hy = my - top; // this customer, wherever the map has been dragged
       const tiles = el("div", "tiles");
       for (let tx = Math.floor(left / 256); tx * 256 < left + w; tx++) for (let ty = Math.floor(top / 256); ty * 256 < top + h; ty++) {
         const img = el("img"); img.src = T.url(tx, ty, z); img.alt = ""; img.draggable = false; img.style.left = `${tx * 256 - left}px`; img.style.top = `${ty * 256 - top}px`; tiles.append(img); }
-      const ring = (f, cls) => { const d = el("span", `ring ${cls}`), R = (radius * f) / mpp; d.style.cssText = `width:${2 * R}px;height:${2 * R}px;left:${w / 2 - R}px;top:${h / 2 - R}px`; return d; };
+      const ring = (f, cls) => { const d = el("span", `ring ${cls}`), R = (radius * f) / mpp; d.style.cssText = `width:${2 * R}px;height:${2 * R}px;left:${hx - R}px;top:${hy - R}px`; return d; };
       const tip = el("span", "tip"); tip.hidden = true;
       const dots = n.list.map((x, i) => {
         const [px, py] = world(x.p), b = el("button", `mdot ${state(x.r)}`); b.type = "button"; b.tabIndex = -1;
@@ -2501,14 +2507,49 @@
       const base = el("div", "seg basemap");
       for (const [k, label] of [["dark", "Map"], ["sat", "Satellite"]]) { const b = el("button", null, label); b.type = "button"; b.setAttribute("aria-pressed", String(kind === k));
         b.onclick = () => { ls.set(BASEMAP, k); tileMap(box, r, n, radius, rows); }; base.append(b); }
-      const me = el("span", "mdot me"); me.style.left = `${w / 2}px`; me.style.top = `${h / 2}px`;
+      const me = el("span", "mdot me"); me.style.left = `${hx}px`; me.style.top = `${hy}px`;
       const zoom = el("div", "zoom");
       const full = box.classList.contains("full"), fs = el("button", null, full ? "⤡" : "⤢"); fs.type = "button"; fs.title = full ? "Back (F or Esc)" : "Full screen (F)";
       fs.setAttribute("aria-label", full ? "Leave full screen" : "Full screen"); fs.onclick = () => toggleFull(box); zoom.append(fs);
       for (const [t, dz, label] of [["+", 1, "Zoom in"], ["−", -1, "Zoom out"]]) { const b = el("button", null, t); b.type = "button"; b.setAttribute("aria-label", label);
         b.disabled = (dz > 0 && z >= T.max) || (dz < 0 && z <= 12); b.onclick = () => { view.zoom = (view.zoom || 0) + dz; tileMap(box, r, n, radius, rows); }; zoom.append(b); }
+      zoom.append(recentre(box));
       box.classList.toggle("sat", kind === "sat"); box.classList.toggle("carto", !!carto);
       box.replaceChildren(tiles, ring(0.5, "half"), ring(1, ""), ...dots, me, tip, zoom, base, el("span", "attr", T.attr));
+    }
+    // Drag a map to pan it: the picture follows the pointer, and every ~100 px (and on release) the tiles are drawn
+    // again around the new centre, kept as a share of the world so zooming keeps the place. A press that moves less
+    // than 4 px is still a click (a dot opens its customer). ◎ goes back to the start.
+    function panMap(box) {
+      if (box.panReady) return; box.panReady = true;
+      let start = null, moved = false;
+      const layer = () => [...box.children].filter((c) => !c.matches(".zoom, .seg, .attr, .tip"));
+      const shift = (dx, dy) => layer().forEach((c) => { c.style.translate = dx || dy ? `${dx}px ${dy}px` : ""; });
+      const commit = (dx, dy) => { const g = box.geo; if (!g) return; box.ctr = [(g.cx - dx) / g.size, (g.cy - dy) / g.size]; box.redraw?.(); };
+      box.addEventListener("pointerdown", (e) => {
+        if (e.button !== 0 || e.target.closest(".zoom, .seg")) return;
+        start = { x: e.clientX, y: e.clientY }; moved = false;
+      });
+      box.addEventListener("pointermove", (e) => {
+        if (!start) return;
+        const dx = e.clientX - start.x, dy = e.clientY - start.y;
+        if (!moved && Math.hypot(dx, dy) < 4) return;
+        if (!moved) { moved = true; box.classList.add("panning"); try { box.setPointerCapture(e.pointerId); } catch {} }
+        if (Math.hypot(dx, dy) > 100) { commit(dx, dy); start = { x: e.clientX, y: e.clientY }; return; } // fresh tiles for the new edge
+        shift(dx, dy);
+      });
+      const end = (e) => {
+        if (!start) return;
+        const dx = e.clientX - start.x, dy = e.clientY - start.y; start = null; box.classList.remove("panning");
+        if (!moved) return;
+        box.addEventListener("click", (c) => { c.stopPropagation(); c.preventDefault(); }, { capture: true, once: true }); // the drag isn't a click on a dot
+        commit(dx, dy);
+      };
+      box.addEventListener("pointerup", end); box.addEventListener("pointercancel", end);
+    }
+    function recentre(box) {
+      const b = el("button", null, "◎"); b.type = "button"; b.title = "Back to the start"; b.setAttribute("aria-label", "Recentre the map");
+      b.disabled = !box.ctr; b.onclick = () => { box.ctr = null; box.redraw?.(); }; return b;
     }
     // the customers on the same OLT PON port: when many of them are down together it's the line (PON, splitter, ODP),
     // not one house. Statuses come from the OLTs' cached ONT lists (kept 2 hours).
