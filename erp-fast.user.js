@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.26
-// @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
+// @version      2.27
+// @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
 // @grant        none
@@ -27,6 +27,11 @@
   const TTL = 15 * 60 * 1000;           // how long Planning's asset lists are reused
   const CACHE = "erp-fast-assets";
   const limit = () => { try { return localStorage.getItem(KEY) || "500"; } catch { return "500"; } };
+  // Measured 11 Nov 2026: Technical → Approvals draws every waiting report (275 rows, 8,300 elements) and redraws them all on
+  // each click, freezing ~0.3 s per filter open. Showing the first 50 (rest hidden, data untouched) brings that to ~0.05 s.
+  const ROWS = "erpFast.rows";          // "50" | "100" | "all"
+  const rowsShown = () => { try { return localStorage.getItem(ROWS) || "50"; } catch { return "50"; } };
+  const onApprovals = () => location.pathname.startsWith("/technical/approvals");
 
   const realFetch = window.fetch;
   let lastAuth = null; // the page's latest sign-in header (memory only)
@@ -74,6 +79,14 @@
   // ---------- the little switch, bottom-right ----------
   let assetsAt = 0;
   function noteTrimmed() { draw(); }
+  // Approvals has no request to hook, so the bar follows page changes and the row count on its own (cheap: one count a second)
+  let lastPath = "", rowCount = -1;
+  setInterval(() => {
+    if (document.visibilityState !== "visible") return;
+    const moved = location.pathname !== lastPath; lastPath = location.pathname;
+    if (moved ? onApprovals() || document.getElementById("erp-fast-rows") || document.getElementById("erp-fast")?.getAttribute("aria-label")?.startsWith("Approval")
+      : onApprovals() && document.querySelectorAll("main table tbody > tr").length !== rowCount) draw();
+  }, 1000);
   function showAssets(at) { assetsAt = at; draw(); }
 
   // Faust's Night Ledger: a ledger card floating on the page (the Float shadow, 8px corners), a bone tag-with-dot label,
@@ -92,6 +105,7 @@
       text-transform: uppercase; color: var(--muted); white-space: nowrap; }
     #erp-fast .tag::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--bone); }
     #erp-fast .tag b { font-size: 13px; font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--paper); }
+    #erp-fast .of { padding-right: 8px; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
     #erp-fast .seg { display: inline-flex; padding: 3px; gap: 2px; border-radius: 8px; background: var(--canvas); box-shadow: inset 0 0 0 1px var(--hair); }
     #erp-fast button { height: 30px; min-width: 44px; padding: 0 12px; border: 0; border-radius: 6px; background: none; color: var(--muted);
       font-family: inherit; font-size: 13px; font-weight: 500; line-height: 1; font-variant-numeric: tabular-nums; cursor: pointer;
@@ -113,15 +127,28 @@
       const s = document.createElement("style"); s.id = "erp-fast-css"; s.textContent = css; document.head.append(s);
     }
     let bar = document.getElementById("erp-fast");
-    const onWO = location.pathname.startsWith("/work-orders"), onPlan = location.pathname.startsWith("/planning");
-    if (!onWO && !onPlan) { bar?.remove(); return; }
+    const onWO = location.pathname.startsWith("/work-orders"), onPlan = location.pathname.startsWith("/planning"), onAp = onApprovals();
+    let cut = document.getElementById("erp-fast-rows");
+    if (onAp && rowsShown() !== "all") {
+      if (!cut) { cut = document.createElement("style"); cut.id = "erp-fast-rows"; document.head.append(cut); }
+      cut.textContent = `main table tbody > tr:nth-child(n+${Number(rowsShown()) + 1}) { display: none; }`;
+    } else cut?.remove();
+    if (!onWO && !onPlan && !onAp) { bar?.remove(); return; }
     if (!bar) { bar = document.createElement("div"); bar.id = "erp-fast"; bar.setAttribute("role", "group"); document.body.append(bar); }
     bar.replaceChildren();
     // tag-with-dot label: a word, then the part that matters in paper white
     const label = (word, value) => { const s = document.createElement("span"); s.className = "tag"; s.append(word); if (value) { const b = document.createElement("b"); b.textContent = value; s.append(" ", b); } bar.append(s); };
     const button = (parent, t, on, run, cls) => { const b = document.createElement("button"); b.type = "button"; b.textContent = t; if (on !== null) b.setAttribute("aria-pressed", String(on)); if (cls) b.className = cls; b.onclick = run; parent.append(b); };
 
-    if (onWO) {
+    if (onAp) {
+      bar.setAttribute("aria-label", "Approval reports to show");
+      const n = document.querySelectorAll("main table tbody > tr").length, want = rowsShown();
+      label("Show first", "");
+      const seg = document.createElement("span"); seg.className = "seg"; bar.append(seg);
+      for (const v of ["50", "100", "all"]) button(seg, v === "all" ? "All" : v, want === v, () => { try { localStorage.setItem(ROWS, v); } catch {} draw(); });
+      if (n) { const of = document.createElement("span"); of.className = "of"; of.textContent = `of ${n}`; bar.append(of); }
+      rowCount = n;
+    } else if (onWO) {
       bar.setAttribute("aria-label", "Work orders to load");
       label("Show newest", ""); // the chosen amount is the pressed button beside it
       const seg = document.createElement("span"); seg.className = "seg"; bar.append(seg);

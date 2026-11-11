@@ -5,6 +5,7 @@ A Tampermonkey userscript that makes slow parts of an ERP web app usable, withou
 | Page | Problem (measured 10 Nov 2026) | What the script does |
 |---|---|---|
 | Work Orders | Downloads 11.6 MB (5,000 + 3,000 orders), draws 6,347 rows (205,000 elements), freezes the tab ~4.9 s | Asks for the newest 500 of each list: 589 rows, 19,000 elements, ~0.2 s. Switch to 1000 or All from the bar at the bottom right; the choice is remembered |
+| Approvals | Draws every waiting report (275 rows, 8,300 elements) and redraws them all on each click, ~0.3 s freeze | Shows the first 50 (the rest are only hidden, filters and PDF export still cover all): ~0.05 s. Switch to 100 or All from the bar at the bottom right; the choice is remembered |
 | Planning | Downloads 11 MB of network assets (backbone, OLT, ODP…) on every visit | Reuses them for 15 minutes; the bar shows how old they are and has Refresh |
 | LDN Radius → Pelanggan search | Asks the server on every search (1–4 s) and matches the typed text as one piece: an extra space, words in another order or a trailing `.` find nobody (0 of 5 in a test) | A **fast search** dropdown under the box: all customers are loaded once (13,520; a page that comes back short is asked for again; about 2 minutes the first time, then kept and refreshed in the background) and searched as you type in ~30–80 ms, any word order, spacing and punctuation ignored, forgiving of spelling (double letters: winna = wina; old spellings: oe = u, dj = j, tj = c; one letter off from 4 letters, two from 9), across name, username, phone, address, village, router and plan (5 of 5 in the same test). ↑↓ and Enter (or a click) put that customer's username into the site's search, so the table shows them |
 | Finance → Invoices search | Same as LDN: one server request per search (~2.8 s), the typed text matched as one piece (an extra space, another word order or a trailing `.` find nobody: 0 of 5) | The same **fast search**, for the month the page shows (it follows the month you pick): about 12,000 invoices a month, loaded once (about a minute; the server gives 200 per request, about one request a second). For **Semua Bulan** it loads month by month, newest first, and searches whatever has arrived (a whole year takes about 11 minutes the first time); each month is kept on its own, then searched in ~30–60 ms across invoice number, WinPay ID, name, RADIUS username, contract, village, router, plan and phone. Each result shows status, amount and period. Enter puts the invoice number into the site's search, so the table shows that invoice |
@@ -46,7 +47,7 @@ Or by hand:
 1. Tampermonkey → Dashboard → **+** (new script), replace everything with [`erp-fast.user.js`](erp-fast.user.js), Ctrl+S.
 2. Reload the ERP.
 
-To turn it off, switch the script off in Tampermonkey (or pick **All** on Work Orders).
+To turn it off, switch the script off in Tampermonkey (or pick **All** on Work Orders or Approvals).
 
 ## How it works
 
