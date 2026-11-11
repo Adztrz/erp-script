@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.31
+// @version      2.32
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -395,6 +395,16 @@
       try { const c = spkDoc(db, r); await fsCall(`${db}/documents:commit`, { writes: [c.write] }); r.state = "ok"; r.id = c.id; }
       catch (e) { r.state = "err"; r.why = e.message; }
       spkDraw();
+    }
+    // Daftar SPK reads a copy of the SPKs that the ERP refreshes when its own pages call this sync (Misi, SPK
+    // monitor); without it new SPKs stay out of the list until someone opens one of those
+    if (spk.routes.some((r) => r.state === "ok")) {
+      spk.note = "Adding them to Daftar SPK…"; spkDraw();
+      try {
+        const auth = await fsToken(), res = await realFetch("/api/spk/mirror", { method: "POST", headers: auth ? { authorization: auth } : {} });
+        const j = await res.json().catch(() => null);
+        spk.note = res.ok && j?.ok !== false ? "" : "They're saved, but didn't reach Daftar SPK yet: opening Technical → Misi adds them.";
+      } catch { spk.note = "They're saved, but didn't reach Daftar SPK yet: opening Technical → Misi adds them."; }
     }
     spk.phase = "done"; spkDraw();
   }

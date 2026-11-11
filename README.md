@@ -51,7 +51,7 @@ ke :
 
 Each FDT → FAT pair becomes a route (several FDT blocks in one message work, and so does `FDT A ke FAT B` on one line). Names are matched to Network Assets ignoring spaces and dashes; a name that isn't there yet becomes a *Calon Aset*, as in the form. Pick the team, project, type (Tarik & Aktivasi FAT by default) and date in the panel, set the title template (`PENARIKAN {dari} KE {ke}` by default, e.g. `AKTIVASI {ke}`), and press **Create** twice. No form to fill.
 
-Each SPK is the record Planning's manual form saves for a team, checked field by field against SPKs made by hand: status Baru, the team, the project, no tasks or equipment, progress 0/1, the route (with the cable length pre-filled from the straight line, as the form does). They're saved through Firestore's REST API with your own sign-in, as new documents only. No WhatsApp or push notice is sent; use Kirim ke WA Grup on Daftar SPK if the team should hear about them. Team, project and type are remembered.
+Each SPK is the record Planning's manual form saves for a team, checked field by field against SPKs made by hand: status Baru, the team, the project, no tasks or equipment, progress 0/1, the route (with the cable length pre-filled from the straight line, as the form does). They're saved through Firestore's REST API with your own sign-in, as new documents only, then the ERP's own SPK sync (the one Misi and the SPK monitor call) is run once so they show in Daftar SPK straight away. No WhatsApp or push notice is sent; use Kirim ke WA Grup on Daftar SPK if the team should hear about them. Team, project and type are remembered.
 
 ## Install
 
