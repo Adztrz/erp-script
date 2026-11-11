@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.28
+// @version      2.29
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -875,6 +875,7 @@
       .erp-dock .ralert { display: grid; gap: 2px; width: calc(100% - 8px); margin: 6px 4px; padding: 10px 12px; border: 0; border-radius: 8px; text-align: left; cursor: pointer; font: inherit;
         background: rgba(241,38,20,.08); box-shadow: inset 0 0 0 1px rgba(241,38,20,.45); color: var(--paper); }
       .erp-dock .ralert.drop { background: rgba(224,178,82,.07); box-shadow: inset 0 0 0 1px rgba(224,178,82,.4); }
+      .erp-dock .ralert.item { grid-template-columns: minmax(0, 1fr); align-items: start; } /* one column, not the row's dot | text | number */
       .erp-dock .ralert b { font-weight: 500; } .erp-dock .ralert span { font-size: 12px; color: var(--body); }
       .erp-dock .ralert:hover, .erp-dock .ralert[aria-selected="true"] { box-shadow: inset 0 0 0 1px #ff6a5c; }
       .erp-dock .rok { margin: 6px 4px; padding: 10px 12px; border-radius: 8px; background: rgba(85,188,130,.06); box-shadow: inset 0 0 0 1px rgba(85,188,130,.3); font-size: 13px; color: var(--paper); }
@@ -938,7 +939,7 @@
       if (panel) return;
       panel = el("div", "erp-dock"); panel.setAttribute("role", "dialog"); panel.setAttribute("aria-label", "Dock");
       document.body.append(panel); fab.setAttribute("aria-expanded", "true"); place();
-      view = { q: "", sel: 0, card: null, radius: view.radius, mode: bulk && bulk.phase !== "input" ? "bulk" : radar?.alerts.length ? "radar" : null }; // a bulk run in progress comes back; an outage opens on the radar
+      view = { q: "", sel: 0, card: null, radius: view.radius, mode: bulk && bulk.phase !== "input" ? "bulk" : null }; // a bulk run in progress comes back; an outage only marks the Outage radar row
       draw(); panel.querySelector("input")?.focus();
       await data(); draw();
     }
