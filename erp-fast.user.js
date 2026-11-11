@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.29
-// @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
+// @version      2.30
+// @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
 // @grant        none
@@ -44,6 +44,12 @@
       const auth = init?.headers ? new Headers(init.headers).get("authorization") : input instanceof Request ? input.headers.get("authorization") : null;
       if (auth) lastAuth = auth;
       for (const seen of searches) seen(u, auth);
+    }
+
+    // Bulk SPK: read (never change) what the page writes, to copy the SPK it just saved
+    if (spkWatch && u.hostname === "firestore.googleapis.com" && u.pathname.includes("/Write/")) {
+      const watch = spkWatch; // the SDK sends a Request with the form-encoded body inside; a copy is read, the original goes on
+      if (typeof init?.body === "string") watch(init.body); else if (input instanceof Request && input.method === "POST") input.clone().text().then(watch, () => {});
     }
 
     // Work Orders: ask for fewer rows (only ever lower than what the page asked for)
@@ -119,6 +125,16 @@
     } catch { return res; }
   }
 
+  let spkWatch = null; // set while Bulk SPK waits for the form's save
+  {
+    const open = XMLHttpRequest.prototype.open, send = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.open = function (m, url) { this.__erpUrl = String(url); return open.apply(this, arguments); };
+    XMLHttpRequest.prototype.send = function (body) {
+      if (spkWatch && /firestore\.googleapis\.com\/.*\/Write\//.test(this.__erpUrl || "") && typeof body === "string") spkWatch(body);
+      return send.apply(this, arguments);
+    };
+  }
+
   // ---------- the little switch, bottom-right ----------
   let assetsAt = 0;
   function noteTrimmed() { draw(); }
@@ -151,6 +167,41 @@
     #erp-fast select { height: 30px; max-width: 210px; padding: 0 8px; border: 0; border-radius: 6px; background: var(--canvas); color: var(--paper);
       box-shadow: inset 0 0 0 1px var(--edge); font: inherit; font-size: 13px; cursor: pointer; }
     #erp-fast select:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+    #erp-bulk-spk { --canvas: #07090b; --card: #090b0c; --raised: #1a1d1e; --edge: #363738; --hair: #262727; --bone: #e9e1dc;
+      --paper: #efefed; --body: #b3b0af; --muted: #8a8b8a; --blue: #3e7edf; --green: #55bc82; --red: #ff6a5c;
+      position: fixed; right: 16px; bottom: 70px; z-index: 2147483000; width: min(420px, calc(100vw - 32px)); max-height: calc(100vh - 110px);
+      display: flex; flex-direction: column; gap: 10px; padding: 14px; border-radius: 8px; background: var(--card); color: var(--body); overflow: auto;
+      font: 400 14px/1.5 Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; font-feature-settings: "cv11", "tnum";
+      box-shadow: inset 0 0 0 1px var(--edge), 0 40px 32px rgba(0,0,0,.18), 0 22px 18px rgba(0,0,0,.2), 0 12px 10px rgba(0,0,0,.2), 0 2px 2px rgba(0,0,0,.2);
+      animation: erp-fast-in .5s cubic-bezier(.1, 0, .1, 1) both; -webkit-font-smoothing: antialiased; }
+    #erp-bulk-spk .hd { display: flex; justify-content: space-between; align-items: center; }
+    #erp-bulk-spk .tag { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 500; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+    #erp-bulk-spk .tag::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--bone); }
+    #erp-bulk-spk textarea, #erp-bulk-spk input { width: 100%; box-sizing: border-box; padding: 8px 10px; border: 0; border-radius: 6px; background: var(--canvas);
+      color: var(--paper); box-shadow: inset 0 0 0 1px var(--hair); font: 13px/1.5 "JetBrains Mono", ui-monospace, monospace; resize: vertical; }
+    #erp-bulk-spk textarea:focus, #erp-bulk-spk input:focus { outline: 2px solid var(--blue); outline-offset: 1px; }
+    #erp-bulk-spk textarea:disabled, #erp-bulk-spk input:disabled { opacity: .55; }
+    #erp-bulk-spk .row { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: center; font-size: 13px; color: var(--muted); }
+    #erp-bulk-spk .hint { margin: 0; font-size: 12px; color: var(--muted); }
+    #erp-bulk-spk .note { margin: 0; padding: 8px 10px; border-radius: 6px; font-size: 13px; color: var(--paper); box-shadow: inset 0 0 0 1px rgba(224,178,82,.4); background: rgba(224,178,82,.07); }
+    #erp-bulk-spk .list { display: grid; gap: 2px; }
+    #erp-bulk-spk .rt { display: grid; grid-template-columns: 28px 1fr; gap: 0 8px; padding: 6px 8px; border-radius: 6px; background: var(--canvas); }
+    #erp-bulk-spk .rt .n { font: 12px "JetBrains Mono", ui-monospace, monospace; color: var(--muted); padding-top: 1px; }
+    #erp-bulk-spk .rt .t { color: var(--paper); font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
+    #erp-bulk-spk .rt .s { grid-column: 2; font-size: 12px; color: var(--muted); }
+    #erp-bulk-spk .rt.ok .n, #erp-bulk-spk .rt.form .n { color: var(--green); } #erp-bulk-spk .rt.err .n, #erp-bulk-spk .rt.err .s { color: var(--red); }
+    #erp-bulk-spk .ft { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    #erp-bulk-spk .steps { flex-basis: 100%; margin: 0; padding-left: 18px; font-size: 13px; color: var(--body); }
+    #erp-bulk-spk .steps li + li { margin-top: 4px; }
+    #erp-bulk-spk button { height: 32px; padding: 0 12px; border: 0; border-radius: 6px; background: none; color: var(--paper); box-shadow: inset 0 0 0 1px var(--edge);
+      font: 500 13px/1 Inter, ui-sans-serif, system-ui, sans-serif; cursor: pointer; }
+    #erp-bulk-spk button:hover { box-shadow: inset 0 0 0 1px #696a68; }
+    #erp-bulk-spk button.primary { background: var(--bone); color: var(--canvas); box-shadow: none; }
+    #erp-bulk-spk button:disabled { opacity: .4; cursor: default; }
+    #erp-bulk-spk button.x { width: 32px; padding: 0; box-shadow: none; color: var(--muted); }
+    #erp-bulk-spk button:focus-visible, #erp-bulk-spk .lnk:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+    #erp-bulk-spk .lnk { color: var(--paper); font-size: 13px; }
+    @media (prefers-reduced-motion: reduce) { #erp-bulk-spk { animation: none; } }
     #erp-fast .of { padding-right: 8px; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
     #erp-fast .seg { display: inline-flex; padding: 3px; gap: 2px; border-radius: 8px; background: var(--canvas); box-shadow: inset 0 0 0 1px var(--hair); }
     #erp-fast button { height: 30px; min-width: 44px; padding: 0 12px; border: 0; border-radius: 6px; background: none; color: var(--muted);
@@ -179,6 +230,7 @@
       if (!cut) { cut = document.createElement("style"); cut.id = "erp-fast-rows"; document.head.append(cut); }
       cut.textContent = `main table tbody > tr:nth-child(n+${Number(rowsShown()) + 1}) { display: none; }`;
     } else cut?.remove();
+    if (!onPlan) document.getElementById("erp-bulk-spk")?.remove();
     if (!onWO && !onPlan && !onAp) { bar?.remove(); return; }
     if (!bar) { bar = document.createElement("div"); bar.id = "erp-fast"; bar.setAttribute("role", "group"); document.body.append(bar); }
     bar.replaceChildren();
@@ -204,6 +256,7 @@
       const mins = assetsAt ? Math.floor((Date.now() - assetsAt) / 60000) : null;
       label("Assets", mins === null ? "Loading" : mins < 1 ? "Fresh" : `${mins} min old`);
       button(bar, "Refresh", null, async () => { try { await caches.delete(CACHE); } catch {} location.reload(); }, "solo");
+      button(bar, "Bulk SPK", bulkSpkOpen(), () => bulkSpkToggle(), "solo");
       if (areas?.length) {
         const pick = document.createElement("select"); pick.title = "District whose assets the DARI / KE lists show (reloads the page)";
         pick.setAttribute("aria-label", "District for asset lists");
@@ -214,6 +267,235 @@
         bar.append(pick);
       }
     }
+  }
+
+  // ---------- Bulk SPK on Planning: one team, one FDT to many FATs ----------
+  // Technicians send "FDT DAYU ke: * FAT DAYU 1 * FAT DAYU 2 …" and each route needs its own SPK (Tarik & Aktivasi FAT),
+  // titled after where it goes. Paste the message here; fill the form once (team, type, project, date) for the first
+  // route and press the page's own Simpan Tugas. The page saves that SPK as always. This reads exactly what the page
+  // wrote (the Firestore write it sends) and saves one copy per other route, changing only the title, the DARI / KE
+  // assets and the straight-line distance (the cable length is left empty: it differs per route). Copies go to
+  // Firestore's REST API with your own sign-in, so the database's rules apply exactly as for the page.
+  const SPK_TPL = "erpFast.spkTitle";
+  const spkTpl = () => { try { return localStorage.getItem(SPK_TPL) || "PENARIKAN {dari} KE {ke}"; } catch { return "PENARIKAN {dari} KE {ke}"; } };
+  let spk = null; // { text, routes, phase: "input" | "armed" | "verifying" | "creating" | "done", note }
+  const bulkSpkOpen = () => !!document.getElementById("erp-bulk-spk");
+  const akey = (v) => String(v ?? "").toLowerCase().replace(/[\s\-_]+/g, ""); // "FAT-SDY8A" = "FAT SDY8A"; dots kept (1.1 ≠ 11)
+  const ATYPE = { fdt: "FDT", fat: "FAT", odp: "ODP", odc: "ODC", olt: "OLT", joinbox: "Joinbox", jb: "Joinbox", tiang: "Tiang" };
+  const typeOf = (name) => ATYPE[(/^\s*(fdt|fat|odp|odc|olt|joinbox|jb|tiang)\b/i.exec(name)?.[1] || "").toLowerCase()] || null;
+
+  // the message → [{ from, to }]: a line with "ke" after it (or a plain line) is where cables start, the bullet lines
+  // under it are where they go; "FDT A ke FAT B" on one line also works; names and team lines are skipped
+  function parseRoutes(text) {
+    const lines = String(text).split(/\r?\n/).map((raw) => {
+      const t = raw.trim(), bare = t.replace(/^(?:[*\-•·>]+|\d+[.)])\s*/, "").trim();
+      return { bullet: bare !== t, line: bare };
+    }).filter((x) => x.line);
+    const routes = []; let from = null;
+    lines.forEach((x, i) => {
+      let { line } = x;
+      const pair = line.split(/\s+(?:ke|->|→|=>)\s*:?\s+/i);
+      if (pair.length === 2 && typeOf(pair[0]) && typeOf(pair[1])) { from = pair[0].trim(); routes.push({ from, to: pair[1].trim() }); return; }
+      if (/^ke\s*:?$/i.test(line)) return;
+      const endsKe = /\s+ke\s*:?$/i.test(line); line = line.replace(/\s+ke\s*:?$/i, "").trim();
+      if (!typeOf(line)) return;
+      const nextKe = /^ke\s*:?$/i.test(lines[i + 1]?.line || "");
+      if (endsKe || nextKe || !x.bullet || !from) from = line; else routes.push({ from, to: line });
+    });
+    return routes;
+  }
+
+  // Planning's own asset list (kept by the cache above), every district
+  async function assetIndex() {
+    const box = await caches.open(CACHE);
+    for (const req of await box.keys()) {
+      if (!/networkAssets/.test(req.url) || !/OLT.*FAT|FAT.*OLT/.test(decodeURIComponent(req.url))) continue; // the endpoint list, not the OLT-only one
+      const j = await (await box.match(req)).json(), idx = new Map();
+      for (const a of j.data || []) for (const k of new Set([akey(a.kodeAset), akey(`${a.tipeAset} ${a.kodeAset}`)])) { if (!idx.has(k)) idx.set(k, []); idx.get(k).push(a); }
+      return idx;
+    }
+    return null;
+  }
+  function placeAsset(idx, name) {
+    const hits = [...new Map((idx?.get(akey(name)) || []).map((a) => [a.id, a])).values()], want = typeOf(name); // the list repeats some rows
+    const same = hits.filter((a) => !want || String(a.tipeAset).toLowerCase() === want.toLowerCase());
+    const list = same.length ? same : hits;
+    if (list.length === 1) { const a = list[0], p = a.lokasiKoordinat;
+      return { ok: true, id: a.id, code: a.kodeAset, type: a.tipeAset, desa: a.desa || null, planned: false, lat: p?.latitude ?? a.lat ?? null, lng: p?.longitude ?? a.lng ?? null }; }
+    if (list.length > 1) return { ok: false, why: `${list.length} assets are called ${name}` };
+    if (!want) return { ok: false, why: `${name}: type unclear (start with FDT, FAT, ODP…)` };
+    return { ok: true, id: null, code: name.trim().replace(/\s+/g, " "), type: want, desa: null, planned: true, lat: null, lng: null }; // not in Network Assets yet: a Calon Aset, as the form does it
+  }
+  const title = (r) => spkTpl().replace(/\{dari\}/g, r.a?.code || r.from).replace(/\{ke\}/g, r.b?.code || r.to).replace(/\s+/g, " ").trim();
+  const metres = (a, b) => {
+    if ([a.lat, a.lng, b.lat, b.lng].some((v) => v == null)) return null;
+    const R = 6371000, rad = Math.PI / 180, dLa = (b.lat - a.lat) * rad, dLo = (b.lng - a.lng) * rad;
+    const h = Math.sin(dLa / 2) ** 2 + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLo / 2) ** 2;
+    return Math.round(2 * R * Math.asin(Math.sqrt(h)));
+  };
+
+  // a Firestore value in the same type as the one the page wrote (numbers: whole metres stay integers)
+  function fsValue(old, v) {
+    if (v == null) return { nullValue: null };
+    if (typeof v === "boolean") return { booleanValue: v };
+    if (typeof v === "number") return old?.doubleValue === undefined && Number.isInteger(v) ? { integerValue: String(v) } : { doubleValue: v };
+    return { stringValue: String(v) };
+  }
+  function routeCopy(write, r) {
+    const w = JSON.parse(JSON.stringify(write)), f = w.update.fields;
+    const id = Array.from(crypto.getRandomValues(new Uint8Array(20)), (n) => "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"[n % 62]).join("");
+    w.update.name = w.update.name.replace(/[^/]+$/, id);
+    f.name = { stringValue: title(r) };
+    const vals = { straightLineMeters: metres(r.a, r.b), cableLengthMeters: null };
+    for (const [side, x] of [["from", r.a], ["to", r.b]]) Object.assign(vals, { [`${side}AssetId`]: x.id, [`${side}AssetCode`]: x.code, [`${side}AssetType`]: x.type,
+      [`${side}AssetDesa`]: x.desa, [`${side}AssetPlanned`]: x.planned, [`${side}AssetLat`]: x.lat, [`${side}AssetLng`]: x.lng });
+    for (const key of ["target", "cableRoute"]) {
+      const m = f[key]?.mapValue?.fields; if (!m) continue;
+      for (const [k, v] of Object.entries(vals)) m[k] = /Lat$|Lng$/.test(k) && v != null ? { doubleValue: v } : fsValue(m[k], v);
+    }
+    w.currentDocument = { exists: false }; // a new SPK, never over an existing one
+    return { id, write: w };
+  }
+  async function fsToken() {
+    try {
+      const db = await new Promise((ok, no) => { const q = indexedDB.open("firebaseLocalStorageDb"); q.onupgradeneeded = () => q.transaction.abort(); q.onsuccess = () => ok(q.result); q.onerror = no; });
+      const all = await new Promise((ok, no) => { const q = db.transaction("firebaseLocalStorage").objectStore("firebaseLocalStorage").getAll(); q.onsuccess = () => ok(q.result); q.onerror = no; });
+      db.close();
+      const t = all.map((x) => x.value?.stsTokenManager).find((m) => m?.accessToken && m.expirationTime > Date.now() + 60000);
+      if (t) return `Bearer ${t.accessToken}`;
+    } catch {}
+    return lastAuth;
+  }
+  const FS = "https://firestore.googleapis.com/v1/";
+  async function fsCall(path, body) {
+    const auth = await fsToken(); if (!auth) throw new Error("Not signed in");
+    const r = await realFetch(FS + path, body ? { method: "POST", headers: { authorization: auth, "content-type": "application/json" }, body: JSON.stringify(body) } : { headers: { authorization: auth } });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j?.error?.message || `HTTP ${r.status}`);
+    return j;
+  }
+
+  // the page's save, read off its write request: the one workOrders document with a cable route
+  function spkSeen(body) {
+    if (spk?.phase !== "armed") return;
+    let writes = [];
+    try {
+      const q = new URLSearchParams(body);
+      for (const [k, v] of q) if (/^req\d+___data__$/.test(k)) { const j = JSON.parse(v); if (Array.isArray(j.writes)) writes.push(...j.writes); }
+    } catch { return; }
+    const mine = writes.filter((w) => /\/documents\/workOrders\/[^/]+$/.test(w.update?.name || "") && w.update.fields?.target?.mapValue?.fields?.type?.stringValue === "cable-route");
+    if (!mine.length) return;
+    spkWatch = null;
+    if (mine.length > 1) { spk.phase = "input"; spk.note = `The form saved ${mine.length} SPKs at once (more than one date?). Nothing copied: pick one date and use the list again.`; return void spkDraw(); }
+    spk.captured = mine[0]; spk.phase = "verifying"; spkDraw(); spkCreate();
+  }
+  async function spkCreate() {
+    const w = spk.captured, f = w.update.fields.target.mapValue.fields;
+    const sv = (k) => f[k]?.stringValue ?? null;
+    // the route the form saved is done already; every other one gets a copy
+    spk.first = { from: sv("fromAssetCode"), to: sv("toAssetCode") };
+    spk.routes.forEach((r) => { r.state = akey(r.a.code) === akey(spk.first.from) && akey(r.b.code) === akey(spk.first.to) ? "form" : "todo"; });
+    // the form and this list must mean the same assets: if the form's route is in the list, its ids have to agree
+    const mine = spk.routes.find((r) => r.state === "form");
+    if (mine && [["from", mine.a], ["to", mine.b]].some(([side, x]) => !x.planned && sv(`${side}AssetId`) && sv(`${side}AssetId`) !== x.id)) {
+      spk.phase = "done"; spk.routes.forEach((r) => { if (r.state === "todo") r.state = ""; });
+      spk.note = "The form's DARI / KE assets aren't the ones this list found for that route, so no copies were made (the form's SPK was saved).";
+      return void spkDraw();
+    }
+    // wait until the form's own SPK is in the database (proves the save went through and that this sign-in can read it)
+    let there = false;
+    for (let i = 0; i < 10 && !there; i++) { try { await fsCall(w.update.name); there = true; } catch { await new Promise((ok) => setTimeout(ok, 1500)); } }
+    if (!there) { spk.phase = "done"; spk.note = "The form's SPK didn't show up in the database, so no copies were made. Check Daftar SPK."; return void spkDraw(); }
+    spk.phase = "creating"; spkDraw();
+    for (const r of spk.routes) {
+      if (spk.stop) break;
+      if (r.state !== "todo") continue;
+      r.state = "busy"; spkDraw();
+      try { const c = routeCopy(w, r); await fsCall(`${w.update.name.split("/documents/")[0]}/documents:commit`, { writes: [c.write] }); r.state = "ok"; r.id = c.id; }
+      catch (e) { r.state = "err"; r.why = e.message; }
+      spkDraw();
+    }
+    spk.phase = "done"; spkDraw();
+  }
+
+  function bulkSpkToggle() {
+    if (bulkSpkOpen()) { document.getElementById("erp-bulk-spk").remove(); if (spk?.phase === "armed") { spk.phase = "input"; spkWatch = null; } draw(); return; }
+    if (!spk) spk = { text: "", routes: [], phase: "input" };
+    const p = document.createElement("div"); p.id = "erp-bulk-spk"; p.setAttribute("role", "dialog"); p.setAttribute("aria-label", "Bulk SPK");
+    document.body.append(p); spkDraw(); draw();
+    p.querySelector("textarea")?.focus();
+  }
+  function spkDraw() {
+    const p = document.getElementById("erp-bulk-spk"); if (!p || !spk) return;
+    const mk = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+    const btn = (t, run, cls = "") => { const b = mk("button", cls, t); b.type = "button"; b.onclick = run; return b; };
+    p.replaceChildren();
+    const head = mk("div", "hd"); head.append(mk("span", "tag", "Bulk SPK"), btn("✕", bulkSpkToggle, "x")); head.lastChild.setAttribute("aria-label", "Close"); p.append(head);
+    const busy = spk.phase === "verifying" || spk.phase === "creating";
+    if (spk.phase === "input" || spk.phase === "armed") {
+      const ta = mk("textarea"); ta.rows = 7; ta.placeholder = "Paste the message, e.g.\nFDT DAYU\nke :\n* FAT DAYU 1\n* FAT DAYU 2"; ta.value = spk.text;
+      ta.disabled = spk.phase === "armed";
+      ta.oninput = async () => {
+        spk.text = ta.value; await spkPlan();
+        const at = ta.selectionStart; spkDraw(); // redraw, then put the caret back where it was
+        const again = document.querySelector("#erp-bulk-spk textarea"); again?.focus(); again?.setSelectionRange(at, at);
+      };
+      const tl = mk("label", "row"); const ti = mk("input"); ti.value = spkTpl(); ti.disabled = spk.phase === "armed";
+      ti.oninput = () => { try { localStorage.setItem(SPK_TPL, ti.value); } catch {} spkList(); };
+      tl.append(mk("span", null, "Title"), ti);
+      p.append(ta, tl, mk("p", "hint", "{dari} and {ke} become the asset names."));
+    }
+    const list = mk("div", "list"); p.append(list);
+    function spkList() {
+      list.replaceChildren();
+      const rs = spk.routes; if (!rs.length) { if (spk.text.trim()) list.append(mk("p", "hint", "No FDT → FAT routes found in this text yet.")); return; }
+      rs.forEach((r, i) => {
+        const row = mk("div", `rt ${r.state || ""}`);
+        const mark = { form: "form", ok: "✓", err: "✕", busy: "…", todo: "" }[r.state] ?? String(i + 1);
+        row.append(mk("span", "n", mark), mk("span", "t", title(r)));
+        const sub = [r.a?.ok === false ? r.a.why : r.a?.planned ? `${r.a.code}: new (Calon Aset)` : "",
+          r.b?.ok === false ? r.b.why : r.b?.planned ? `${r.b.code}: new (Calon Aset)` : "", r.why || ""].filter(Boolean).join(" · ");
+        if (sub) row.append(mk("span", "s", sub));
+        list.append(row);
+      });
+    }
+    spkList();
+    if (spk.note) p.append(mk("p", "note", spk.note));
+    const bad = spk.routes.some((r) => r.a?.ok === false || r.b?.ok === false);
+    const foot = mk("div", "ft");
+    if (spk.phase === "input") {
+      const go = btn(spk.routes.length ? `Ready for ${spk.routes.length} SPK${spk.routes.length > 1 ? "s" : ""}` : "Ready", () => {
+        spk.phase = "armed"; spk.note = ""; spk.stop = false; spkWatch = spkSeen; spkFillTitle(); spkDraw(); }, "primary");
+      go.disabled = !spk.routes.length || bad || !spk.idx;
+      foot.append(go);
+      if (!spk.idx && spk.text.trim()) p.append(mk("p", "note", "The asset list isn't loaded yet: wait for Planning to finish loading."));
+    } else if (spk.phase === "armed") {
+      const r0 = spk.routes[0];
+      const how = mk("ol", "steps");
+      for (const t of [`Fill the form for the first route: DARI ${r0.a.code}${r0.a.planned ? " (Calon Aset)" : ""}, KE ${r0.b.code}${r0.b.planned ? " (Calon Aset)" : ""}. Its title is filled in.`,
+        "Pick the team, Tipe Pekerjaan, project and ONE date as usual.",
+        `Press Simpan Tugas. The other ${spk.routes.length - 1} are made right after, same team, date and project.`]) how.append(mk("li", null, t));
+      foot.append(how, btn("Fill title again", spkFillTitle), btn("Cancel", () => { spk.phase = "input"; spkWatch = null; spkDraw(); }));
+    } else if (busy) {
+      foot.append(mk("span", "hint", spk.phase === "verifying" ? "Waiting for the form's SPK to be saved…" : `Making SPKs… ${spk.routes.filter((r) => r.state === "ok").length} done`),
+        btn("Stop", () => { spk.stop = true; }));
+    } else if (spk.phase === "done") {
+      const ok = spk.routes.filter((r) => r.state === "ok").length, err = spk.routes.filter((r) => r.state === "err").length, form = spk.routes.some((r) => r.state === "form");
+      foot.append(mk("span", "hint", `${ok + (form ? 1 : 0)} SPK${ok + (form ? 1 : 0) === 1 ? "" : "s"} made${err ? `, ${err} failed` : ""}${spk.stop ? " (stopped)" : ""}.`));
+      const open = mk("a", "lnk", "Open Daftar SPK"); open.href = "/work-orders"; foot.append(open);
+      foot.append(btn("New list", () => { spk = { text: "", routes: [], phase: "input", idx: spk.idx }; spkDraw(); }));
+    }
+    p.append(foot);
+  }
+  async function spkPlan() {
+    if (!spk.idx) spk.idx = await assetIndex().catch(() => null);
+    spk.routes = parseRoutes(spk.text).map((r) => ({ ...r, a: placeAsset(spk.idx, r.from), b: placeAsset(spk.idx, r.to) }));
+  }
+  // the form's title box gets the first route's title (React needs the native setter and an input event)
+  function spkFillTitle() {
+    const t = document.getElementById("keterangan"), r = spk?.routes[0]; if (!t || !r) return;
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value").set.call(t, title(r));
+    t.dispatchEvent(new Event("input", { bubbles: true }));
   }
 
   // ---------- fast search: LDN Radius → Pelanggan, and Finance → Invoices ----------

@@ -38,6 +38,21 @@ Apart from paying (the card's Pay and Bulk Lunas) and the outage radar, it never
 
 Colours everywhere in the Dock: online green, isolir red, offline grey; red also marks an alarm (critical signal, a port mostly down, stale data) and amber a warning.
 
+## Bulk SPK (Planning)
+
+For "one team, one FDT to many FATs" messages. On Planning press **Bulk SPK** in the bar and paste the technicians' message:
+
+```
+FDT DAYU
+ke :
+* FAT DAYU 1
+* FAT DAYU 2
+```
+
+Each FDT → FAT pair becomes a route (several FDT blocks in one message work, and so does `FDT A ke FAT B` on one line). Names are matched to Network Assets ignoring spaces and dashes; a name that isn't there yet becomes a *Calon Aset*, as in the form. The title follows a template, `PENARIKAN {dari} KE {ke}` by default.
+
+Press **Ready**, then fill the form for the first route as usual (DARI, KE, team, Tipe Pekerjaan, project, one date; the title is filled in) and press **Simpan Tugas**. The page saves that SPK itself. The script reads the write the page sent and, once that SPK is in the database, saves one copy per other route through Firestore's REST API with your own sign-in. Only the title, the DARI / KE assets and the straight-line distance change; the cable length is left empty because it differs per route. Copies are created as new documents only (never over an existing one). If the form saved more than one SPK (several dates) or its assets don't match the list's, nothing is copied. Only the form's SPK sends the team its WhatsApp notice.
+
 ## Install
 
 1. Install [Tampermonkey](https://www.tampermonkey.net/).
