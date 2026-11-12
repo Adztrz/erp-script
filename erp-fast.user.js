@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.36
+// @version      2.37
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -2501,7 +2501,8 @@
         d.onmouseleave = () => { tip.hidden = true; d.classList.remove("hl"); };
         d.onclick = () => { view.card = z0.c; view.sel = 0; remember(z0.c); draw(); }; return d; });
       const zoom = el("div", "zoom"), full = box.classList.contains("full"), fs = el("button", null, full ? "⤡" : "⤢"); fs.type = "button"; fs.title = full ? "Back (F or Esc)" : "Full screen (F)"; fs.onclick = () => toggleFull(box); zoom.append(fs);
-      for (const [t, dz, label] of [["+", 1, "Zoom in"], ["−", -1, "Zoom out"]]) { const bt = el("button", null, t); bt.type = "button"; bt.setAttribute("aria-label", label); bt.onclick = () => { box.zoom = (box.zoom || 0) + dz; box.redraw(); }; zoom.append(bt); }
+      for (const [t, dz, label] of [["+", 1, "Zoom in"], ["−", -1, "Zoom out"]]) { const bt = el("button", null, t); bt.type = "button"; bt.setAttribute("aria-label", label);
+        bt.disabled = (dz > 0 && z >= T.max) || (dz < 0 && z <= 8); bt.onclick = () => { box.zoom = (box.zoom || 0) + dz; box.redraw(); }; zoom.append(bt); }
       zoom.append(recentre(box), baseButton(box, kind), shareButton(box));
       box.classList.toggle("sat", kind === "sat"); box.classList.toggle("carto", carto);
       const mpp = 156543.03392 * Math.cos(mid.lat * Math.PI / 180) / 2 ** z;
@@ -2588,6 +2589,19 @@
         commit(dx, dy);
       };
       box.addEventListener("pointerup", end); box.addEventListener("pointercancel", end);
+      // Ctrl + wheel zooms (instead of the whole page), one level per notch, keeping the place under the pointer still
+      let acc = 0, last = 0;
+      box.addEventListener("wheel", (e) => {
+        if (!e.ctrlKey) return;
+        e.preventDefault(); acc += e.deltaY;
+        if (Math.abs(acc) < 40 || Date.now() - last < 180) return; // a touchpad sends many small steps
+        const dz = acc < 0 ? 1 : -1; acc = 0; last = Date.now();
+        const btn = box.querySelector(`.zoom button[aria-label="${dz > 0 ? "Zoom in" : "Zoom out"}"]`), g = box.geo;
+        if (!btn || btn.disabled) return;
+        if (g) { const r = box.getBoundingClientRect(), dx = e.clientX - r.left - r.width / 2, dy = e.clientY - r.top - r.height / 2, ns = g.size * 2 ** dz;
+          box.ctr = [(g.cx + dx) / g.size - dx / ns, (g.cy + dy) / g.size - dy / ns]; }
+        btn.click();
+      }, { passive: false });
     }
     function recentre(box) {
       const b = el("button", null, "◎"); b.type = "button"; b.title = "Back to the start"; b.setAttribute("aria-label", "Recentre the map");

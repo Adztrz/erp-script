@@ -49,6 +49,7 @@ Every Dock map (Nearby, a router's offline customers, a PON port) reads as a bri
 - **Network boxes** (FAT, ODP, FDT, ODC) from Planning's asset list, once Planning has been opened in this browser. With two or more customers down, the FAT/ODP closest to all of them is ringed as **Cek di sini**. That's where to look first, not proof.
 - With customers down, the router and PON maps zoom in on them.
 - **⇪ Share** copies a picture of the map with the strip, legend and scale built in, ready to paste into a chat. **Copy note** adds the text: severity, villages, the box to check with a Google Maps link, and each problem customer with phone and location. **Save PNG** saves the picture where copying isn't allowed.
+- **Ctrl + mouse wheel** zooms in and out around the pointer (without zooming the page); drag to pan, ◎ to recentre.
 - **Sat** switches between the street map and satellite. Google's satellite tiles can't go into the picture, so a satellite share has a plain dark background.
 
 ## Monochrome theme
