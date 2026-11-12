@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.46
+// @version      2.47
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -984,17 +984,18 @@
         linear-gradient(90deg, #000 55%, rgba(0,0,0,.35) 56% 76%, transparent 77% 82%, rgba(0,0,0,.6) 83%);
       mask-composite: intersect; animation: erp-fs-scanp 1.8s var(--swap) infinite; }
     .erp-fs .scan + .empty { padding-top: 6px; }
-    /* refreshing with results on screen: a faint band of dots sweeps down behind the rows */
+    /* a faint band of dots keeps sweeping down behind the rows, slowly when idle, faster while refreshing */
     .erp-fs .body { position: relative; }
-    .erp-fs.busy .body::before, .erp-fs.flash .body::before { content: ""; position: absolute; inset: 0; pointer-events: none; background: radial-gradient(circle, rgba(233,225,220,.22) 0 .9px, transparent 1.2px) 0 0 / 5px 5px;
-      mask: linear-gradient(180deg, transparent calc(var(--fs-p) - 30%), #000 calc(var(--fs-p) - 6%), transparent var(--fs-p)); animation: erp-fs-scanp 2.4s var(--swap) infinite; }
+    .erp-fs .body::before { content: ""; position: absolute; inset: 0; pointer-events: none; background: radial-gradient(circle, rgba(233,225,220,.22) 0 .9px, transparent 1.2px) 0 0 / 5px 5px;
+      mask: linear-gradient(180deg, transparent calc(var(--fs-p) - 30%), #000 calc(var(--fs-p) - 6%), transparent var(--fs-p)); opacity: .6; animation: erp-fs-scanp 4.2s var(--swap) infinite; }
+    .erp-fs.busy .body::before { opacity: 1; animation-duration: 2.4s; }
     /* a normal search plays the scan once per burst of typing, over the head line so nothing shifts */
     .erp-fs .head { position: relative; }
     .erp-fs.flash .head::after { content: ""; position: absolute; left: 14px; right: 14px; bottom: -3px; height: 5px; pointer-events: none;
       background: radial-gradient(circle, #fff 0 1.3px, transparent 1.7px) 0 0 / 4px 5px;
       mask: linear-gradient(90deg, transparent calc(var(--fs-p) - 22%), #000 calc(var(--fs-p) - 4%), transparent var(--fs-p)); animation: erp-fs-scanp .75s var(--swap) both; }
     .erp-fs.flash .head::before { animation: erp-fs-radar .75s var(--swap) both; }
-    .erp-fs.flash .body::before { animation: erp-fs-scanp .75s var(--swap) both; }
+    .erp-fs.flash .body::before { opacity: 1; animation: erp-fs-scanp .75s var(--swap) both; }
     .erp-fs .body { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
     .erp-fs ul { position: relative; }
     /* results rise in one after another; the selection is a pill that slides between them */
