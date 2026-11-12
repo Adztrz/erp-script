@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.43
+// @version      2.44
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -847,8 +847,8 @@
 
       // a thin bone line for the page being loaded, with light sweeping across it
       const bar = box.querySelector(".bar");
-      bar.classList.toggle("on", !!st.loading);
-      bar.firstChild.style.transform = `scaleX(${st.pages ? Math.min(1, st.done / st.pages) : 0.04})`;
+      bar.classList.toggle("on", !!st.loading); box.classList.toggle("busy", !!st.loading);
+      bar.firstChild.style.setProperty("--f", `${(st.pages ? Math.min(1, st.done / st.pages) : 0.04) * 100}%`);
 
       // results: new ones rise in one after another; ones that stay don't move
       const body = box.querySelector(".body"), seen = st.shown, now = new Set();
@@ -873,8 +873,9 @@
         list.replaceChildren(pill, ...rows);
       } else {
         const msg = st.rows ? (st.loading ? "Nobody yet in what's loaded; older months are still coming" : "Nobody matches all of those words") : "";
-        const old = body.querySelector(".empty");
-        if (!old || old.textContent !== msg) body.replaceChildren(...(msg ? [el("div", "empty", msg)] : []));
+        // while rows are still downloading, a halftone scanner stands in for the results
+        const old = body.querySelector(".empty"), busy = !!st.loading;
+        if ((old?.textContent ?? "") !== msg || !!body.querySelector(".scan") !== busy) body.replaceChildren(...(busy ? [el("div", "scan")] : []), ...(msg ? [el("div", "empty", msg)] : []));
       }
       st.shown = now; st.sig = sig;
       box.querySelector(".foot").hidden = !st.hits.length;
@@ -956,13 +957,29 @@
     @keyframes erp-fs-blink { 50% { opacity: 0; } }
     .erp-fs .head b.pop { display: inline-block; animation: erp-fs-pop .32s var(--out); }
     @keyframes erp-fs-pop { from { transform: translateY(3px); opacity: .4; filter: blur(1px); } }
-    /* loading: a bone line that grows with the pages, light sweeping across it */
-    .erp-fs .bar { height: 1px; background: var(--hair); overflow: hidden; position: relative; opacity: 0; transition: opacity .3s; }
-    .erp-fs .bar.on { opacity: 1; }
-    .erp-fs .bar span { position: absolute; inset: 0; background: var(--bone); transform-origin: left; transform: scaleX(0); transition: transform .5s var(--out); }
-    .erp-fs .bar.on::after { content: ""; position: absolute; inset: 0; width: 30%; background: linear-gradient(90deg, transparent, rgba(255,255,255,.7), transparent); animation: erp-fs-sweep 1.4s var(--swap) infinite; }
-    @keyframes erp-fs-sweep { from { transform: translateX(-100%); } to { transform: translateX(380%); } }
-    .erp-fs .body { display: flex; flex-direction: column; min-height: 0; }
+    /* loading, in halftone: a dot-matrix progress track with a bright scan running along it */
+    @property --fs-p { syntax: "<percentage>"; inherits: false; initial-value: 0%; }
+    @property --fs-a { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+    .erp-fs .bar { height: 0; margin: 0 14px; overflow: hidden; position: relative; opacity: 0; transition: height .3s var(--out), opacity .3s;
+      background: radial-gradient(circle, rgba(233,225,220,.13) 0 .8px, transparent 1.1px) 0 0 / 4px 9px; }
+    .erp-fs .bar.on { height: 9px; margin-top: 6px; opacity: 1; }
+    .erp-fs .bar span { position: absolute; inset: 0; --f: 4%; background: radial-gradient(circle, var(--bone) 0 .9px, transparent 1.2px) 0 0 / 4px 9px;
+      clip-path: inset(0 calc(100% - var(--f)) 0 0); transition: clip-path .5s var(--out); }
+    .erp-fs .bar.on::after { content: ""; position: absolute; inset: 0; background: radial-gradient(circle, #fff 0 1.4px, transparent 1.8px) 0 0 / 4px 9px;
+      mask: linear-gradient(90deg, transparent calc(var(--fs-p) - 18%), #000 calc(var(--fs-p) - 4%), transparent var(--fs-p)); animation: erp-fs-scanp 1.6s var(--swap) infinite; }
+    @keyframes erp-fs-scanp { from { --fs-p: 0%; } to { --fs-p: 122%; } }
+    /* the head dot turns into a tiny dot-matrix radar */
+    .erp-fs.busy .head::before { width: 11px; height: 11px; border-radius: 0; background: conic-gradient(from var(--fs-a), var(--bone), rgba(233,225,220,.1) 70%, var(--bone));
+      mask: radial-gradient(circle, #000 0 1px, transparent 1.3px) 0 0 / 3.67px 3.67px; animation: erp-fs-radar 1s linear infinite; }
+    @keyframes erp-fs-radar { to { --fs-a: 360deg; } }
+    /* ghost result rows drawn in dots, swept by the scan while the list fills */
+    .erp-fs .scan { height: 92px; margin: 12px 14px 4px; flex: none; background: radial-gradient(circle, var(--bone) 0 .9px, transparent 1.2px) 0 0 / 4px 4px;
+      mask: linear-gradient(90deg, rgba(0,0,0,.1) calc(var(--fs-p) - 50%), #000 calc(var(--fs-p) - 12%), rgba(0,0,0,.1) var(--fs-p)),
+        repeating-linear-gradient(180deg, #000 0 8px, transparent 8px 12px, rgba(0,0,0,.45) 12px 16px, transparent 16px 31px),
+        linear-gradient(90deg, #000 55%, rgba(0,0,0,.35) 56% 76%, transparent 77% 82%, rgba(0,0,0,.6) 83%);
+      mask-composite: intersect; animation: erp-fs-scanp 1.8s var(--swap) infinite; }
+    .erp-fs .scan + .empty { padding-top: 6px; }
+    .erp-fs .body { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
     .erp-fs ul { position: relative; }
     /* results rise in one after another; the selection is a pill that slides between them */
     .erp-fs li { position: relative; z-index: 1; background: none !important; transition: transform .1s; }
@@ -977,7 +994,8 @@
     .erp-fs .empty { animation: erp-fs-row .35s var(--soft) both; }
     .erp-fs mark { transition: color .2s; }
     @media (prefers-reduced-motion: reduce) {
-      .erp-fs, .erp-fs *, .erp-fs *::after { animation: none !important; transition: none !important; }
+      .erp-fs, .erp-fs *, .erp-fs *::before, .erp-fs *::after { animation: none !important; transition: none !important; }
+      .erp-fs .scan { --fs-p: 90%; }
       .erp-fs .tw.typing { clip-path: none; }
     }`;
 
