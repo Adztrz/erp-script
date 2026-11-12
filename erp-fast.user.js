@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.42
+// @version      2.43
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -1140,10 +1140,20 @@
       .erp-dock { position: fixed; z-index: 2147483002; width: min(440px, calc(100vw - 32px)); max-height: min(640px, calc(100vh - 120px)); display: flex; flex-direction: column;
         border-radius: 10px; background: var(--card); color: var(--body); overflow: hidden; transform-origin: bottom right;
         box-shadow: inset 0 0 0 1px var(--edge), 0 40px 32px rgba(0,0,0,.18), 0 22px 18px rgba(0,0,0,.2), 0 12px 10px rgba(0,0,0,.2), 0 6px 5px rgba(0,0,0,.18), 0 2px 2px rgba(0,0,0,.2);
-        animation: erp-dock-open .42s var(--out) both; }
-      .erp-dock.out { animation: erp-dock-close .16s cubic-bezier(.4, 0, 1, 1) both; pointer-events: none; }
-      @keyframes erp-dock-open { from { opacity: 0; transform: translateY(10px) scale(.96); filter: blur(3px); } }
-      @keyframes erp-dock-close { to { opacity: 0; transform: translateY(6px) scale(.97); filter: blur(1px); } }
+        animation: erp-ht-open .5s var(--out) both; }
+      .erp-dock.out { animation: erp-ht-close .22s cubic-bezier(.5, 0, .75, 0) both; pointer-events: none; }
+      /* Halftone motion: a wave front of dots. Solid behind the front, a band of dots on it, nothing ahead; the mask
+         goes once the animation ends (ht-done), so shadows and the map draw as usual. */
+      .erp-dock:not(.ht-done), .erp-dock.out {
+        mask: radial-gradient(circle at var(--ox, 100%) var(--oy, 100%), #000 calc(var(--ht-w) - 56px), transparent calc(var(--ht-w) - 55px)) 0 0 / 100% 100% no-repeat,
+          radial-gradient(circle, #000 1.6px, transparent 2.2px) 0 0 / 6px 6px,
+          radial-gradient(circle at var(--ox, 100%) var(--oy, 100%), #000 calc(var(--ht-w) - 8px), transparent var(--ht-w)) 0 0 / 100% 100% no-repeat;
+        mask-composite: add, intersect; }
+      .erp-dock.erp-dock-full { --ox: 50%; --oy: 50%; }
+      @keyframes erp-ht-open { from { --ht-w: 0px; transform: translateY(6px); } to { --ht-w: 1100px; transform: none; } }
+      @keyframes erp-ht-close { from { --ht-w: 900px; } to { --ht-w: 0px; transform: translateY(4px); } }
+      @keyframes erp-ht-open-full { from { --ht-w: 0px; } to { --ht-w: 1500px; } }
+
       .erp-dock .top { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--hair); }
       .erp-dock .top svg { width: 16px; height: 16px; color: var(--muted); flex: none; }
       .erp-dock .top input { flex: 1; min-width: 0; height: 32px; border: 0; outline: 0; background: none; color: var(--paper); font: inherit; font-size: 15px; }
@@ -1206,7 +1216,8 @@
       .erp-dock .map .tiles { position: absolute; inset: 0; pointer-events: none; }
       .erp-dock .map .tiles img { position: absolute; width: 256px; height: 256px; max-width: none; pointer-events: none; user-select: none; }
       @property --ht-r { syntax: "<length>"; inherits: false; initial-value: 6px; }
-      @property --ht-w { syntax: "<length>"; inherits: false; initial-value: 0px; }
+      @property --ht-w { syntax: "<length>"; inherits: false; initial-value: 9000px; }
+      @property --ht-p { syntax: "<percentage>"; inherits: false; initial-value: 200%; }
       .erp-dock .map .tiles.ht-wait { opacity: 0; }
       .erp-dock .map .tiles.ht-in, .erp-dock .map .tiles.ht-out { --ht-mask: radial-gradient(circle, #000 var(--ht-r), transparent calc(var(--ht-r) + .7px)) 0 0 / 7px 7px; -webkit-mask: var(--ht-mask); mask: var(--ht-mask); }
       .erp-dock .map .tiles.ht-in { animation: erp-ht-in .5s var(--out) both; } .erp-dock .map .tiles.ht-out { animation: erp-ht-out .42s cubic-bezier(.5, 0, .75, 0) both; }
@@ -1268,14 +1279,24 @@
       .erp-dock .map .zoom { position: absolute; top: 8px; right: 8px; z-index: 4; display: grid; gap: 4px; }
       .erp-dock .map .zoom button { width: 28px; height: 28px; border: 0; border-radius: 6px; background: rgba(9,11,12,.88); color: var(--paper); font: 500 16px/1 Inter, system-ui, sans-serif; cursor: pointer; box-shadow: inset 0 0 0 1px var(--edge); }
       .erp-dock .map .zoom button:hover { box-shadow: inset 0 0 0 1px #696a68; } .erp-dock .map .zoom button:disabled { opacity: .4; cursor: default; }
-      .erp-dock.erp-dock-full { inset: 0; width: auto; max-height: none; border-radius: 0; box-shadow: none; z-index: 2147483003; animation: erp-dock-open .25s var(--out) both; }
+      .erp-dock.erp-dock-full { inset: 0; width: auto; max-height: none; border-radius: 0; box-shadow: none; z-index: 2147483003; animation: erp-ht-open-full .55s var(--out) both; }
       .erp-dock-full .map.full { position: absolute; inset: 0; height: auto; margin: 0; border-radius: 0; }
       .erp-dock .map.full .mdot { width: 13px; height: 13px; margin: -6.5px 0 0 -6.5px; }
       .erp-dock .map .attr { position: absolute; right: 8px; bottom: 2px; font-size: 9px; color: rgba(255,255,255,.75); text-shadow: 0 1px 2px #000; pointer-events: none; }
       .erp-dock .counts span { display: inline-flex; align-items: center; gap: 6px; } .erp-dock .counts .dot { width: 8px; height: 8px; }
       .erp-dock .counts { display: flex; gap: 12px; font-size: 13px; } .erp-dock .counts b { color: var(--paper); font-weight: 500; }
-      .erp-dock .rise { animation: erp-dock-rise .45s var(--soft) both; animation-delay: calc(var(--i, 0) * 30ms); }
-      @keyframes erp-dock-rise { from { opacity: 0; transform: translateY(8px); filter: blur(2px); } }
+      .erp-dock .rise { animation: erp-ht-wipe .46s var(--soft) both; animation-delay: calc(var(--i, 0) * 35ms); }
+      .erp-dock .rise:not(.ht-done) {
+        mask: linear-gradient(90deg, #000 calc(var(--ht-p) - 22%), transparent calc(var(--ht-p) - 22% + 1px)) 0 0 / 100% 100% no-repeat,
+          radial-gradient(circle, #000 1.4px, transparent 2px) 0 0 / 5px 5px,
+          linear-gradient(90deg, #000 calc(var(--ht-p) - 2%), transparent var(--ht-p)) 0 0 / 100% 100% no-repeat;
+        mask-composite: add, intersect; }
+      @keyframes erp-ht-wipe { from { --ht-p: 0%; transform: translateY(4px); } to { --ht-p: 124%; transform: none; } }
+      .erp-dock .note.ld::before { content: ""; display: inline-block; vertical-align: -1px; width: 31px; height: 9px; margin-right: 8px;
+        background: radial-gradient(circle, var(--bone) 0 1.2px, transparent 1.7px) 0 0 / 5px 5px;
+        mask: linear-gradient(90deg, rgba(0,0,0,.18) calc(var(--ht-p) - 70%), #000 calc(var(--ht-p) - 35%), rgba(0,0,0,.18) var(--ht-p)); animation: erp-ht-scan 1.2s cubic-bezier(.45, 0, .55, 1) infinite; }
+      @keyframes erp-ht-scan { from { --ht-p: 0%; } to { --ht-p: 170%; } }
+
       .erp-dock .foot { padding: 8px 14px; border-top: 1px solid var(--hair); font-size: 12px; color: var(--muted); display: flex; gap: 10px; flex-wrap: wrap; }
       /* Bulk Lunas */
       .erp-dock.wide { width: min(580px, calc(100vw - 32px)); max-height: min(780px, calc(100vh - 120px)); }
@@ -1384,14 +1405,19 @@
       if (panel) return;
       panel = el("div", "erp-dock"); panel.setAttribute("role", "dialog"); panel.setAttribute("aria-label", "Dock");
       document.body.append(panel); fab.setAttribute("aria-expanded", "true"); place();
+      if (calm()) panel.classList.add("ht-done"); // no motion: no mask either
+      { const a = fab.getBoundingClientRect(), b = panel.getBoundingClientRect(); // the halftone wave starts at the Dock button
+        panel.style.setProperty("--ox", `${a.left + a.width / 2 - b.left}px`); panel.style.setProperty("--oy", `${a.top + a.height / 2 - b.top}px`); }
       view = { q: "", sel: 0, card: null, radius: view.radius, mode: bulk && bulk.phase !== "input" ? "bulk" : null }; // a bulk run in progress comes back; an outage only marks the Outage radar row
       draw(); panel.querySelector("input")?.focus();
       await data(); draw();
     }
+    // a halftone reveal has finished: drop its mask (see .ht-done)
+    document.addEventListener("animationend", (e) => { if (/^erp-ht-(open|open-full|wipe)$/.test(e.animationName) && e.target.closest?.(".erp-dock")) e.target.classList.add("ht-done"); }, true);
     function close() {
       const p = panel; if (!p) return;
       panel = null; fab?.setAttribute("aria-expanded", "false"); dropFull();
-      if (calm()) p.remove(); else { p.classList.add("out"); setTimeout(() => p.remove(), 170); }
+      if (calm()) p.remove(); else { p.classList.add("out"); setTimeout(() => p.remove(), 230); }
     }
     const remember = (r) => { const list = ls.get(RECENT, []).filter((u) => u !== r.username); list.unshift(r.username); ls.set(RECENT, list.slice(0, 8)); };
     const copy = (text, btn) => { navigator.clipboard?.writeText(text).then(() => { const t = btn.textContent; btn.textContent = "Copied"; setTimeout(() => (btn.textContent = t), 1200); }).catch(() => {}); };
@@ -1601,7 +1627,7 @@
       const head = el("div", "row"), e = el("div", "eyebrow"); e.style.margin = "0"; e.append("Pay");
       head.append(e, el("span", "sub", row.state === "found" ? (open.length ? `${open.length} unpaid · ${rupiah(open.reduce((a, v) => a + v.amount, 0))}` : `Nothing unpaid${row.paidTo ? ` · paid to ${row.paidTo}` : ""}`) : ""));
       const parts = [head];
-      if (row.state === "looking") parts.push(el("p", "note", "Loading this customer's bills…"));
+      if (row.state === "looking") parts.push(el("p", "note ld", "Loading this customer's bills…"));
       else if (row.state === "error") { parts.push(el("p", "note late", row.err)); const again = el("button", "btn", "Try again"); again.type = "button"; again.onclick = () => b.load(); parts.push(again); }
       else if (row.state !== "found") parts.push(el("p", "note", "No invoices for this username."));
       else {
@@ -1801,7 +1827,7 @@
       again.onclick = async () => { again.disabled = true; again.textContent = "Checking…"; await radarTick(true); drawBody(); };
       tools.append(radar?.at ? `checked ${ago(radar.at)}` : "", again); head.append(e, tools); out.push(head);
       if (radarOff) { out.push(el("p", "note late", radarOff)); if (!radar) return out; }
-      if (!radar) { out.push(el("p", "note", "Reading the routers…")); radarTick(true); return out; }
+      if (!radar) { out.push(el("p", "note ld", "Reading the routers…")); radarTick(true); return out; }
       radarDrawn = radar.at;
       const said = (x) => `${x.open} online · usually ${x.usual}${x.since ? ` · since ${hhmm(x.since)}` : ""}`;
       if (radar.wide) out.push(el("div", "ralert", "Most routers dropped at once: more likely the central link or the RADIUS server than one area."));
@@ -1846,7 +1872,7 @@
       wrap.append(chart); spark(cv, x.series, x.usual, true);
       const who2 = el("div", "near rise"); who2.style.setProperty("--i", "3"); wrap.append(who2);
       if (!customers) { who2.append(el("p", "note", "To see who's offline, open LDN Radius → Pelanggan once so the customer list is kept here.")); return wrap; }
-      who2.append(el("p", "note", "Reading the live sessions…"));
+      who2.append(el("p", "note ld", "Reading the live sessions…"));
       liveSessions().then((lv) => { if (view.nas === ip && who2.isConnected) offlineView(who2, back15, ip, lv); }).catch((e) => { who2.replaceChildren(el("p", "note late", e.message)); });
       return wrap;
     }
@@ -1978,7 +2004,7 @@
     function modemDraw(m) {
       const redraw = () => modemDraw(m), focus = document.activeElement?.dataset?.k, parts = [];
       const head = el("div", "row"), e = el("div", "eyebrow"); e.style.margin = "0"; e.append("Modem"); head.append(e); parts.push(head);
-      if (!onts || !acs) { parts.push(el("p", "note", "Looking the modem up on the OLTs… (the first time takes about 10 seconds)")); m.el.replaceChildren(...parts); return; }
+      if (!onts || !acs) { parts.push(el("p", "note ld", "Looking the modem up on the OLTs… (the first time takes about 10 seconds)")); m.el.replaceChildren(...parts); return; }
       const { sn, ont, dev } = m.r ? modemOf(m.r) : { sn: m.key, ont: onts.bySn.get(m.key), dev: acs.bySn.get(m.key) };
       if (!ont && !dev) { parts.push(el("p", "note", sn ? `${sn} isn't on any OLT's list or on TR-069.` : "No modem serial on file, and no ONT or TR-069 modem logs in with this username."));
         if (m.r) parts.push(webSection(m, m.r.username, null, redraw)); m.el.replaceChildren(...parts); return; }
@@ -2051,7 +2077,7 @@
         const b = el("button", "btn", "Find the modem's address"); b.type = "button"; b.dataset.k = `${m.key}web`; b.style.marginTop = "8px";
         b.onclick = () => openWeb(m, username, redraw); box.append(b); return box;
       }
-      if (w.busy) { box.append(el("p", "note", "Reading the live session and asking the ERP…")); return box; }
+      if (w.busy) { box.append(el("p", "note ld", "Reading the live session and asking the ERP…")); return box; }
       if (w.err) box.append(el("p", "note late", w.err));
       const s = w.sess;
       if (!s) { box.append(el("p", "note", "Not online now (no PPPoE session in RADIUS), so the modem can't be reached.")); return box; }
@@ -2169,7 +2195,7 @@
       back.onclick = () => { if (view.pon) { view.pon = null; if (view.from) { view.mode = view.from; view.from = null; } } else view.mode = null; drawBody(); };
       out.push(back);
     }
-    const needOnts = (out) => { if (onts) return true; out.push(el("p", "note", "Reading the OLTs' ONT lists… (about 6 seconds the first time)")); ontIndex().then(() => drawBody()).catch((e) => { out.length = 0; }); return false; };
+    const needOnts = (out) => { if (onts) return true; out.push(el("p", "note ld", "Reading the OLTs' ONT lists… (about 6 seconds the first time)")); ontIndex().then(() => drawBody()).catch((e) => { out.length = 0; }); return false; };
     function ontItem(o, i, right) {
       const c = customerOf(o.sn, o, null), b = el("button", "item rise"); b.type = "button"; b.style.setProperty("--i", String(Math.min(i, 14)));
       const lv = o.st !== "online" ? "off" : usable(o) ? { crit: "bad", warn: "drop", good: "on" }[sigLevel(o.rx)] : "";
@@ -2308,7 +2334,7 @@
           return row; });
         box.replaceChildren(head, ...(how ? [el("p", "note warn", how)] : []), ...rows);
       };
-      if (techMap) fill(); else { box.append(el("p", "note", "Finding this area's technicians…")); techIndex().then(fill).catch((e) => box.replaceChildren(el("p", "note late", `Technician map not read: ${e.message}`))); }
+      if (techMap) fill(); else { box.append(el("p", "note ld", "Finding this area's technicians…")); techIndex().then(fill).catch((e) => box.replaceChildren(el("p", "note late", `Technician map not read: ${e.message}`))); }
       return box;
     }
 
@@ -2372,7 +2398,7 @@
       });
       // 2. router session feeds (from the radar)
       const e2 = el("div", "eyebrow"); e2.append("Router session feeds"); out.push(e2);
-      if (!radar) { out.push(el("p", "note", "Reading the routers…")); radarTick(true).then(() => view.mode === "health" && drawBody()); }
+      if (!radar) { out.push(el("p", "note ld", "Reading the routers…")); radarTick(true).then(() => view.mode === "health" && drawBody()); }
       else {
         if (!areas) areaNames().then(() => view.mode === "health" && drawBody());
         const dead = radar.list.filter((x) => !x.healthy || x.level === "silent");
@@ -2479,7 +2505,7 @@
       if (ps.length) { const e = el("div", "eyebrow"); e.append("Pages"); out.push(e, ...ps.map(pageItem)); }
       if (sn) {
         if (onts && acs) { const ms = findModems(q); if (ms.length) { const e = el("div", "eyebrow"); e.append("Modems"); out.unshift(e, ...ms.map(modemItem)); } }
-        else { out.push(el("p", "note", "Looking modems up on the OLTs…")); Promise.all([ontIndex(), acsIndex()]).then(() => { if (view.q === q && !view.card) drawBody(); }); }
+        else { out.push(el("p", "note ld", "Looking modems up on the OLTs…")); Promise.all([ontIndex(), acsIndex()]).then(() => { if (view.q === q && !view.card) drawBody(); }); }
       }
       const tool = /^(bul|lun|bay|tan|pay|mas|mar)/.test(fold(q)), net = /^(rad|out|gan|mat|rou|off|jar|dow|put)/.test(fold(q));
       const sig = /^(sig|sin|red|rx|lem|wea|dbm|red)/.test(fold(q)), pn = /^(pon|odp|spl|olt|lin)/.test(fold(q)), hl = /^(dat|hea|sta|pol|wro|sal|kes)/.test(fold(q));
@@ -2927,7 +2953,7 @@
       row.append(inp, save); setTimeout(() => inp.focus(), 0); return row;
     }
     function ponLine(box, r, map) {
-      if (!onts) { box.replaceChildren(el("p", "note", "Finding this customer's PON port on the OLTs… (the first time takes ~6 s)"));
+      if (!onts) { box.replaceChildren(el("p", "note ld", "Finding this customer's PON port on the OLTs… (the first time takes ~6 s)"));
         ontIndex().then(() => { if (box.isConnected) ponLine(box, r, map); }).catch(() => box.replaceChildren()); return; }
       const ont = modemOf(r).ont;
       if (!ont) { box.replaceChildren(el("p", "note", "This customer's modem isn't on any OLT's list, so there's no PON port to compare.")); return; }
