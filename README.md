@@ -39,6 +39,10 @@ Apart from paying (the card's Pay and Bulk Lunas) and the outage radar, it never
 Colours everywhere in the Dock: online green, isolir red, offline grey; red also marks an alarm (critical signal, a port mostly down, stale data) and amber a warning.
 
 
+### No "new version" bar
+
+The ERP deploys many times an hour, and each deploy showed a blue "Versi baru aplikasi… Muat ulang" bar (or reloaded an idle page by itself). The script switches both off: the ERP's own "Nanti" snooze is set far ahead, and the page no longer reacts to a new service worker taking over. You get the new version whenever you reload or open a tab yourself.
+
 ### Maps for technicians
 
 Every Dock map (Nearby, a router's offline customers, a PON port) reads as a brief:

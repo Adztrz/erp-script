@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.37
+// @version      2.38
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -19,6 +19,20 @@
   let h = 0x811c9dc5;
   for (const c of location.hostname) { h ^= c.charCodeAt(0); h = Math.imul(h, 0x01000193) >>> 0; }
   if (h.toString(16) !== SITE) return;
+
+  // ---------- no "Versi baru aplikasi" bar ----------
+  // The ERP is deployed many times an hour, and each deploy raised a blue bar asking to reload (or reloaded an idle page
+  // by itself). Two triggers, both switched off here, before the page's own scripts run:
+  // - its version check (every 30 min and on returning to the tab) stays quiet while its own "Nanti" snooze is set, so the
+  //   snooze is set far ahead, for this tab;
+  // - a new service worker taking over fires "controllerchange", which shows the bar and reloads; the page's listener for
+  //   that event is never added.
+  // The new version still arrives with any reload or new tab you open yourself.
+  try { sessionStorage.setItem("sw_update_snooze_until", String(Date.now() + 10 * 365 * 864e5)); } catch {}
+  try {
+    const sw = navigator.serviceWorker, add = sw && sw.addEventListener;
+    if (add) sw.addEventListener = function (type, fn, opts) { if (type === "controllerchange") return; return add.call(this, type, fn, opts); };
+  } catch {}
 
   // ---------- Monochrome: the whole site in Faust's black and bone (Dock → the half-circle button) ----------
   // The ERP is shadcn: its colours are HSL variables (--background, --primary, …), swapped here for Faust's palette:
