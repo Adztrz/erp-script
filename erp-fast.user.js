@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.55
+// @version      2.56
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -3130,6 +3130,23 @@
       const parts = await Promise.all(["Menunggu Aktivasi Akun", "Menunggu Aktivasi Account"].map((v) => get(`/api/pg-read/prospectiveCustomers?where=statusVerifikasi%3A${encodeURIComponent(v)}&limit=500&${f}`).then((j) => j.data || []).catch(() => [])));
       queue = parts.flat(); queueAt = Date.now(); return queue;
     }
+    // the customer behind the form: the row you pressed, else the name. The list comes from the ERP's Postgres copy, which
+    // can trail the live data by minutes; a miss asks again without the cache, then reads the live record directly
+    // (the row's text runs together, "BUDI SANTOSOACQ-I-AB12-0001FTTH…", so no word boundaries)
+    const rowId = () => /(ACQ-[A-Z0-9]+-[A-Z0-9]{4}-\d{4}|REG\d{3,}|TEST-AKT-[A-Z0-9]+-\d{2})/.exec(lastRow)?.[1] || "";
+    async function findCustomer(rows, name) {
+      const id = rowId(), pick = (list) => list.find((r) => id && r.dataId === id) || list.find((r) => name && String(r.namaPemohon || "").trim().toUpperCase() === name)
+        || list.filter((r) => name && r.namaPemohon && name.startsWith(String(r.namaPemohon).trim().toUpperCase() + " ")).sort((x, y) => y.namaPemohon.length - x.namaPemohon.length)[0] || null;
+      let c = pick(rows); if (c) return c;
+      queueAt = 0; c = pick(await loadQueue().catch(() => [])); if (c) return c;
+      const db = fsDb(); if (!db) return null;
+      for (const [field, v] of [["id", id], ["namaPemohon", name]]) {
+        if (!v) continue;
+        const hit = (await fsList(db, "prospectiveCustomers", { fieldFilter: { field: { fieldPath: field }, op: "EQUAL", value: { stringValue: v } } }).catch(() => []))[0];
+        if (hit) return { ...hit, dataId: hit.id && hit.id.length < 30 ? hit.id : id };
+      }
+      return null;
+    }
     async function loadAssets() {
       if (assets) return assets;
       const [opts, ...geo] = await Promise.all([get("/api/network-assets/odp-options?semua=1"),
@@ -3193,7 +3210,7 @@
         const [list, rows] = await Promise.all([loadAssets(), loadQueue()]);
         const label = [...dlg.querySelectorAll("label")].find((l) => l.textContent.trim() === "Nama Pelanggan");
         const name = label?.parentElement?.querySelector("input")?.value?.trim().toUpperCase();
-        const c = rows.find((r) => r.dataId && lastRow.includes(r.dataId)) || rows.find((r) => String(r.namaPemohon || "").trim().toUpperCase() === name) || null;
+        const c = await findCustomer(rows, name);
         body.replaceChildren();
         const inst = c?.installationData || {};
         if (c) {
@@ -3299,7 +3316,7 @@
     function showHelper(on) {
       shown = on;
       if (!on) { pane?.remove(); return; }
-      const dlg = [...document.querySelectorAll("[role=dialog]")].find((d) => /Aktivasi Akun & Provisioning OLT/.test(d.querySelector("h2")?.textContent || "")); if (!dlg) return;
+      const dlg = [...document.querySelectorAll("[role=dialog]")].find((d) => /Aktivasi Akun & Provisioning OLT/.test(d.querySelector("h2")?.textContent || "")); if (!dlg) { shown = false; return; }
       const p = panelEl(); document.body.append(p); p.style.pointerEvents = "auto";
       const r = document.querySelector(".erp-dock-fab")?.getBoundingClientRect();
       if (r) { const right = Math.max(16, innerWidth - r.right), below = r.top > innerHeight / 2;
@@ -3311,7 +3328,7 @@
     }
     // pressing the Dock button while the activation form is open opens the helper instead of the Dock
     for (const t of ["pointerdown", "mousedown"]) addEventListener(t, (e) => { if (e.target.closest?.(".erp-dock-fab.akt")) e.stopPropagation(); }, true);
-    addEventListener("click", (e) => { const f = e.target.closest?.(".erp-dock-fab.akt"); if (!f) return; e.stopPropagation(); e.preventDefault(); showHelper(!shown); }, true);
+    addEventListener("click", (e) => { const f = e.target.closest?.(".erp-dock-fab.akt"); if (!f) return; e.stopPropagation(); e.preventDefault(); showHelper(!(shown && pane?.isConnected)); }, true);
     // focus moving into the helper must not be pulled back into the form
     addEventListener("focusout", (e) => { if (e.relatedTarget?.closest?.(".erp-akt-pane")) e.stopImmediatePropagation(); }, true);
     addEventListener("focusin", (e) => { if (e.target.closest?.(".erp-akt-pane")) e.stopImmediatePropagation(); }, true);
@@ -3363,8 +3380,7 @@
         const a = { ...armed, start: Date.now() };
         keep([...checks().filter((c) => c.user !== a.user), a]); drawChecks();
         // the technician and the location come from the calon pelanggan record of the same name
-        loadQueue().then((rows) => {
-          const n = a.name.toUpperCase(), r = rows.filter((x) => x.namaPemohon && n.startsWith(String(x.namaPemohon).trim().toUpperCase())).sort((x, y) => y.namaPemohon.length - x.namaPemohon.length)[0];
+        loadQueue().then((rows) => findCustomer(rows, a.name.toUpperCase())).then((r) => {
           if (!r) return;
           const at = where(r);
           keep(checks().map((c) => c.user === a.user ? { ...c, tech: r.installationData?.teknisi || "", desa: r.desa || "", kec: r.kecamatan || "", maps: at ? `https://maps.google.com/?q=${at.lat},${at.lng}` : /^https?:/.test(r.shareLokasiGmaps || "") ? r.shareLokasiGmaps : "" } : c));
