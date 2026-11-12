@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.41
+// @version      2.42
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -1203,7 +1203,23 @@
       .erp-dock canvas { display: block; width: 100%; height: 170px; margin: 10px 0 6px; }
       .erp-dock .map { position: relative; height: 340px; margin: 10px 0 6px; border-radius: 8px; overflow: hidden; background: #0f1214; box-shadow: inset 0 0 0 1px var(--hair); }
       .erp-dock .map { cursor: grab; touch-action: none; user-select: none; overflow: clip; } /* clip, not hidden: a hidden box can still be scrolled (by focus or the share panel), sliding the strip and legend away */ .erp-dock .map.panning { cursor: grabbing; } .erp-dock .map.panning .mdot { pointer-events: none; }
+      .erp-dock .map .tiles { position: absolute; inset: 0; pointer-events: none; }
       .erp-dock .map .tiles img { position: absolute; width: 256px; height: 256px; max-width: none; pointer-events: none; user-select: none; }
+      @property --ht-r { syntax: "<length>"; inherits: false; initial-value: 6px; }
+      @property --ht-w { syntax: "<length>"; inherits: false; initial-value: 0px; }
+      .erp-dock .map .tiles.ht-wait { opacity: 0; }
+      .erp-dock .map .tiles.ht-in, .erp-dock .map .tiles.ht-out { --ht-mask: radial-gradient(circle, #000 var(--ht-r), transparent calc(var(--ht-r) + .7px)) 0 0 / 7px 7px; -webkit-mask: var(--ht-mask); mask: var(--ht-mask); }
+      .erp-dock .map .tiles.ht-in { animation: erp-ht-in .5s var(--out) both; } .erp-dock .map .tiles.ht-out { animation: erp-ht-out .42s cubic-bezier(.5, 0, .75, 0) both; }
+      @keyframes erp-ht-in { from { --ht-r: 0px; } to { --ht-r: 5.2px; } } @keyframes erp-ht-out { from { --ht-r: 5.2px; } to { --ht-r: 0px; opacity: .4; } }
+      .erp-dock .map .tiles.ghost { transform-origin: 0 0; transition: transform .38s var(--out); will-change: transform; }
+      .erp-dock .map .ht-load { position: absolute; inset: 0; pointer-events: none; transition: opacity .4s var(--soft);
+        background: radial-gradient(circle, rgba(233,225,220,.07) 0 1px, transparent 1.5px) 0 0 / 8px 8px; }
+      .erp-dock .map .ht-load::after { content: ""; position: absolute; inset: 0; background: radial-gradient(circle, rgba(233,225,220,.34) 0 1.3px, transparent 1.8px) 0 0 / 8px 8px;
+        -webkit-mask: radial-gradient(circle at 50% 50%, transparent calc(var(--ht-w) - 110px), #000 calc(var(--ht-w) - 40px), transparent var(--ht-w));
+        mask: radial-gradient(circle at 50% 50%, transparent calc(var(--ht-w) - 110px), #000 calc(var(--ht-w) - 40px), transparent var(--ht-w)); animation: erp-ht-sonar 1.6s cubic-bezier(.3, 0, .2, 1) infinite; }
+      .erp-dock .map .ht-load.gone { opacity: 0; }
+      @keyframes erp-ht-sonar { from { --ht-w: 0px; } to { --ht-w: 520px; } }
+      .erp-dock .map.still .mdot { animation: none; }
       .erp-dock .map .tiles img { filter: invert(1) hue-rotate(180deg) brightness(.78) contrast(.92) saturate(.35); } /* OSM's light map, made dark */
       .erp-dock .map.sat .tiles img, .erp-dock .map.carto .tiles img { filter: none; } .erp-dock .map.sat .tiles img { filter: brightness(.8) saturate(.9); }
       .erp-dock .keyrow { display: flex; gap: 6px; align-items: center; margin: 0 0 8px; font-size: 12px; color: var(--muted); } .erp-dock .keyrow .field { height: 30px; flex: 1; }
@@ -2563,6 +2579,7 @@
       const scene = briefScene({ pts: kinds, at: (p) => { const [x, y] = proj(p, z); return [x - left, y - top]; }, mpp, w, h, about });
       box.scene = scene;
       box.replaceChildren(tiles, ...briefUnder(scene), ...dots, ...briefOver(scene), tip, zoom, el("span", "attr", T.attr));
+      swapTiles(box, tiles, { z, kind, left, top, id: `area:${box.getAttribute("aria-label")}` });
     }
     function tileMap(box, r, n, radius, rows) {
       const w = box.clientWidth, h = box.clientHeight; if (!w) return;
@@ -2613,6 +2630,7 @@
         me: [hx, hy, r.nama || r.username], about: { what: `Radius ${radius < 1000 ? `${radius} m` : "1 km"} dari ${r.nama || r.username}`, near: r } });
       box.scene = scene;
       box.replaceChildren(tiles, ring(0.5, "half"), ring(1, ""), ...briefUnder(scene), ...dots, me, ...briefOver(scene), tip, zoom, el("span", "attr", T.attr));
+      swapTiles(box, tiles, { z, kind, left, top, id: `near:${r.username}` });
     }
     // Drag a map to pan it: the picture follows the pointer, and every ~100 px (and on release) the tiles are drawn
     // again around the new centre, kept as a share of the world so zooming keeps the place. A press that moves less
@@ -2656,6 +2674,38 @@
           box.ctr = [(g.cx + dx) / g.size - dx / ns, (g.cy + dy) / g.size - dy / ns]; }
         btn.click();
       }, { passive: false });
+    }
+    // ---- the map's motion: a halftone screen ----
+    // Loading: a faint dot screen with a sonar ring of brighter dots until the tiles arrive. A new view (zoom, full
+    // screen, another radius, Map/Sat) keeps the old picture, scales it to where the new view puts it, then hands over
+    // through a halftone dissolve: the new tiles appear through growing dots while the old ones shrink away. Panning and
+    // data refreshes don't animate (and the dots don't pop again). Under half a second; off with reduced motion.
+    let lastView = null; // the last map drawn, so a new map for the same customer (another radius) can carry on from it
+    function swapTiles(box, tiles, v) {
+      const prev = box.prevView || (lastView?.id === v.id && !lastView.tiles.isConnected ? lastView : null);
+      box.prevView = lastView = { ...v, tiles };
+      box.classList.remove("still");
+      if (calm()) return;
+      if (prev && prev.z === v.z && prev.kind === v.kind) {
+        box.classList.add("still"); // same view, or panned: no pop
+        if (prev.left === v.left && prev.top === v.top && prev.tiles !== tiles) { // a data refresh: keep the drawn tiles, and a loading screen or old view still on its way
+          tiles.replaceWith(prev.tiles); box.prevView.tiles = lastView.tiles = prev.tiles;
+          for (const x of box.htBusy || []) if (!x.isConnected) box.insertBefore(x, prev.tiles);
+        }
+        return;
+      }
+      const ready = Promise.race([Promise.all([...tiles.querySelectorAll("img")].map((im) => (im.complete ? 0 : new Promise((ok) => { im.onload = im.onerror = ok; })))), new Promise((ok) => setTimeout(ok, 900))]);
+      tiles.classList.add("ht-wait");
+      if (!prev) { // first view: the loading screen
+        const load = el("div", "ht-load"); box.insertBefore(load, tiles); box.htBusy = [load];
+        ready.then(() => { box.htBusy = []; tiles.classList.replace("ht-wait", "ht-in"); load.classList.add("gone"); setTimeout(() => { load.remove(); tiles.classList.remove("ht-in"); }, 520); });
+        return;
+      }
+      // the old picture, moved to where the new view puts it: a point at old-screen x lands at s·(x + oldLeft) − newLeft
+      const ghost = prev.tiles, s = 2 ** (v.z - prev.z);
+      ghost.classList.remove("ht-in", "ht-wait", "ht-out"); ghost.classList.add("ghost"); ghost.style.transform = ""; box.insertBefore(ghost, tiles); box.htBusy = [ghost];
+      if (prev.kind === v.kind) { void ghost.offsetWidth; ghost.style.transform = `translate(${s * prev.left - v.left}px, ${s * prev.top - v.top}px) scale(${s})`; } // after a layout, so it moves
+      ready.then(() => { box.htBusy = []; tiles.classList.replace("ht-wait", "ht-in"); ghost.classList.add("ht-out"); setTimeout(() => { ghost.remove(); ghost.style.transform = ""; ghost.classList.remove("ghost", "ht-out"); tiles.classList.remove("ht-in"); }, 520); });
     }
     function recentre(box) {
       const b = el("button", null, "◎"); b.type = "button"; b.title = "Back to the start"; b.setAttribute("aria-label", "Recentre the map");
@@ -2792,7 +2842,7 @@
     async function briefPng(box) {
       const s = box.scene, w = s.w, h = s.h, k = 2, cv = el("canvas"); cv.width = w * k; cv.height = h * k;
       const g = cv.getContext("2d"); g.scale(k, k); g.fillStyle = "#0f1214"; g.fillRect(0, 0, w, h);
-      const imgs = [...box.querySelectorAll(".tiles img")];
+      const imgs = [...box.querySelectorAll(".tiles:not(.ghost) img")]; // not the old view on its way out
       g.filter = imgs[0] ? getComputedStyle(imgs[0]).filter : "none";
       await Promise.all(imgs.map((im) => new Promise((ok) => { const i = new Image(); i.crossOrigin = "anonymous";
         i.onload = () => { try { g.drawImage(i, parseFloat(im.style.left), parseFloat(im.style.top), 256, 256); } catch {} ok(); }; i.onerror = () => ok(); i.src = im.src; })));
