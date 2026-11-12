@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.44
+// @version      2.45
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -960,7 +960,7 @@
     /* loading, in halftone: a dot-matrix progress track with a bright scan running along it */
     @property --fs-p { syntax: "<percentage>"; inherits: false; initial-value: 0%; }
     @property --fs-a { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
-    .erp-fs .bar { height: 0; margin: 0 14px; overflow: hidden; position: relative; opacity: 0; transition: height .3s var(--out), opacity .3s;
+    .erp-fs .bar { flex: none; height: 0; margin: 0 14px; overflow: hidden; position: relative; opacity: 0; transition: height .3s var(--out), opacity .3s;
       background: radial-gradient(circle, rgba(233,225,220,.13) 0 .8px, transparent 1.1px) 0 0 / 4px 9px; }
     .erp-fs .bar.on { height: 9px; margin-top: 6px; opacity: 1; }
     .erp-fs .bar span { position: absolute; inset: 0; --f: 4%; background: radial-gradient(circle, var(--bone) 0 .9px, transparent 1.2px) 0 0 / 4px 9px;
@@ -979,6 +979,10 @@
         linear-gradient(90deg, #000 55%, rgba(0,0,0,.35) 56% 76%, transparent 77% 82%, rgba(0,0,0,.6) 83%);
       mask-composite: intersect; animation: erp-fs-scanp 1.8s var(--swap) infinite; }
     .erp-fs .scan + .empty { padding-top: 6px; }
+    /* refreshing with results on screen: a faint band of dots sweeps down behind the rows */
+    .erp-fs .body { position: relative; }
+    .erp-fs.busy .body::before { content: ""; position: absolute; inset: 0; pointer-events: none; background: radial-gradient(circle, rgba(233,225,220,.22) 0 .9px, transparent 1.2px) 0 0 / 5px 5px;
+      mask: linear-gradient(180deg, transparent calc(var(--fs-p) - 30%), #000 calc(var(--fs-p) - 6%), transparent var(--fs-p)); animation: erp-fs-scanp 2.4s var(--swap) infinite; }
     .erp-fs .body { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
     .erp-fs ul { position: relative; }
     /* results rise in one after another; the selection is a pill that slides between them */
