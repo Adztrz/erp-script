@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.57
+// @version      2.58
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -3384,8 +3384,10 @@
         loadQueue().then((rows) => findCustomer(rows, a.name.toUpperCase())).then((r) => {
           if (!r) return;
           const at = where(r);
-          keep(checks().map((c) => c.user === a.user ? { ...c, tech: r.installationData?.teknisi || "", desa: r.desa || "", kec: r.kecamatan || "", maps: at ? `https://maps.google.com/?q=${at.lat},${at.lng}` : /^https?:/.test(r.shareLokasiGmaps || "") ? r.shareLokasiGmaps : "" } : c));
+          const ka = kaOf(r.desa);
+          keep(checks().map((c) => c.user === a.user ? { ...c, base: r.namaPemohon || "", tech: r.installationData?.teknisi || "", desa: r.desa || "", kec: r.kecamatan || "", ka, maps: at ? `https://maps.google.com/?q=${at.lat},${at.lng}` : /^https?:/.test(r.shareLokasiGmaps || "") ? r.shareLokasiGmaps : "" } : c));
           drawChecks();
+          if (!ka) loadKa().then(() => { const k = kaOf(r.desa); if (k) { keep(checks().map((c) => c.user === a.user ? { ...c, ka: k } : c)); drawChecks(); } });
         }).catch(() => {});
       }
       armed = null;
@@ -3435,10 +3437,18 @@
       if (c.done) return { cls: "bad", t: "Not online after 15 minutes: check the activation went through, the modem's PPPoE settings and the cable" };
       return { cls: "wait", t: "Waiting for the modem to log in…" };
     }
-    // the snippet to paste: modem SN, name, username, technician, location
+    // the KA of a village: the kepala teknis whose wilayahPenempatan lists it (a village name shared by two kecamatan can give two)
+    let kas = null;
+    const loadKa = () => kas ? Promise.resolve(kas) : get("/api/pg-read/employees?where=role%3Akepala_teknis&fields=name,wilayahPenempatan&limit=100")
+      .then((j) => (kas = (j.data || []).map((e) => ({ name: e.name, desa: new Set((e.wilayahPenempatan || []).map((d) => String(d).trim().toLowerCase())) })))).catch(() => (kas = []));
+    loadKa();
+    const kaOf = (desa) => !kas || !desa ? "" : kas.filter((k) => k.desa.has(String(desa).trim().toLowerCase())).map((k) => k.name).join(" / ");
+    // the snippet to paste: modem SN, name (+ village + STARLITE), username, technician, location, KA
     function note(c) {
       const loc = [c.desa && `Desa ${c.desa}`, c.kec && `Kec. ${c.kec}`].filter(Boolean).join(", ");
-      return [`SN Modem: ${c.sn || "-"}`, `Nama: ${c.name || "-"}`, `Username: ${c.user}`, `Teknisi: ${c.tech || "-"}`, `Lokasi: ${loc || "-"}${c.maps ? `\n${c.maps}` : ""}`].join("\n");
+      const name = String(c.name || c.base || "").trim().toUpperCase().replace(/\s+/g, " ");
+      const full = !name || /STARLITE$/.test(name) || !c.desa ? name : `${name} ${String(c.desa).toUpperCase()} STARLITE`;
+      return [`SN Modem: ${c.sn || "-"}`, `Nama: ${full || "-"}`, `Username: ${c.user}`, `Teknisi: ${c.tech || "-"}`, `Lokasi: ${loc || "-"}`, `KA: ${c.ka || "-"}`, c.maps].filter(Boolean).join("\n");
     }
     function drawChecks() {
       const list = checks().filter((c) => !c.closed);

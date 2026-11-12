@@ -56,7 +56,7 @@ After you press **Konfirmasi**, a card in the bottom-left corner checks every 20
 - the PPPoE session in RADIUS: online, router, IP and uptime;
 - the modem on its OLT: status, PON and signal.
 
-It ends with a verdict: working, weak signal (below −27 dBm, while the technician is still on site), or not online after 15 minutes. It also shows a snippet to copy: modem SN, name, username, technician and location (village, kecamatan, map link). The technician and location come from the calon pelanggan record with the same name.
+It ends with a verdict: working, weak signal (below −27 dBm, while the technician is still on site), or not online after 15 minutes. It also shows a snippet to copy: modem SN, name (+ village + STARLITE), username, technician, location (village, kecamatan), the KA of that village (the kepala teknis whose villages include it) and a map link. The technician and location come from the calon pelanggan record with the same name.
 
 The queue shows how many days each customer has waited, and marks anything over 30 days. The helper only reads and fills the form; Konfirmasi stays yours.
 
