@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.51
+// @version      2.52
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -3200,9 +3200,9 @@
           body.append(el("p", "facts", facts.length ? facts.join(" · ") : "No installation report yet for this customer."));
         } else body.append(el("p", "facts", "Couldn't tell which customer this is: the suggestions below use nothing from the report."));
         const port = inst.portOdp || c?.networkSurvey?.portOdp || null, here = where(c);
-        const row = (a, why, p = port) => {
+        const row = (a, why, p = port, dist = false) => {
           const r = el("div", "opt"), used = `${a.portTerpakai ?? "?"}/${a.kapasitasPort || "?"} used${a.full ? " · FULL" : ""}`;
-          const d = here && a.lat != null ? km(metres(here, a)) : "";
+          const d = dist && here && a.lat != null ? km(metres(here, a)) : "";
           r.append(el("span", "code", a.kodeAset), el("span", "sub", [a.tipeAset, a.desa, used, d, why].filter(Boolean).join(" · ")));
           const b = el("button", null, "Use"); b.type = "button";
           b.onclick = async () => { b.disabled = true; b.textContent = "Filling…"; const ok = await useFat(dlg, a, p); b.textContent = ok ? "Filled" : "Not found in the form"; setTimeout(() => { b.disabled = false; b.textContent = "Use"; }, 2500); };
@@ -3219,26 +3219,58 @@
           const p = pm ? pm[1] : port;
           found.replaceChildren();
           if (!t.trim()) return;
-          if (m.hits?.length) m.hits.forEach((a) => { found.append(row(a, `matches what you pasted${p ? `, port ${p}` : ""}`, p)); farWarn(found, a); });
+          if (m.hits?.length) m.hits.forEach((a) => found.append(row(a, `matches what you pasted${p ? `, port ${p}` : ""}`, p)));
           else found.append(el("p", "warn", `Nothing in the FAT database matches "${m.said || t.trim()}". Check the code with the technician, or have it added in Aset & Peta.`));
         }, 250); };
         fat.append(paste, found);
-        const farWarn = (box, a) => { const far = here && a.lat != null ? metres(here, a) : null; // a drop cable is rarely over ~400 m
-          if (far > 400) box.append(el("p", "warn", `${a.kodeAset} is ${km(far)} from the install point: check it's the right one.`)); };
         const rep = c ? reported(c, list) : { said: "" };
-        if (rep.hits?.length) { fat.append(el("p", "sub", "From the installation report:")); rep.hits.forEach((a) => { fat.append(row(a, `matches "${rep.said}"${port ? `, port ${port}` : ""}`)); farWarn(fat, a); }); }
+        if (rep.hits?.length) { fat.append(el("p", "sub", "From the installation report:")); rep.hits.forEach((a) => fat.append(row(a, `matches "${rep.said}"${port ? `, port ${port}` : ""}`))); }
         else if (rep.said) fat.append(el("p", "warn", `The installation report says "${rep.said}", which isn't in the FAT database.`));
         // the nearest ones, folded: a check that the technician's FAT is plausible, not a pick
         const nearBox = el("details", "near"); nearBox.append(el("summary", null, "Nearest FATs to the install point"));
         if (here) {
-          list.filter((a) => a.lat != null && !a.full).map((a) => [a, metres(here, a)]).sort((x, y) => x[1] - y[1]).slice(0, 5).forEach(([a]) => nearBox.append(row(a, "")));
+          list.filter((a) => a.lat != null && !a.full).map((a) => [a, metres(here, a)]).sort((x, y) => x[1] - y[1]).slice(0, 5).forEach(([a]) => nearBox.append(row(a, "", port, true)));
         } else nearBox.append(el("p", "sub", c?.shareLokasiGmaps ? "The install location is a short link, so no distances: open it from the queue map." : "No install location on record."));
         fat.append(nearBox);
+        // username: other names in the ERP's own style (first name + initials + village code, 15 at most), each checked
+        const un = el("div", "blk"); un.append(el("h4", null, "Username"));
+        const ulabel = [...dlg.querySelectorAll("label")].find((l) => l.textContent.trim().startsWith("Username Radius")), uin = ulabel?.parentElement?.querySelector("input");
+        const nameNow = [...dlg.querySelectorAll("label")].find((l) => l.textContent.trim() === "Nama Pelanggan")?.parentElement?.querySelector("input")?.value || c?.namaPemohon || "";
+        if (uin && nameNow) {
+          const words = nameNow.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().split(/\s+/).map((w) => w.replace(/[^a-z0-9]/g, "")).filter(Boolean);
+          // the village code is what's left after the name part; a trailing 2–9 on a 4-digit code is the form's "already taken" suffix
+          const base = (words[0] || "") + words.slice(1).map((w) => w[0]).join(""), v = uin.value.toLowerCase();
+          let k = 0; while (k < base.length && v[k] === base[k]) k++;
+          let code = /^\d+$/.test(v.slice(k)) ? v.slice(k) : /\d{2,}$/.exec(v)?.[0] || "";
+          if (code.length === 5 && /[2-9]$/.test(code)) code = code.slice(0, 4);
+          const fit = (b, suf = "") => b.slice(0, Math.max(1, 15 - code.length - suf.length)) + code + suf;
+          const desa = String(c?.desa || "").toLowerCase().replace(/[^a-z]/g, "");
+          const ideas = [...new Set([
+            words.length > 1 && fit(words[0] + words[1]),                            // danangagus0706
+            words.length > 1 && fit(words[1] + words[0][0]),                         // agusd0706
+            words.length > 1 && fit(words[words.length - 1] + words[0].slice(0, 3)), // prasdan0706
+            words.length > 2 && fit(words[0] + words[1][0] + words[2]),              // danangapras0706
+            words.length === 1 && fit(words[0].slice(0, 6)),                         // turkha0610
+            words.length === 1 && desa && fit(words[0].slice(0, 5) + desa.slice(0, 3)), // turkhbel0610
+            fit(base, "3"), fit(base, "4"),
+          ].filter((u) => u && u.length >= 3 && u !== uin.value))].slice(0, 5);
+          un.append(el("p", "sub", `In the form: ${uin.value || "–"}. Other names in the same style:`));
+          for (const u of ideas) {
+            const r = el("div", "opt"), st = el("span", "sub", "checking…");
+            r.append(el("span", "code", u), st);
+            const b = el("button", null, "Use"); b.type = "button"; b.disabled = true;
+            b.onclick = () => { set(uin, u); b.textContent = "Filled"; setTimeout(() => (b.textContent = "Use"), 1500); };
+            r.append(b); un.append(r);
+            get(`/api/admin/ldn-radius/check-username?username=${encodeURIComponent(u)}`).then((j) => {
+              const free = j.ok && !j.exists; st.textContent = free ? "free" : j.orphan ? "left over in RADIUS: avoid" : "taken"; st.className = `sub ${free ? "free" : "taken"}`; b.disabled = !free;
+            }).catch(() => { st.textContent = "couldn't check"; });
+          }
+        }
         // modem
         const mod = el("div", "blk"); mod.append(el("h4", null, "Modem"));
         const scan = el("button", "wide", "Scan all OLTs and routers"); scan.type = "button"; scan.onclick = () => scanAll(dlg);
         mod.append(scan, el("p", "sub", "Runs the form's own scan of all 46 OLTs at once (about 20 s); pick the modem in its list. A modem picked there also fills the OLT and the router."));
-        body.append(fat, mod);
+        body.append(fat, un, mod);
       } catch (e) { body.replaceChildren(el("p", "warn", `Helper not loaded: ${e.message}`)); }
     }
     function tick() {
@@ -3390,6 +3422,7 @@
       .erp-akt .paste { width: 100%; box-sizing: border-box; height: 36px; padding: 0 10px; border: 0; border-radius: 6px; background: #1a1d1e; color: var(--paper);
         box-shadow: inset 0 0 0 1px var(--edge); font: 400 13px Inter, system-ui, sans-serif; }
       .erp-akt .paste:focus { outline: none; box-shadow: inset 0 0 0 1px var(--bone); }
+      .erp-akt .sub.free { color: var(--green); } .erp-akt .sub.taken { color: var(--muted); text-decoration: line-through; }
       .erp-akt details.near summary { cursor: pointer; font-size: 12px; color: var(--muted); padding: 4px 0; }
       .erp-akt details.near summary:hover { color: var(--paper); }
       .erp-akt .code { color: var(--paper); font: 500 13px/1.4 "JetBrains Mono", ui-monospace, monospace; }
