@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.34
+// @version      2.35
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -651,7 +651,15 @@
       st.done = 0; st.pages = 0;
       const page = async (p) => {
         if (gen !== st.gen) throw new Error("stale"); // another list was asked for: this one stops here
-        const r = await realFetch(cfg.url(part, p, size), { headers: { authorization: st.auth } });
+        let r = await realFetch(cfg.url(part, p, size), { headers: { authorization: st.auth } });
+        // signed out and back in (the work PC does this every few minutes): wait for the new sign-in and ask again,
+        // instead of dropping the download
+        for (let wait = 0; (r.status === 401 || r.status === 403) && wait < 45; wait++) {
+          const used = st.auth, fresh = await fsToken();
+          if (fresh && fresh !== used) st.auth = fresh; else { await new Promise((ok) => setTimeout(ok, 2000)); if (st.auth === used) continue; }
+          if (gen !== st.gen) throw new Error("stale");
+          r = await realFetch(cfg.url(part, p, size), { headers: { authorization: st.auth } });
+        }
         if (!r.ok) throw new Error(`The server said ${r.status}`);
         const j = await r.json(); st.done++; draw();
         return j;
@@ -669,7 +677,7 @@
       // three at a time, so the server isn't flooded
       for (let i = 0; i < rest.length; i += 3) {
         (await Promise.all(rest.slice(i, i + 3).map(async (p) => [p, cfg.items(await page(p)).map(slim)]))).forEach(([p, c]) => got.set(p, c));
-        if (i % 9 === 6) save(); // every nine pages: often enough to resume, not a rewrite per page
+        save(); // after every three pages, so a reload (or a sign-out) loses little
       }
       // a page that came back short (the server was busy) is asked for again, one at a time
       for (let p = 2; p < st.pages; p++) if ((got.get(p)?.length ?? 0) < size) got.set(p, cfg.items(await page(p)).map(slim));
@@ -698,6 +706,8 @@
       if (st.loading) return st.loading;
       const due = parts.filter((p) => force || !st.byPart.has(p) || Date.now() - st.byPart.get(p).at > ttlOf(p));
       if (!due.length) return; // all fresh: nothing to do
+      if (!st.auth) st.auth = await fsToken(); // the browser's own sign-in: no need to wait for the page to ask first
+      if (gen !== st.gen) return;
       if (!st.auth) { if (!st.rows) { st.error = "Open this list once so the search can sign in"; draw(); } return; }
       st.loading = (async () => {
         st.error = ""; st.partNo = 0; st.parts = parts.length;
