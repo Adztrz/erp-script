@@ -48,7 +48,7 @@ In Technical → Antrean Aktivasi, the ⚡ activation form stays exactly as the 
 - **FAT/ODP from the report:** matched to the database even when typed loosely (`\FAT LDN NW15`, `FAT 8BBLH`).
 - **Nearest FATs/ODPs with free ports** (folded, as a cross-check): measured from the install point, with distance and ports in use. **Use** fills the form's FAT and port fields.
 - **Nama Pelanggan:** the name as the ERP lists customers, name + village + STARLITE (`BUDI SANTOSO SUKOREJO STARLITE`). **Use** puts it in the form.
-- **Username ideas:** village-name versions first (`budisukorejo`), then the ERP's own style (first name + initials + village code). When the plain name is taken, the village name replaces the form's extra number. Each idea is checked against RADIUS as free or taken; **Use** puts one in the form.
+- **Username ideas:** always name + village code, in the ERP's own style (`budisantoso0601`). When the plain name is taken, the village name goes in instead of the form's extra number (`budisukor0601` rather than `budis06012`). Each idea is checked against RADIUS as free or taken; **Use** puts one in the form.
 - **Checklist:** name, FAT, port, OLT or modem, serial, and username, updated live.
 
 After you press **Konfirmasi**, a card in the bottom-left corner checks every 20 seconds, for up to 15 minutes, that the activation really works:

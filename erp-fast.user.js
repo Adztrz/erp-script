@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.54
+// @version      2.55
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -3247,22 +3247,23 @@
           if (code.length === 5 && /[2-9]$/.test(code)) code = code.slice(0, 4);
           const fit = (b, suf = "") => b.slice(0, Math.max(1, 15 - code.length - suf.length)) + code + suf;
           const desa = String(c?.desa || "").toLowerCase().replace(/[^a-z]/g, "");
-          // a name that's taken (the form added a 2–9) gets the village name instead of a number
+          // every idea is name + village code; when the plain name is taken (the form added a 2–9), the village name goes in
+          // between instead of the extra number: budisukorejo0601 rather than budis06012
           const taken = /\d{4}[2-9]$/.test(v) || /Ganti username/i.test(ulabel?.parentElement?.textContent || ""); // only the username's own message
-          const vil = (b) => desa && b.slice(0, 10) + desa.slice(0, 10);
-          const ideas = [...new Set([
-            vil(words[0] || ""),                                                     // budisukorejo
-            words.length > 1 && vil(base),                                           // budiswsukorejo
-            words.length > 1 && vil(words[0].slice(0, 5) + words[words.length - 1].slice(0, 3)),
+          const vil = (b) => desa && fit(b.slice(0, 6) + desa);
+          const village = [
+            vil(words[0] || ""),                                                     // budisukor0601
+            words.length > 1 && vil(base),                                           // budissukor0601
+          ];
+          const plain = [
             words.length > 1 && fit(words[0] + words[1]),                            // budisantoso0601
             words.length > 1 && fit(words[1] + words[0][0]),                         // santosob0601
             words.length > 1 && fit(words[words.length - 1] + words[0].slice(0, 3)), // wijayabud0601
             words.length > 2 && fit(words[0] + words[1][0] + words[2]),              // budiswijaya0601
             words.length === 1 && fit(words[0].slice(0, 6)),                         // sutris0610
-            words.length === 1 && desa && fit(words[0].slice(0, 5) + desa.slice(0, 3)), // sutrisuko0610
-            fit(base, "3"), fit(base, "4"),
-          ].filter((u) => u && u.length >= 3 && u !== uin.value))].slice(0, 6);
-          un.append(el("p", taken ? "warn" : "sub", taken ? `In the form: ${uin.value}: the plain name was taken, so the form added a number. With the village name instead:` : `In the form: ${uin.value || "–"}. Other names, the village-name ones first:`));
+          ];
+          const ideas = [...new Set((taken ? [...village, ...plain] : [...plain, ...village]).filter((u) => u && u.length >= 3 && u !== uin.value))].slice(0, 6);
+          un.append(el("p", taken ? "warn" : "sub", taken ? `In the form: ${uin.value}: the plain name was taken, so the form added a number. With the village name instead:` : `In the form: ${uin.value || "–"}. Other names with the village code:`));
           for (const u of ideas) {
             const r = el("div", "opt"), st = el("span", "sub", "checking…");
             r.append(el("span", "code", u), st);
