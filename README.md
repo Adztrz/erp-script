@@ -49,6 +49,13 @@ In Technical → Antrean Aktivasi, the ⚡ activation form gets a Dock card on t
 - **Scan all OLTs and routers:** runs the form's own scan of every OLT at once.
 - **Checklist:** FAT, port, OLT or modem, serial, and username, updated live.
 
+After you press **Konfirmasi**, a card in the bottom-left corner checks every 20 seconds, for up to 15 minutes, that the activation really works:
+
+- the PPPoE session in RADIUS: online, router, IP and uptime;
+- the modem on its OLT: status, PON and signal.
+
+It ends with a verdict: working, weak signal (below −27 dBm, while the technician is still on site), or not online after 15 minutes. **Copy WhatsApp note** gives an Indonesian summary for the technician or the customer.
+
 The queue shows how many days each customer has waited, and marks anything over 30 days. The helper only reads and fills the form; Konfirmasi stays yours.
 
 ### No "new version" bar
