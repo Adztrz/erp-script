@@ -39,6 +39,18 @@ Apart from paying (the card's Pay and Bulk Lunas) and the outage radar, it never
 Colours everywhere in the Dock: online green, isolir red, offline grey; red also marks an alarm (critical signal, a port mostly down, stale data) and amber a warning.
 
 
+### Aktivasi helper
+
+In Technical → Antrean Aktivasi, the ⚡ activation form gets a Dock card on top:
+
+- **Technician's report:** technician, reported ODP and port, signal, modem.
+- **FAT/ODP from the report:** matched to the database even when typed loosely (`\FAT LDN NW15`, `FAT 8BBLH`). If the match is over 400 m from the install point, it warns you.
+- **Nearest FATs/ODPs with free ports:** measured from the install point, with distance and ports in use. **Use** fills the form's FAT and port fields.
+- **Scan all OLTs and routers:** runs the form's own scan of every OLT at once.
+- **Checklist:** FAT, port, OLT or modem, serial, and username, updated live.
+
+The queue shows how many days each customer has waited, and marks anything over 30 days. The helper only reads and fills the form; Konfirmasi stays yours.
+
 ### No "new version" bar
 
 The ERP deploys many times an hour, and each deploy showed a blue "Versi baru aplikasi… Muat ulang" bar (or reloaded an idle page by itself). The script switches both off: the ERP's own "Nanti" snooze is set far ahead, and the page no longer reacts to a new service worker taking over. You get the new version whenever you reload or open a tab yourself.

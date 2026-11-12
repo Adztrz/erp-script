@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.48
+// @version      2.49
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -3101,6 +3101,184 @@
     for (const t of ["mousedown", "keydown", "touchstart", "scroll"]) addEventListener(t, real, { capture: true, passive: true });
     chan.onmessage = () => dispatchEvent(new Event("scroll"));
   } catch { /* no BroadcastChannel: each tab keeps its own clock */ }
+
+  // ---------- Aktivasi: a helper card in the activation form ----------
+  // Technical → Antrean Aktivasi → ⚡ opens "Aktivasi Akun & Provisioning OLT". The card on top of it:
+  // - FAT/ODP: the one the technician reported, matched to the database even when written loosely ("\FAT LDN NW15",
+  //   "FAT 8BBLH"), and the nearest FATs/ODPs to the install point with distance and ports in use; Use fills the form's
+  //   FAT and port fields the way you would by hand;
+  // - Modem: Scan all OLTs sets the form to «Semua OLT» and presses its own Scan (every OLT and router at once);
+  // - a checklist of what the form still needs, live.
+  // On the queue each install date also says how many days it has waited; over 30 days is marked.
+  // Everything here only reads or fills the form; Konfirmasi stays yours.
+  {
+    const AQ = "/technical-dashboard/activation-queue";
+    const set = (input, v) => { const d = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input), "value"); d.set.call(input, v); input.dispatchEvent(new Event(input.tagName === "SELECT" ? "change" : "input", { bubbles: true })); };
+    const wait = (ms) => new Promise((ok) => setTimeout(ok, ms));
+    const norm = (x) => String(x ?? "").toUpperCase().replace(/[^A-Z0-9]+/g, "");
+    async function get(path) {
+      const auth = await fsToken(); if (!auth) throw new Error("not signed in");
+      const r = await realFetch(path, { headers: { authorization: auth } }); if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json();
+    }
+    let queue = null, queueAt = 0, assets = null, lastRow = "";
+    // the row whose ⚡ you pressed: its customer id (the small mono text under the name)
+    document.addEventListener("pointerdown", (e) => { const tr = e.target.closest?.("tr"); if (tr && location.pathname.startsWith(AQ)) lastRow = tr.textContent; }, true);
+    async function loadQueue() {
+      if (queue && Date.now() - queueAt < 120e3) return queue;
+      const f = "fields=namaPemohon,dataId,installationData,networkSurvey,shareLokasiGmaps,teknologiKoneksi,jadwalPemasangan,desa,kecamatan";
+      const parts = await Promise.all(["Menunggu Aktivasi Akun", "Menunggu Aktivasi Account"].map((v) => get(`/api/pg-read/prospectiveCustomers?where=statusVerifikasi%3A${encodeURIComponent(v)}&limit=500&${f}`).then((j) => j.data || []).catch(() => [])));
+      queue = parts.flat(); queueAt = Date.now(); return queue;
+    }
+    async function loadAssets() {
+      if (assets) return assets;
+      const [opts, ...geo] = await Promise.all([get("/api/network-assets/odp-options?semua=1"),
+        ...["FAT", "ODP"].map((t) => get(`/api/pg-read/networkAssets?where=tipeAset%3A${t}&fields=kodeAset,tipeAset,lokasiKoordinat,desa&limit=20000`).then((j) => j.data || []).catch(() => []))]);
+      const at = new Map(geo.flat().map((a) => [a.id, a])), byCode = new Map(geo.flat().map((a) => [norm(a.kodeAset), a]));
+      assets = (opts.options || []).filter((o) => o.kodeAset && o.kodeAset.trim() !== "..").map((o) => {
+        const g = at.get(o.docId) || byCode.get(norm(o.kodeAset)), p = g?.lokasiKoordinat;
+        return { ...o, key: norm(o.kodeAset), lat: p?.latitude ?? null, lng: p?.longitude ?? null };
+      });
+      return assets;
+    }
+    const where = (c) => { const m = /(-?\d{1,2}\.\d{3,})\s*,\s*(-?\d{2,3}\.\d{3,})/.exec(String(c?.shareLokasiGmaps || "")); return m ? { lat: +m[1], lng: +m[2] } : null; };
+    // the technician's ODP text against the database: exact, then one code containing all of it, then every word found
+    function reported(c, list) {
+      const said = String(c?.installationData?.odpTerhubung || c?.networkSurvey?.odpTerdekat || "").replace(/^[\s\\/]+/, "").trim();
+      if (!said || norm(said).length < 3) return { said };
+      const k = norm(said), words = said.toUpperCase().split(/[^A-Z0-9.]+/).map(norm).filter((w) => w.length > 1 && !/^(FAT|ODP|LDN)$/.test(w));
+      let hits = list.filter((a) => a.key === k);
+      if (!hits.length) hits = list.filter((a) => a.key.includes(k) || (k.length > 6 && k.includes(a.key) && a.key.length > 5));
+      if (!hits.length && words.length) hits = list.filter((a) => words.every((w) => a.key.includes(w)));
+      return { said, hits: hits.slice(0, 3) };
+    }
+    async function useFat(dlg, a, port) {
+      const btn = dlg.querySelector('[aria-label="Pilih FAT / ODP pelanggan dari database"]'); if (!btn) return false;
+      btn.click(); await wait(250);
+      const inp = document.querySelector("[cmdk-input]"); if (!inp) return false;
+      set(inp, a.kodeAset); await wait(400);
+      const item = [...document.querySelectorAll("[cmdk-item]")].find((it) => { const t = it.querySelector(".font-medium")?.firstChild?.textContent?.trim(); return t === a.kodeAset.trim(); });
+      if (!item) { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); return false; }
+      item.click(); await wait(300);
+      if (port) { const p = dlg.querySelector('input[type="number"][placeholder="mis. 4"]'); if (p) set(p, String(port)); }
+      return true;
+    }
+    async function scanAll(dlg) {
+      const sel = [...dlg.querySelectorAll("select")].find((x) => /^Semua OLT/.test(x.options[0]?.textContent || "")); if (!sel) return;
+      if (sel.value) { set(sel, ""); await wait(150); }
+      [...dlg.querySelectorAll("button")].find((b) => /^Scan OLT/.test(b.textContent.trim()))?.click();
+    }
+    // what the form still needs, read straight from it
+    function needs(dlg) {
+      const fatBtn = dlg.querySelector('[aria-label="Pilih FAT / ODP pelanggan dari database"]'), fat = fatBtn && !/^(Pilih FAT|Memuat)/.test(fatBtn.textContent.trim());
+      const port = dlg.querySelector('input[type="number"][placeholder="mis. 4"]')?.value;
+      const sn = dlg.querySelector('input[placeholder^="Contoh: ZICG"]')?.value.trim();
+      const olt = [...dlg.querySelectorAll("select")].find((x) => /^Semua OLT/.test(x.options[0]?.textContent || ""))?.value;
+      const text = dlg.textContent, user = /Username "[^"]+" tersedia/.test(text) ? true : /Ganti username|sudah dipakai/i.test(text) ? false : null;
+      const scanning = /Sedang memindai/.test(text);
+      return [["FAT/ODP", !!fat], ["Port", !!port], ["OLT or modem", !!(sn || olt)], ["Modem SN", !!sn], ["Username", user]].map(([k, ok]) => ({ k, ok })).concat(scanning ? [{ k: "Scanning…", ok: null, busy: true }] : []);
+    }
+    const km = (m) => m == null ? "" : m < 1000 ? `${m} m` : `${(m / 1000).toFixed(1)} km`;
+    async function build(dlg) {
+      const card = el("section", "erp-akt"); card.setAttribute("aria-label", "Dock: activation helper");
+      const head = el("div", "hd"); head.append(el("span", "ey", "Dock · Aktivasi"), el("span", "chips"));
+      const body = el("div", "bd"); body.append(el("p", "ld", "Reading the technician's report and the FAT list…"));
+      card.append(head, body);
+      const anchor = dlg.querySelector("h2")?.parentElement; (anchor || dlg.firstElementChild).after(card);
+      try {
+        const [list, rows] = await Promise.all([loadAssets(), loadQueue()]);
+        const label = [...dlg.querySelectorAll("label")].find((l) => l.textContent.trim() === "Nama Pelanggan");
+        const name = label?.parentElement?.querySelector("input")?.value?.trim().toUpperCase();
+        const c = rows.find((r) => r.dataId && lastRow.includes(r.dataId)) || rows.find((r) => String(r.namaPemohon || "").trim().toUpperCase() === name) || null;
+        body.replaceChildren();
+        const inst = c?.installationData || {};
+        if (c) {
+          const facts = [inst.teknisi && `Technician ${inst.teknisi}`, (inst.odpTerhubung || c.networkSurvey?.odpTerdekat) && `ODP reported "${String(inst.odpTerhubung || c.networkSurvey?.odpTerdekat).trim()}"`,
+            (inst.portOdp || c.networkSurvey?.portOdp) && `port ${inst.portOdp || c.networkSurvey?.portOdp}`, inst.redaman && `signal ${inst.redaman} dBm`, inst.modemTerpasang && `modem ${inst.modemTerpasang}`].filter(Boolean);
+          body.append(el("p", "facts", facts.length ? facts.join(" · ") : "No installation report yet for this customer."));
+        } else body.append(el("p", "facts", "Couldn't tell which customer this is: the suggestions below use nothing from the report."));
+        const port = inst.portOdp || c?.networkSurvey?.portOdp || null, here = where(c);
+        const row = (a, why) => {
+          const r = el("div", "opt"), used = `${a.portTerpakai ?? "?"}/${a.kapasitasPort || "?"} used${a.full ? " · FULL" : ""}`;
+          const d = here && a.lat != null ? km(metres(here, a)) : "";
+          r.append(el("span", "code", a.kodeAset), el("span", "sub", [a.tipeAset, a.desa, used, d, why].filter(Boolean).join(" · ")));
+          const b = el("button", null, "Use"); b.type = "button";
+          b.onclick = async () => { b.disabled = true; b.textContent = "Filling…"; const ok = await useFat(dlg, a, port); b.textContent = ok ? "Filled" : "Not found in the form"; setTimeout(() => { b.disabled = false; b.textContent = "Use"; }, 2500); };
+          r.append(b); return r;
+        };
+        // FAT/ODP
+        const fat = el("div", "blk"); fat.append(el("h4", null, "FAT / ODP"));
+        const rep = c ? reported(c, list) : { said: "" };
+        if (rep.hits?.length) rep.hits.forEach((a) => {
+          fat.append(row(a, `matches the report${port ? `, port ${port}` : ""}`));
+          const far = here && a.lat != null ? metres(here, a) : null; // a drop cable is rarely over ~400 m: a FAT that far is likely a typo in the report
+          if (far > 400) fat.append(el("p", "warn", `${a.kodeAset} is ${km(far)} from the install point: check it's the right one before using it.`));
+        });
+        else if (rep.said) fat.append(el("p", "warn", `"${rep.said}" from the report isn't in the FAT database: pick from the nearest below, or ask for it to be added in Aset & Peta.`));
+        if (here) {
+          const near = list.filter((a) => a.lat != null && !a.full).map((a) => [a, metres(here, a)]).sort((x, y) => x[1] - y[1]).slice(0, 5);
+          fat.append(el("p", "sub", `Nearest with free ports to the install point (${here.lat.toFixed(5)}, ${here.lng.toFixed(5)}):`));
+          near.forEach(([a]) => { if (!rep.hits?.some((h) => h.docId === a.docId)) fat.append(row(a, "")); });
+        } else fat.append(el("p", "sub", c?.shareLokasiGmaps ? "The install location is a short link, so no distances: open it from the queue map." : "No install location on record."));
+        // modem
+        const mod = el("div", "blk"); mod.append(el("h4", null, "Modem"));
+        const scan = el("button", "wide", "Scan all OLTs and routers"); scan.type = "button"; scan.onclick = () => scanAll(dlg);
+        mod.append(scan, el("p", "sub", "Runs the form's own scan of all 46 OLTs at once (about 20 s); pick the modem in its list. A modem picked there also fills the OLT and the router."));
+        body.append(fat, mod);
+      } catch (e) { body.replaceChildren(el("p", "warn", `Helper not loaded: ${e.message}`)); }
+    }
+    function tick() {
+      if (!location.pathname.startsWith(AQ)) return;
+      // the queue: days waiting next to each install date
+      for (const td of document.querySelectorAll("tr td")) {
+        if (td.dataset.dockAge || !/^\d{2} [A-Za-z]{3} \d{4}$/.test(td.textContent.trim())) continue;
+        const [d, m, y] = td.textContent.trim().split(" "), mi = ["jan", "feb", "mar", "apr", "mei", "jun", "jul", "agu", "sep", "okt", "nov", "des"].indexOf(m.toLowerCase());
+        if (mi < 0) continue;
+        const days = Math.floor((Date.now() - new Date(+y, mi, +d)) / 864e5); td.dataset.dockAge = "1";
+        td.append(el("span", `erp-age${days > 30 ? " old" : ""}`, days <= 0 ? "today" : `${days} d${days > 30 ? " · stale" : ""}`));
+      }
+      const dlg = [...document.querySelectorAll("[role=dialog]")].find((d) => /Aktivasi Akun & Provisioning OLT/.test(d.querySelector("h2")?.textContent || ""));
+      if (!dlg) return;
+      if (!dlg.querySelector(".erp-akt")) build(dlg);
+      const chips = dlg.querySelector(".erp-akt .chips"); if (!chips) return;
+      const now = needs(dlg), sig = JSON.stringify(now); if (chips.dataset.sig === sig) return; chips.dataset.sig = sig;
+      // missing is just "to do"; only a taken username is an error
+      chips.replaceChildren(...now.map((n) => el("span", `chip ${n.busy ? "busy" : n.ok === true ? "ok" : n.ok === false && n.k === "Username" ? "bad" : ""}`, n.k)));
+    }
+    setInterval(tick, 600);
+    const css = el("style"); css.textContent = `
+      .erp-akt { --bone: #e9e1dc; --paper: #efefed; --body: #b3b0af; --muted: #8a8b8a; --hair: #262727; --edge: #363738; --green: #55bc82; --red: #f12614; --amber: #e0b04f;
+        margin: 4px 0 8px; border-radius: 8px; background: #090b0c; box-shadow: inset 0 0 0 1px var(--edge); color: var(--body); font: 400 13px/1.45 Inter, ui-sans-serif, system-ui, sans-serif; }
+      .erp-akt .hd { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px 14px; border-bottom: 1px solid var(--hair); }
+      .erp-akt .ey { font-size: 12px; font-weight: 500; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); display: inline-flex; align-items: center; gap: 8px; }
+      .erp-akt .ey::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--bone); }
+      .erp-akt .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
+      .erp-akt .chip { padding: 2px 8px; border-radius: 999px; font-size: 12px; box-shadow: inset 0 0 0 1px var(--edge); color: var(--muted); }
+      .erp-akt .chip::before { content: "○ "; } .erp-akt .chip.ok { color: var(--green); } .erp-akt .chip.ok::before { content: "✓ "; }
+      .erp-akt .chip.bad { color: #ff8a7a; } .erp-akt .chip.bad::before { content: "✕ "; } .erp-akt .chip.busy { color: var(--paper); } .erp-akt .chip.busy::before { content: "◌ "; }
+      .erp-akt .bd { padding: 10px 14px 12px; display: grid; gap: 10px; }
+      .erp-akt .facts { margin: 0; color: var(--paper); }
+      .erp-akt .blk { display: grid; gap: 4px; }
+      .erp-akt h4 { margin: 4px 0 2px; font-size: 12px; font-weight: 500; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+      .erp-akt .opt { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 12px; align-items: center; padding: 6px 8px; border-radius: 6px; }
+      .erp-akt .opt:hover { background: #1a1d1e; }
+      .erp-akt .code { color: var(--paper); font: 500 13px/1.4 "JetBrains Mono", ui-monospace, monospace; }
+      .erp-akt .opt .sub { grid-column: 1; }
+      .erp-akt .opt button { grid-row: 1 / 3; grid-column: 2; }
+      .erp-akt .sub { margin: 0; font-size: 12px; color: var(--muted); }
+      .erp-akt .warn { margin: 0; font-size: 12px; color: var(--amber); }
+      .erp-akt button { border: 0; border-radius: 6px; padding: 6px 12px; font: 500 12px Inter, system-ui, sans-serif; cursor: pointer; background: var(--bone); color: #07090b; }
+      .erp-akt button:disabled { opacity: .6; cursor: default; }
+      .erp-akt button.wide { justify-self: start; }
+      .erp-akt .ld { margin: 0; color: var(--muted); }
+      .erp-akt .ld::before { content: ""; display: inline-block; vertical-align: -1px; width: 31px; height: 9px; margin-right: 8px;
+        background: radial-gradient(circle, var(--bone) 0 1.2px, transparent 1.7px) 0 0 / 5px 5px; opacity: .6; animation: erp-akt-ld 1.2s ease-in-out infinite; }
+      @keyframes erp-akt-ld { 50% { opacity: .2; } }
+      .erp-age { display: inline-block; margin-left: 8px; padding: 1px 6px; border-radius: 999px; font-size: 11px; color: #8a8b8a; box-shadow: inset 0 0 0 1px #363738; white-space: nowrap; }
+      .erp-age.old { color: #e0b04f; box-shadow: inset 0 0 0 1px rgba(224,176,79,.5); }
+      @media (prefers-reduced-motion: reduce) { .erp-akt .ld::before { animation: none; } }`;
+    (document.head || document.documentElement).append(css);
+  }
 
   // ---------- ERP updated: reload by itself only when it's safe ----------
   // The "new version" bar is gone (see the top), but a page left open on an old build drifts from the server. Here the
