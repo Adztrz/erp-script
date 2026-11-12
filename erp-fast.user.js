@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.50
+// @version      2.51
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -3143,12 +3143,14 @@
     }
     const where = (c) => { const m = /(-?\d{1,2}\.\d{3,})\s*,\s*(-?\d{2,3}\.\d{3,})/.exec(String(c?.shareLokasiGmaps || "")); return m ? { lat: +m[1], lng: +m[2] } : null; };
     // the technician's ODP text against the database: exact, then one code containing all of it, then every word found
-    function reported(c, list) {
-      const said = String(c?.installationData?.odpTerhubung || c?.networkSurvey?.odpTerdekat || "").replace(/^[\s\\/]+/, "").trim();
+    function reported(c, list) { return matchText(String(c?.installationData?.odpTerhubung || c?.networkSurvey?.odpTerdekat || ""), list); }
+    function matchText(text, list) {
+      const said = text.replace(/^[\s\\/]+/, "").trim();
       if (!said || norm(said).length < 3) return { said };
       const k = norm(said), words = said.toUpperCase().split(/[^A-Z0-9.]+/).map(norm).filter((w) => w.length > 1 && !/^(FAT|ODP|LDN)$/.test(w));
       let hits = list.filter((a) => a.key === k);
-      if (!hits.length) hits = list.filter((a) => a.key.includes(k) || (k.length > 6 && k.includes(a.key) && a.key.length > 5));
+      if (!hits.length) hits = list.filter((a) => a.key.includes(k) || (k.length > 6 && k.includes(a.key) && a.key.length > 5))
+        .sort((x, y) => Math.abs(x.key.length - k.length) - Math.abs(y.key.length - k.length)); // the closest in length first: "JIMAT 4C" before "JIMAT 4"
       if (!hits.length && words.length) hits = list.filter((a) => words.every((w) => a.key.includes(w)));
       return { said, hits: hits.slice(0, 3) };
     }
@@ -3198,28 +3200,40 @@
           body.append(el("p", "facts", facts.length ? facts.join(" · ") : "No installation report yet for this customer."));
         } else body.append(el("p", "facts", "Couldn't tell which customer this is: the suggestions below use nothing from the report."));
         const port = inst.portOdp || c?.networkSurvey?.portOdp || null, here = where(c);
-        const row = (a, why) => {
+        const row = (a, why, p = port) => {
           const r = el("div", "opt"), used = `${a.portTerpakai ?? "?"}/${a.kapasitasPort || "?"} used${a.full ? " · FULL" : ""}`;
           const d = here && a.lat != null ? km(metres(here, a)) : "";
           r.append(el("span", "code", a.kodeAset), el("span", "sub", [a.tipeAset, a.desa, used, d, why].filter(Boolean).join(" · ")));
           const b = el("button", null, "Use"); b.type = "button";
-          b.onclick = async () => { b.disabled = true; b.textContent = "Filling…"; const ok = await useFat(dlg, a, port); b.textContent = ok ? "Filled" : "Not found in the form"; setTimeout(() => { b.disabled = false; b.textContent = "Use"; }, 2500); };
+          b.onclick = async () => { b.disabled = true; b.textContent = "Filling…"; const ok = await useFat(dlg, a, p); b.textContent = ok ? "Filled" : "Not found in the form"; setTimeout(() => { b.disabled = false; b.textContent = "Use"; }, 2500); };
           r.append(b); return r;
         };
-        // FAT/ODP
+        // FAT/ODP: what the technician sends you first, the install report next, the nearest ones as a cross-check
         const fat = el("div", "blk"); fat.append(el("h4", null, "FAT / ODP"));
+        const paste = el("input", "paste"); paste.type = "text"; paste.placeholder = "Paste what the technician sent, e.g. FAT 8BBLH port 6";
+        paste.setAttribute("aria-label", "FAT from the technician"); const found = el("div", "blk");
+        let tmo = 0;
+        paste.oninput = () => { clearTimeout(tmo); tmo = setTimeout(() => {
+          const t = paste.value, pm = /\bport\s*:?\s*(\d{1,2})\b/i.exec(t) || /[\/#-]\s*(\d{1,2})\s*$/.exec(t.trim());
+          const said = pm ? t.replace(pm[0], " ") : t, m = matchText(said.replace(/\b(nya|nomor|no|di|ke|pakai|masuk|ya|pak|mas)\b\.?:?/gi, " ").replace(/\b(fat|odp)(\s+\1\b)+/gi, "$1"), list);
+          const p = pm ? pm[1] : port;
+          found.replaceChildren();
+          if (!t.trim()) return;
+          if (m.hits?.length) m.hits.forEach((a) => { found.append(row(a, `matches what you pasted${p ? `, port ${p}` : ""}`, p)); farWarn(found, a); });
+          else found.append(el("p", "warn", `Nothing in the FAT database matches "${m.said || t.trim()}". Check the code with the technician, or have it added in Aset & Peta.`));
+        }, 250); };
+        fat.append(paste, found);
+        const farWarn = (box, a) => { const far = here && a.lat != null ? metres(here, a) : null; // a drop cable is rarely over ~400 m
+          if (far > 400) box.append(el("p", "warn", `${a.kodeAset} is ${km(far)} from the install point: check it's the right one.`)); };
         const rep = c ? reported(c, list) : { said: "" };
-        if (rep.hits?.length) rep.hits.forEach((a) => {
-          fat.append(row(a, `matches the report${port ? `, port ${port}` : ""}`));
-          const far = here && a.lat != null ? metres(here, a) : null; // a drop cable is rarely over ~400 m: a FAT that far is likely a typo in the report
-          if (far > 400) fat.append(el("p", "warn", `${a.kodeAset} is ${km(far)} from the install point: check it's the right one before using it.`));
-        });
-        else if (rep.said) fat.append(el("p", "warn", `"${rep.said}" from the report isn't in the FAT database: pick from the nearest below, or ask for it to be added in Aset & Peta.`));
+        if (rep.hits?.length) { fat.append(el("p", "sub", "From the installation report:")); rep.hits.forEach((a) => { fat.append(row(a, `matches "${rep.said}"${port ? `, port ${port}` : ""}`)); farWarn(fat, a); }); }
+        else if (rep.said) fat.append(el("p", "warn", `The installation report says "${rep.said}", which isn't in the FAT database.`));
+        // the nearest ones, folded: a check that the technician's FAT is plausible, not a pick
+        const nearBox = el("details", "near"); nearBox.append(el("summary", null, "Nearest FATs to the install point"));
         if (here) {
-          const near = list.filter((a) => a.lat != null && !a.full).map((a) => [a, metres(here, a)]).sort((x, y) => x[1] - y[1]).slice(0, 5);
-          fat.append(el("p", "sub", `Nearest with free ports to the install point (${here.lat.toFixed(5)}, ${here.lng.toFixed(5)}):`));
-          near.forEach(([a]) => { if (!rep.hits?.some((h) => h.docId === a.docId)) fat.append(row(a, "")); });
-        } else fat.append(el("p", "sub", c?.shareLokasiGmaps ? "The install location is a short link, so no distances: open it from the queue map." : "No install location on record."));
+          list.filter((a) => a.lat != null && !a.full).map((a) => [a, metres(here, a)]).sort((x, y) => x[1] - y[1]).slice(0, 5).forEach(([a]) => nearBox.append(row(a, "")));
+        } else nearBox.append(el("p", "sub", c?.shareLokasiGmaps ? "The install location is a short link, so no distances: open it from the queue map." : "No install location on record."));
+        fat.append(nearBox);
         // modem
         const mod = el("div", "blk"); mod.append(el("h4", null, "Modem"));
         const scan = el("button", "wide", "Scan all OLTs and routers"); scan.type = "button"; scan.onclick = () => scanAll(dlg);
@@ -3373,6 +3387,11 @@
       .erp-akt h4 { margin: 4px 0 2px; font-size: 12px; font-weight: 500; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
       .erp-akt .opt { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 12px; align-items: center; padding: 6px 8px; border-radius: 6px; }
       .erp-akt .opt:hover { background: #1a1d1e; }
+      .erp-akt .paste { width: 100%; box-sizing: border-box; height: 36px; padding: 0 10px; border: 0; border-radius: 6px; background: #1a1d1e; color: var(--paper);
+        box-shadow: inset 0 0 0 1px var(--edge); font: 400 13px Inter, system-ui, sans-serif; }
+      .erp-akt .paste:focus { outline: none; box-shadow: inset 0 0 0 1px var(--bone); }
+      .erp-akt details.near summary { cursor: pointer; font-size: 12px; color: var(--muted); padding: 4px 0; }
+      .erp-akt details.near summary:hover { color: var(--paper); }
       .erp-akt .code { color: var(--paper); font: 500 13px/1.4 "JetBrains Mono", ui-monospace, monospace; }
       .erp-akt .opt .sub { grid-column: 1; }
       .erp-akt .opt button { grid-row: 1 / 3; grid-column: 2; }

@@ -44,8 +44,9 @@ Colours everywhere in the Dock: online green, isolir red, offline grey; red also
 In Technical → Antrean Aktivasi, the ⚡ activation form gets a Dock card on top:
 
 - **Technician's report:** technician, reported ODP and port, signal, modem.
+- **FAT from the technician:** paste what they sent (`pakai fat jimat 4c ya pak, port 3`). It finds the FAT in the database despite chat words and loose spelling, reads the port, and **Use** fills both. If the FAT is over 400 m from the install point, it warns you.
 - **FAT/ODP from the report:** matched to the database even when typed loosely (`\FAT LDN NW15`, `FAT 8BBLH`). If the match is over 400 m from the install point, it warns you.
-- **Nearest FATs/ODPs with free ports:** measured from the install point, with distance and ports in use. **Use** fills the form's FAT and port fields.
+- **Nearest FATs/ODPs with free ports** (folded, as a cross-check): measured from the install point, with distance and ports in use. **Use** fills the form's FAT and port fields.
 - **Scan all OLTs and routers:** runs the form's own scan of every OLT at once.
 - **Checklist:** FAT, port, OLT or modem, serial, and username, updated live.
 
