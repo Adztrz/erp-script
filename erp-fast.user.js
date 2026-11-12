@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.38
+// @version      2.39
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -621,6 +621,17 @@
   }
   // A typed word close to the start of a word in the record (a half-typed word still counts). Only words starting with
   // the same letter: a slip in the first letter is rare, and it skips most of the work.
+  // Typing on: a longer query only narrows what a shorter one found, as long as each word only grew at its end and none
+  // crossed a length where spelling slack starts (4 and 9 letters) or the number search starts (6 digits). A search that
+  // checked the whole list keeps what it found, so the next key searches just those rows instead of all 70,000. This is
+  // what kept typing slow past "nothing found", when every key ran the slow spelling pass over the whole list again.
+  const band = (w) => (w.length >= 9 ? 2 : w.length >= 4 ? 1 : 0);
+  function narrows(prev, words, num) {
+    if (!prev || words.length < prev.words.length) return false;
+    const a = prev.words;
+    for (let i = 0; i < a.length; i++) { const w = words[i]; if ((i < a.length - 1 ? w !== a[i] : !w.startsWith(a[i])) || band(w) !== band(a[i])) return false; }
+    return (num.length >= 6) === (prev.num.length >= 6) && (num.length < 6 || num.startsWith(prev.num));
+  }
   const fuzzyHit = (w, words, max) => words.some((x) => x[0] === w[0] && (near(w, x.slice(0, w.length), max) || near(w, x.slice(0, w.length + 1), max) || near(w, x, max)));
 
   const idb = () => new Promise((ok, no) => { const r = indexedDB.open(IDB, 1); r.onupgradeneeded = () => r.result.createObjectStore(IDB_STORE); r.onsuccess = () => ok(r.result); r.onerror = () => no(r.error); });
@@ -755,9 +766,9 @@
       const soft = (w) => w.length >= 4;
       const soundHit = (r, i) => r._sound.includes(" " + sounds[i]);
       const slack = (w) => (w.length >= 9 ? 2 : w.length >= 4 ? 1 : 0); // letters that may be off: 1 from 4 letters, 2 from 9
-      const out = [], seen = new Set();
+      const out = [], seen = new Set(), narrowed = !!st.memo && st.memo.rows === st.rows && narrows(st.memo, words, num), pool = narrowed ? st.memo.all : st.rows;
       let best = 0; // matches that can't be outranked (score 0); once there are 30, the rest of the list can't change the answer
-      for (const r of st.rows) {
+      for (const r of pool) {
         if (best >= 30) break;
         let score;
         if (num.length >= 6 && r._hay.includes(num)) score = 0;
@@ -769,12 +780,14 @@
         out.push([score, r]); seen.add(r); if (score === 0) best++;
       }
       // a letter or two off, only when the passes above found next to nobody (it's the slow part on a big list)
-      if (out.length < 5) for (const r of st.rows) {
+      const full = out.length < 5; // the slow pass runs, so this search sees every row it could match
+      if (full) for (const r of pool) {
         if (seen.has(r)) continue;
         if (!words.every((w, i) => r._hay.includes(w) || (soft(w) && (soundHit(r, i) || (slack(w) && fuzzyHit(sounds[i], r._words, slack(w))))))) continue;
         const inName = words.every((w, i) => r._name.includes(w) || (soft(w) && (r._nameWords.some((x) => x.startsWith(sounds[i])) || (slack(w) && fuzzyHit(sounds[i], r._nameWords, slack(w))))));
         out.push([inName ? 5 : 6, r]);
       }
+      if (full) st.memo = { words, num, rows: st.rows, all: out.map((x) => x[1]) }; else if (!narrowed) st.memo = null;
       return out.sort((a, b) => a[0] - b[0] || (a[1]._name < b[1]._name ? -1 : a[1]._name > b[1]._name ? 1 : 0)).slice(0, 30).map((x) => x[1]);
     }
 
@@ -1032,21 +1045,25 @@
       const now = new Date(), key = `inv-${now.getFullYear()}-${now.getMonth() + 1}`;
       if (key !== invKey || !invoices) { const k = await idbGet(key); if (k?.rows) { invoices = k.rows; invKey = key; } }
     }
+    let findMemo = null; // what the last full search found (see narrows)
     function findCustomers(q, max = 6) {
       if (!customers) return [];
       const words = fold(q).split(" ").filter(Boolean), num = digits(q); if (!words.length) return [];
-      const sounds = words.map(sound), out = [];
-      for (const r of customers) {
+      const narrowed = !!findMemo && findMemo.rows === customers && narrows(findMemo, words, num), pool = narrowed ? findMemo.all : customers;
+      const sounds = words.map(sound), out = [], seen = new Set();
+      for (const r of pool) {
         let score = -1;
         if (num.length >= 6 && r._hay.includes(num)) score = 0;
         else if (words.every((w) => r._hay.includes(w))) score = r._name.startsWith(words.join(" ")) ? 0 : words.every((w) => r._name.includes(w)) ? 1 : 2;
         else if (words.every((w, i) => r._hay.includes(w) || (w.length >= 4 && r._sound.includes(" " + sounds[i])))) score = 3;
-        if (score >= 0) out.push([score, r]);
+        if (score >= 0) { out.push([score, r]); seen.add(r); }
       }
-      if (out.length < 3) for (const r of customers) {
-        if (out.some((x) => x[1] === r)) continue;
+      const full = out.length < 3;
+      if (full) for (const r of pool) {
+        if (seen.has(r)) continue;
         if (words.every((w, i) => r._hay.includes(w) || (w.length >= 4 && fuzzyHit(sounds[i], r._words, w.length >= 9 ? 2 : 1)))) out.push([4, r]);
       }
+      if (full) findMemo = { words, num, rows: customers, all: out.map((x) => x[1]) }; else if (!narrowed) findMemo = null;
       return out.sort((a, b) => a[0] - b[0] || (a[1]._name < b[1]._name ? -1 : 1)).slice(0, max).map((x) => x[1]);
     }
     const pages = () => { const m = new Map(START); for (const [h, t] of Object.entries(ls.get(PAGES, {}))) m.set(h, t); return [...m]; };
