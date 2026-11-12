@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.40
+// @version      2.41
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -1281,6 +1281,8 @@
       .erp-dock .mrow { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 2px 10px; align-items: center; margin-top: 8px; font-size: 13px; color: var(--paper); cursor: pointer; }
       .erp-dock .mrow input { width: 16px; height: 16px; margin: 0; accent-color: var(--bone); cursor: pointer; }
       .erp-dock .mrow .mono { color: var(--body); }
+      .erp-dock .skipold { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 10px; align-items: start; margin-top: 12px; padding: 8px 10px; border-radius: 6px; box-shadow: inset 0 0 0 1px var(--hair); font-size: 13px; color: var(--paper); cursor: pointer; }
+      .erp-dock .skipold input { width: 16px; height: 16px; margin: 2px 0 0; accent-color: var(--bone); cursor: pointer; } .erp-dock .skipold .sub { display: block; margin-top: 2px; font-size: 12px; color: var(--muted); }
       .erp-dock .mrow .x { grid-column: 2 / 4; display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 12px; color: var(--muted); }
       .erp-dock .mrow .x label { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; } .erp-dock .mrow .x input { width: 13px; height: 13px; }
       .erp-dock .late, .erp-dock .brow .late { color: #ff6a5c; } .erp-dock .good, .erp-dock .brow .good { color: var(--green); } .erp-dock .warn, .erp-dock .brow .warn, .erp-dock .brow .h .warn { color: #e0b252; }
@@ -1495,8 +1497,14 @@
         } catch { for (const v of part) v.radius = { failed: true }; }
       }
     }
-    // ticking a month ticks the older ones too (the server pays oldest first); unticking clears the newer ones
-    function tickMonth(row, i, on, st, redraw) { row.invs.forEach((v, j) => { if (on ? j <= i : j >= i) v.on = on; }); st.armed = 0; redraw(); }
+    // ticking a month ticks the older ones too (the server pays oldest first); unticking clears the newer ones. With
+    // "skip older months" on, each month is ticked on its own.
+    function tickMonth(row, i, on, st, redraw) { row.invs.forEach((v, j) => { if (st.skipOlder ? j === i : on ? j <= i : j >= i) v.on = on; }); st.armed = 0; redraw(); }
+    // The ERP's own exception to oldest-first (Finance → Invoices, "Lunasi walau ada tagihan lebih tua"): for a customer
+    // who pays only this month (away, didn't use the internet). The older months stay unpaid; the server wants a note of
+    // 10+ letters and logs it as [OVERRIDE tertua-dulu]; only finance manager / admin / super admin may.
+    const SKIP_ROLES = ["super_admin", "admin", "finance_manager"];
+    const myRole = () => { try { return String(JSON.parse(localStorage.getItem("user") || "{}").role || ""); } catch { return ""; } };
     const chosen = () => bulk.rows.filter((r) => r.state === "found").flatMap((r) => r.invs.filter((v) => v.on && !v.result?.ok).map((v) => [r, v]));
     const pay = () => payQueue(chosen(), bulk, bulkDraw, "Bulk Lunas (Dock)");
     // pays a list of [row, invoice], one request each in order; st holds the method, date, note and progress
@@ -1508,7 +1516,7 @@
         v.result = { busy: true }; redraw();
         try {
           const j = await api("/api/finance/invoices/bulk-mark-paid", { invoiceNumbers: [v.no], paymentMethod: st.method, notes: st.note.trim() || defaultNote,
-            paymentDate: st.date || undefined, rechargeMap: v.recharge ? { [v.no]: true } : {} });
+            paymentDate: st.date || undefined, rechargeMap: v.recharge ? { [v.no]: true } : {}, ...(st.override ? { lunasiWalauAdaTertua: true } : {}) });
           const sum = j.summary || {}, older = (j.tertuaDulu || [])[0], waiting = (j.results || []).find((x) => x?.belumDiproses), failed = (j.rechargeGagal || [])[0];
           const skip = (j.results || []).find((x) => x?.status === "skip" || x?.status === "error");
           if (sum.marked) row.paidTo = v.period || row.paidTo;
@@ -1546,7 +1554,7 @@
       const date = el("input", "field"); date.type = "date"; date.value = st.date; date.max = todayIso(); date.disabled = busy; date.dataset.k = `${key}date`;
       date.onchange = () => { st.date = date.value; st.armed = 0; redraw(); };
       const note = el("input", "field"); note.placeholder = st.defaultNote; note.value = st.note; note.disabled = busy; note.dataset.k = `${key}note`;
-      note.oninput = () => { st.note = note.value; st.armed = 0; };
+      note.oninput = () => { st.note = note.value; st.armed = 0; st.onNote?.(); };
       const lab = (t, f) => { const l = el("label", "lbl"); l.append(t, f); return l; };
       const two = el("div", "row2"); two.append(lab("Method", method), lab("Payment date", date));
       return [two, lab("Note", note)];
@@ -1583,12 +1591,27 @@
       else {
         parts.push(...monthRows(row, `c${row.user}`, busy, st, redraw));
         if (open.length) {
+          if (open.length > 1 || st.skipOlder) {
+            const role = myRole(), may = !role || SKIP_ROLES.includes(role), sk = el("label", "skipold"), cb = el("input"); cb.type = "checkbox"; cb.checked = !!st.skipOlder;
+            cb.disabled = busy || !may; cb.dataset.k = `c${row.user}skip`;
+            cb.onchange = () => { st.skipOlder = cb.checked; st.armed = 0;
+              if (!cb.checked) { const top = open.map((v) => row.invs.indexOf(v)).filter((j) => row.invs[j].on).pop(); if (top != null) row.invs.forEach((v, j) => { if (j <= top && !v.result?.ok) v.on = true; }); } // back to oldest first
+              redraw(); };
+            const t = el("span"); t.append(el("b", null, "Skip older months"), el("span", "sub", may ? "Pay only the months you tick, for a customer who was away or didn't use the internet. The older months stay unpaid; the note must say why (10+ letters) and the ERP logs it as [OVERRIDE tertua-dulu]."
+              : "Only a finance manager or admin can skip older months."));
+            sk.append(cb, t); parts.push(sk);
+          }
           const f = el("div", "bform"); f.append(...payFields(st, busy, `c${row.user}`, redraw)); parts.push(f);
           const what = ch.length === 1 ? ch[0].period : `${ch.length} months`, rc = ch.filter((v) => v.recharge).length;
+          const newest = ch.length ? row.invs.indexOf(ch[ch.length - 1]) : -1, skipped = st.skipOlder ? open.filter((v) => !v.on && row.invs.indexOf(v) < newest).length : 0;
           if (st.phase === "paying") { const s = el("button", "btn wide", `Paying ${Math.min(st.done + 1, st.total)} of ${st.total}…`); s.type = "button"; s.disabled = true; parts.push(s); }
-          else { const btn = armButton(st, ch.length ? `Mark ${what} Lunas · ${rupiah(total)}${rc ? " · recharge" : ""}` : "Tick a month to pay",
-              `Click again: ${what} paid by ${st.method}, ${rupiah(total)}`, () => payQueue(ch.map((v) => [row, v]), st, redraw, st.defaultNote), redraw, `c${row.user}pay`);
-            btn.disabled = !ch.length; btn.style.marginTop = "10px"; parts.push(btn); }
+          else { const btn = armButton(st, ch.length ? `Mark ${what} Lunas · ${rupiah(total)}${skipped ? ` · skip ${skipped} older` : ""}${rc ? " · recharge" : ""}` : "Tick a month to pay",
+              `Click again: ${what} paid by ${st.method}, ${rupiah(total)}${skipped ? `, ${skipped} older left unpaid` : ""}`, () => (st.override = skipped > 0, payQueue(ch.map((v) => [row, v]), st, redraw, st.defaultNote)), redraw, `c${row.user}pay`);
+            btn.style.marginTop = "10px"; parts.push(btn);
+            const why = el("p", "note warn"); why.hidden = true; parts.push(why);
+            // skipping needs the reason first; checked as you type, without redrawing the note you're typing in
+            (st.onNote = () => { const short = !!skipped && st.note.trim().length < 10; btn.disabled = !ch.length || short;
+              why.hidden = !short; why.textContent = `Write in Note why the older months are skipped (${st.note.trim().length}/10 letters), e.g. "pelanggan di luar kota Oktober".`; })(); }
         } else if (st.phase === "done") parts.push(el("p", "note good", "Paid."));
       }
       b.el.replaceChildren(...parts);
