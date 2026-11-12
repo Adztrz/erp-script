@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.35
+// @version      2.36
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -1170,21 +1170,48 @@
       .erp-dock .near { margin: 4px; padding: 12px; border-radius: 8px; background: var(--canvas); box-shadow: inset 0 0 0 1px var(--hair); }
       .erp-dock .near .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
       .erp-dock canvas { display: block; width: 100%; height: 170px; margin: 10px 0 6px; }
-      .erp-dock .map { position: relative; height: 240px; margin: 10px 0 6px; border-radius: 8px; overflow: hidden; background: #0f1214; box-shadow: inset 0 0 0 1px var(--hair); }
+      .erp-dock .map { position: relative; height: 340px; margin: 10px 0 6px; border-radius: 8px; overflow: hidden; background: #0f1214; box-shadow: inset 0 0 0 1px var(--hair); }
       .erp-dock .map { cursor: grab; touch-action: none; user-select: none; } .erp-dock .map.panning { cursor: grabbing; } .erp-dock .map.panning .mdot { pointer-events: none; }
       .erp-dock .map .tiles img { position: absolute; width: 256px; height: 256px; max-width: none; pointer-events: none; user-select: none; }
       .erp-dock .map .tiles img { filter: invert(1) hue-rotate(180deg) brightness(.78) contrast(.92) saturate(.35); } /* OSM's light map, made dark */
       .erp-dock .map.sat .tiles img, .erp-dock .map.carto .tiles img { filter: none; } .erp-dock .map.sat .tiles img { filter: brightness(.8) saturate(.9); }
       .erp-dock .keyrow { display: flex; gap: 6px; align-items: center; margin: 0 0 8px; font-size: 12px; color: var(--muted); } .erp-dock .keyrow .field { height: 30px; flex: 1; }
       .erp-dock .mdot.pon { box-shadow: 0 0 0 2px var(--bone); }
-      .erp-dock .map .basemap { position: absolute; top: 8px; left: 8px; z-index: 4; background: rgba(9,11,12,.88); }
+      .erp-dock .map .basemap { position: absolute; bottom: 20px; right: 8px; z-index: 4; background: rgba(9,11,12,.88); }
       .erp-dock .ponbox { margin: 2px 0 8px; } .erp-dock .ponbox .note { margin: 4px 10px 8px; }
       .erp-dock .ponrow { margin-top: 4px; box-shadow: inset 0 0 0 1px var(--hair); }
       .erp-dock .map .ring { position: absolute; border-radius: 50%; box-shadow: inset 0 0 0 1.5px rgba(233,225,220,.7); pointer-events: none; }
       .erp-dock .map .ring.half { box-shadow: none; border: 1px dashed rgba(233,225,220,.45); }
       .erp-dock .mdot { position: absolute; width: 11px; height: 11px; margin: -5.5px 0 0 -5.5px; padding: 0; border: 1.5px solid rgba(7,9,11,.9); border-radius: 50%; background: var(--green); cursor: pointer;
         transition: transform .12s var(--out), box-shadow .12s; animation: erp-dock-pop .35s var(--out) backwards; animation-delay: var(--d, 0ms); }
-      .erp-dock .mdot.off { background: #a3a4a3; } .erp-dock .mdot.on { background: var(--green); } .erp-dock .mdot.iso { background: var(--red); }
+      .erp-dock .mdot.off { background: #a3a4a3; } .erp-dock .mdot.on { background: var(--green); } .erp-dock .mdot.iso { background: rgba(7,9,11,.6); border-color: #8a8b8a; }
+      .erp-dock .mdot.los { background: var(--red); } .erp-dock .mdot.pwr { background: #6b6c6b; } .erp-dock .mdot.weak { background: #e0b252; }
+      .erp-dock .mdot.los, .erp-dock .mdot.pwr, .erp-dock .mdot.off, .erp-dock .mdot.weak { width: 13px; height: 13px; margin: -6.5px 0 0 -6.5px; border: 2px solid rgba(255,255,255,.9); }
+      .erp-dock .map .asset { position: absolute; width: 8px; height: 8px; margin: -4px 0 0 -4px; background: var(--blue); box-shadow: 0 0 0 1.5px #07090b; pointer-events: none; }
+      .erp-dock .map .asset i, .erp-dock .map .fault i { position: absolute; left: 11px; top: -4px; font: 500 10px/1 Inter, system-ui, sans-serif; font-style: normal; color: rgba(170,200,255,.95); white-space: nowrap; text-shadow: 0 1px 2px #000, 0 0 3px #000; }
+      .erp-dock .map .fault { position: absolute; width: 32px; height: 32px; margin: -16px 0 0 -16px; border-radius: 50%; border: 2.5px dashed var(--red); pointer-events: none; animation: erp-fault 2s var(--soft) infinite; }
+      .erp-dock .map .fault i { left: 50%; top: 36px; transform: translateX(-50%); padding: 3px 6px; border-radius: 4px; background: var(--red); color: #fff; font-weight: 600; font-size: 11px; text-shadow: none; }
+      @keyframes erp-fault { 50% { box-shadow: 0 0 0 6px rgba(241,38,20,.18); } }
+      .erp-dock .map .ringlbl, .erp-dock .map .melbl, .erp-dock .map .plbl { position: absolute; z-index: 2; pointer-events: none; white-space: nowrap; font: 500 10px/16px Inter, system-ui, sans-serif; }
+      .erp-dock .map .ringlbl { transform: translate(-50%, -50%); padding: 0 4px; border-radius: 3px; background: rgba(9,11,12,.85); color: var(--bone); }
+      .erp-dock .map .melbl { transform: translate(-50%, 12px); padding: 2px 6px; border-radius: 4px; background: rgba(233,225,220,.95); color: #07090b; font-weight: 600; font-size: 12px; }
+      .erp-dock .map .plbl { height: 18px; padding: 1px 6px 1px 7px; border-radius: 4px; background: rgba(9,11,12,.9); color: var(--paper); font-size: 11px; box-shadow: inset 2.5px 0 0 var(--k, #a3a4a3); }
+      .erp-dock .map .plbl.los { --k: var(--red); } .erp-dock .map .plbl.pwr { --k: #6b6c6b; } .erp-dock .map .plbl.weak { --k: #e0b252; }
+      .erp-dock .map .brief { position: absolute; z-index: 3; top: 8px; left: 8px; right: 44px; padding: 7px 10px; border-radius: 6px; background: rgba(9,11,12,.92); box-shadow: inset 0 0 0 1px var(--hair); pointer-events: none; }
+      .erp-dock .map .brief .bt { display: flex; align-items: center; gap: 8px; color: var(--paper); font-weight: 600; font-size: 13px; }
+      .erp-dock .map .brief .lv { padding: 1px 6px; border-radius: 3px; font-size: 11px; font-weight: 700; letter-spacing: .04em; color: #07090b; }
+      .erp-dock .map .brief .lv.high { background: var(--red); color: #fff; } .erp-dock .map .brief .lv.mid { background: #e0b252; } .erp-dock .map .brief .lv.low { background: #a3a4a3; } .erp-dock .map .brief .lv.ok { background: var(--green); }
+      .erp-dock .map .brief .bs, .erp-dock .map .brief .bf { margin-top: 2px; font-size: 11px; color: var(--body); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .erp-dock .map .brief .bf { color: #ff8a7a; font-weight: 500; }
+      .erp-dock .map .zoom button.bm { font-size: 10px; font-weight: 600; }
+      .erp-dock .map .foot { position: absolute; z-index: 3; left: 8px; right: 8px; bottom: 16px; padding: 5px 8px; border-radius: 6px; background: rgba(9,11,12,.88); pointer-events: none; font-size: 11px; color: var(--bone); }
+      .erp-dock .map .scale { display: flex; align-items: center; gap: 6px; } .erp-dock .map .scale i { height: 6px; border: 1.5px solid var(--bone); border-top: 0; }
+      .erp-dock .map .legend { display: flex; flex-wrap: wrap; gap: 2px 8px; margin-top: 3px; } .erp-dock .map .legend span { display: inline-flex; align-items: center; gap: 4px; }
+      .erp-dock .map .legend .k { width: 8px; height: 8px; border-radius: 50%; } .erp-dock .map .legend .k.los { background: var(--red); } .erp-dock .map .legend .k.pwr { background: #6b6c6b; } .erp-dock .map .legend .k.off { background: #a3a4a3; }
+      .erp-dock .map .legend .k.weak { background: #e0b252; } .erp-dock .map .legend .k.on { background: var(--green); } .erp-dock .map .legend .k.iso { box-shadow: inset 0 0 0 1.5px #8a8b8a; }
+      .erp-dock .map .legend .k.box { border-radius: 0; background: var(--blue); } .erp-dock .map .legend .k.fault { border: 1.5px dashed var(--red); width: 9px; height: 9px; }
+      .erp-dock .map .sharesheet { position: absolute; z-index: 5; left: 50%; bottom: 76px; transform: translateX(-50%); display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; justify-content: center; width: max-content; max-width: calc(100% - 24px);
+        padding: 8px 10px; border-radius: 8px; background: var(--card); color: var(--paper); font-size: 12px; box-shadow: inset 0 0 0 1px var(--edge), 0 8px 20px rgba(0,0,0,.5); cursor: default; }
+      .erp-dock .map .sharesheet > span:last-child { display: flex; gap: 6px; }
       .erp-dock .mdot:hover, .erp-dock .mdot.hl { transform: scale(1.6); z-index: 2; box-shadow: 0 0 0 3px rgba(233,225,220,.75); }
       .erp-dock .mdot.me { width: 15px; height: 15px; margin: -7.5px 0 0 -7.5px; background: var(--bone); border: 2.5px solid var(--canvas); box-shadow: 0 0 0 2px var(--bone); pointer-events: none; animation: none; z-index: 1; }
       @keyframes erp-dock-pop { from { transform: scale(0); opacity: 0; } }
@@ -1197,7 +1224,7 @@
       .erp-dock.erp-dock-full { inset: 0; width: auto; max-height: none; border-radius: 0; box-shadow: none; z-index: 2147483003; animation: erp-dock-open .25s var(--out) both; }
       .erp-dock-full .map.full { position: absolute; inset: 0; height: auto; margin: 0; border-radius: 0; }
       .erp-dock .map.full .mdot { width: 13px; height: 13px; margin: -6.5px 0 0 -6.5px; }
-      .erp-dock .map .attr { position: absolute; left: 6px; bottom: 4px; font-size: 10px; color: rgba(255,255,255,.75); text-shadow: 0 1px 2px #000; pointer-events: none; }
+      .erp-dock .map .attr { position: absolute; right: 8px; bottom: 2px; font-size: 9px; color: rgba(255,255,255,.75); text-shadow: 0 1px 2px #000; pointer-events: none; }
       .erp-dock .counts span { display: inline-flex; align-items: center; gap: 6px; } .erp-dock .counts .dot { width: 8px; height: 8px; }
       .erp-dock .counts { display: flex; gap: 12px; font-size: 13px; } .erp-dock .counts b { color: var(--paper); font-weight: 500; }
       .erp-dock .rise { animation: erp-dock-rise .45s var(--soft) both; animation-delay: calc(var(--i, 0) * 30ms); }
@@ -1773,8 +1800,8 @@
       if (off.length) parts.push(reportBox({ title: x_name(ip), down: off.length, total: mine.length, since: rx?.level === "down" || rx?.level === "drop" ? rx.since : null, custs: off }));
       // where the offline ones are, on the map
       const pts = mine.map((c) => ({ c, p: where(c), on: !off.includes(c) })).filter((z) => z.p);
-      if (pts.length) { parts.push(areaMap(pts, `${off.length} offline customers on a map of ${x_name(ip)}`));
-        parts.push(el("p", "note", `On the map: ${pts.length} of ${mine.length} customers (the ones with a saved location), offline in grey.`)); }
+      if (pts.length) { parts.push(areaMap(pts, `${off.length} offline customers on a map of ${x_name(ip)}`, { what: `Router ${x_name(ip)}`, since: rx?.level === "down" || rx?.level === "drop" ? rx.since : null }));
+        parts.push(el("p", "note", `On the map: ${pts.length} of ${mine.length} customers (the ones with a saved location), problems named on the map.`)); }
       // villages, most offline first
       const by = new Map(); for (const c of mine) { const d = c.desa || "No village"; const g = by.get(d) || { all: 0, off: [] }; g.all++; if (off.includes(c)) g.off.push(c); by.set(d, g); }
       const rows = [...by].filter(([, g]) => g.off.length).sort((a, b) => b[1].off.length - a[1].off.length || b[1].off.length / b[1].all - a[1].off.length / a[1].all);
@@ -2136,8 +2163,8 @@
         : g.crit >= 3 ? `${g.crit} modems with critical signal on this port: check the connectors and splitter on this line.` : "This port looks normal."));
       // where they are
       const pts = g.all.map((o) => { const c = customerOf(o.sn, o, null); return c && where(c) ? { c, p: where(c), on: o.st === "online" } : null; }).filter(Boolean);
-      if (pts.length) { wrap.append(areaMap(pts, `Map of ${pts.length} customers on this port, offline in grey`));
-        wrap.append(el("p", "note", `On the map: ${pts.length} of ${g.all.length} modems, the ones linked to a customer with a saved location (offline in grey). The rest have no customer match or no location.`)); }
+      if (pts.length) { wrap.append(areaMap(pts, `Map of ${pts.length} customers on this port`, { what: `${g.olt} · PON ${g.pon}` }));
+        wrap.append(el("p", "note", `On the map: ${pts.length} of ${g.all.length} modems, the ones linked to a customer with a saved location. The rest have no customer match or no location.`)); }
       else wrap.append(el("p", "note", `None of the ${g.all.length} modems on this port is linked to a customer with a saved location, so there's nothing to map.`));
       out.push(wrap);
       if (g.off) out.push(reportBox({ title: `${g.olt} · PON ${g.pon}`, down: g.off, total: g.all.length, age: g.fresh ? `OLT ${lalu(g.fresh)}` : "",
@@ -2421,12 +2448,9 @@
       head.append(e, seg); box.append(head);
       const n = nearby(r, view.radius);
       if (!n) { box.append(el("p", "note", customers && !("lat" in r) ? "Locations arrive with the next refresh of the customer list (LDN → Pelanggan → Update)." : "This customer has no location saved.")); return box; }
-      const cnt = { on: 0, off: 0, iso: 0 }; n.list.forEach((x) => cnt[state(x.r)]++);
-      const counts = el("div", "counts"); counts.style.marginTop = "10px";
-      for (const [key, label] of [["on", "online"], ["off", "offline"], ["iso", "isolir"]]) { const s = el("span"); s.append(el("span", `dot ${key}`), el("b", null, String(cnt[key])), ` ${label}`); counts.append(s); } // also the map's legend
       const map = el("div", "map"); map.setAttribute("role", "group"); map.setAttribute("aria-label", `Map of ${n.list.length} customers within ${view.radius} metres`);
       const pon = el("div", "ponbox");
-      box.append(counts, map, cartoKeyRow(() => drawBody()), pon);
+      box.append(map, cartoKeyRow(() => drawBody()), pon);
       const rows = [];
       for (const [i, x] of n.list.slice(0, 8).entries()) { const it = custItem(x.r, i); it.querySelector(".r").textContent = `${Math.round(x.d)} m`;
         it.addEventListener("mouseenter", () => map.hl?.(i, true)); it.addEventListener("mouseleave", () => map.hl?.(i, false)); rows.push(it); box.append(it); }
@@ -2450,43 +2474,47 @@
     }
     // the same map for a group of customers (a PON port, a router's offline customers): fitted to where they are,
     // offline grey over online green; a dot shows the name and opens the customer
-    function areaMap(pts, label) {
+    function areaMap(pts, label, about = {}) {
       const box = el("div", "map"); box.setAttribute("role", "group"); box.setAttribute("aria-label", label);
-      box.redraw = () => drawAreaMap(box, pts); setTimeout(box.redraw, 0); return box;
+      box.redraw = () => drawAreaMap(box, pts, about); setTimeout(box.redraw, 0); return box;
     }
-    function drawAreaMap(box, pts) {
+    function drawAreaMap(box, pts, about = {}) {
       const w = box.clientWidth, h = box.clientHeight; if (!w || !pts.length) return;
       const { kind, carto, T } = tileSource(), q = (a, f) => a[Math.min(a.length - 1, Math.max(0, Math.floor(a.length * f)))];
-      const la = pts.map((z) => z.p.lat).sort((a, b) => a - b), lo = pts.map((z) => z.p.lng).sort((a, b) => a - b), cut = pts.length > 20 ? 0.02 : 0;
+      // with customers in trouble the map frames them (the rest still show where they fall), so they can be named
+      const kinds = pts.map((z0) => ({ ...z0, k: health(z0.c, z0.on) })), focus = kinds.filter((z0) => RANK[z0.k] > 1), fit = focus.length ? focus : kinds;
+      const la = fit.map((z) => z.p.lat).sort((a, b) => a - b), lo = fit.map((z) => z.p.lng).sort((a, b) => a - b), cut = fit.length > 20 ? 0.02 : 0;
       const b = { s: q(la, cut), n: q(la, 1 - cut), w: q(lo, cut), e: q(lo, 1 - cut) }, mid = { lat: (b.s + b.n) / 2, lng: (b.w + b.e) / 2 };
       const proj = (p, z) => { const size = 256 * 2 ** z, sin = Math.sin(p.lat * Math.PI / 180); return [((p.lng + 180) / 360) * size, (0.5 - Math.log((1 + sin) / (1 - sin)) / (4 * Math.PI)) * size]; };
-      let z = T.max; while (z > 8) { const [x0, y0] = proj({ lat: b.n, lng: b.w }, z), [x1, y1] = proj({ lat: b.s, lng: b.e }, z); if (x1 - x0 <= w - 48 && y1 - y0 <= h - 48) break; z--; }
+      let z = Math.min(T.max, 17); while (z > 8) { const [x0, y0] = proj({ lat: b.n, lng: b.w }, z), [x1, y1] = proj({ lat: b.s, lng: b.e }, z); if (x1 - x0 <= w - 96 && y1 - y0 <= h - 150) break; z--; } // clear of the strip and the legend
       z = Math.max(8, Math.min(T.max, z + (box.zoom || 0)));
-      const size = 256 * 2 ** z, [cx, cy] = box.ctr ? [box.ctr[0] * size, box.ctr[1] * size] : proj(mid, z), left = cx - w / 2, top = cy - h / 2, tiles = el("div", "tiles");
+      const size = 256 * 2 ** z, [cx, cy] = box.ctr ? [box.ctr[0] * size, box.ctr[1] * size] : proj(mid, z), left = cx - w / 2, top = cy - h / 2 - (box.ctr ? 0 : 6), tiles = el("div", "tiles");
       box.geo = { size, cx, cy }; panMap(box);
       for (let tx = Math.floor(left / 256); tx * 256 < left + w; tx++) for (let ty = Math.floor(top / 256); ty * 256 < top + h; ty++) {
         const img = el("img"); img.src = T.url(tx, ty, z); img.alt = ""; img.draggable = false; img.style.left = `${tx * 256 - left}px`; img.style.top = `${ty * 256 - top}px`; tiles.append(img); }
       const tip = el("span", "tip"); tip.hidden = true;
-      const dots = [...pts].sort((a, c) => a.on - c.on).reverse().map((z0) => { // offline drawn last, on top
-        const [px, py] = proj(z0.p, z), d = el("button", `mdot ${z0.on ? "on" : "off"}`); d.type = "button"; d.tabIndex = -1; d.style.left = `${px - left}px`; d.style.top = `${py - top}px`;
-        const name = `${z0.c.nama || z0.c.username}${z0.on ? "" : " · offline"}`; d.setAttribute("aria-label", name);
+      waitForBrief(box);
+      const dots = [...kinds].sort((a, c) => RANK[a.k] - RANK[c.k]).map((z0) => { // problems drawn last, on top
+        const [px, py] = proj(z0.p, z), d = el("button", `mdot ${z0.k}`); d.type = "button"; d.tabIndex = -1; d.style.left = `${px - left}px`; d.style.top = `${py - top}px`;
+        const name = `${z0.c.nama || z0.c.username} · ${KIND[z0.k][0].toLowerCase()}`; d.setAttribute("aria-label", name);
         d.onmouseenter = () => { tip.textContent = name; tip.style.left = d.style.left; tip.style.top = d.style.top; tip.classList.toggle("low", py - top < 34); tip.hidden = false; d.classList.add("hl"); };
         d.onmouseleave = () => { tip.hidden = true; d.classList.remove("hl"); };
         d.onclick = () => { view.card = z0.c; view.sel = 0; remember(z0.c); draw(); }; return d; });
       const zoom = el("div", "zoom"), full = box.classList.contains("full"), fs = el("button", null, full ? "⤡" : "⤢"); fs.type = "button"; fs.title = full ? "Back (F or Esc)" : "Full screen (F)"; fs.onclick = () => toggleFull(box); zoom.append(fs);
       for (const [t, dz, label] of [["+", 1, "Zoom in"], ["−", -1, "Zoom out"]]) { const bt = el("button", null, t); bt.type = "button"; bt.setAttribute("aria-label", label); bt.onclick = () => { box.zoom = (box.zoom || 0) + dz; box.redraw(); }; zoom.append(bt); }
-      zoom.append(recentre(box));
-      const base = el("div", "seg basemap");
-      for (const [k, label] of [["dark", "Map"], ["sat", "Satellite"]]) { const bt = el("button", null, label); bt.type = "button"; bt.setAttribute("aria-pressed", String(kind === k)); bt.onclick = () => { ls.set(BASEMAP, k); box.redraw(); }; base.append(bt); }
+      zoom.append(recentre(box), baseButton(box, kind), shareButton(box));
       box.classList.toggle("sat", kind === "sat"); box.classList.toggle("carto", carto);
-      box.replaceChildren(tiles, ...dots, tip, zoom, base, el("span", "attr", T.attr));
+      const mpp = 156543.03392 * Math.cos(mid.lat * Math.PI / 180) / 2 ** z;
+      const scene = briefScene({ pts: kinds, at: (p) => { const [x, y] = proj(p, z); return [x - left, y - top]; }, mpp, w, h, about });
+      box.scene = scene;
+      box.replaceChildren(tiles, ...briefUnder(scene), ...dots, ...briefOver(scene), tip, zoom, el("span", "attr", T.attr));
     }
     function tileMap(box, r, n, radius, rows) {
       const w = box.clientWidth, h = box.clientHeight; if (!w) return;
       if (view.zoomFor !== r.username) { view.zoom = 0; view.zoomFor = r.username; }
       const mpp0 = 156543.03392 * Math.cos(n.c.lat * Math.PI / 180); // metres per pixel at zoom 0
       const { kind, carto, T } = tileSource();
-      const z = Math.max(12, Math.min(T.max, Math.floor(Math.log2((mpp0 * Math.min(w, h) * 0.46) / radius)) + (view.zoom || 0)));
+      const z = Math.max(12, Math.min(T.max, Math.floor(Math.log2((mpp0 * Math.min(w, h - 120) * 0.6) / radius)) + (view.zoom || 0)));
       const size = 256 * 2 ** z, world = (p) => { const sin = Math.sin(p.lat * Math.PI / 180); return [((p.lng + 180) / 360) * size, (0.5 - Math.log((1 + sin) / (1 - sin)) / (4 * Math.PI)) * size]; };
       if (box.ctrFor !== r.username) { box.ctr = null; box.ctrFor = r.username; }
       const [cx, cy] = box.ctr ? [box.ctr[0] * size, box.ctr[1] * size] : world(n.c), left = cx - w / 2, top = cy - h / 2, mpp = mpp0 / 2 ** z;
@@ -2497,10 +2525,12 @@
         const img = el("img"); img.src = T.url(tx, ty, z); img.alt = ""; img.draggable = false; img.style.left = `${tx * 256 - left}px`; img.style.top = `${ty * 256 - top}px`; tiles.append(img); }
       const ring = (f, cls) => { const d = el("span", `ring ${cls}`), R = (radius * f) / mpp; d.style.cssText = `width:${2 * R}px;height:${2 * R}px;left:${hx - R}px;top:${hy - R}px`; return d; };
       const tip = el("span", "tip"); tip.hidden = true;
+      waitForBrief(box);
+      n.list.forEach((x) => { x.k = health(x.r); });
       const dots = n.list.map((x, i) => {
-        const [px, py] = world(x.p), b = el("button", `mdot ${state(x.r)}`); b.type = "button"; b.tabIndex = -1;
+        const [px, py] = world(x.p), b = el("button", `mdot ${x.k}`); b.type = "button"; b.tabIndex = -1; b.style.zIndex = RANK[x.k] > 1 ? "1" : "";
         b.style.left = `${px - left}px`; b.style.top = `${py - top}px`; b.style.setProperty("--d", `${Math.round(Math.min(1, x.d / radius) * 350)}ms`);
-        b.setAttribute("aria-label", `${x.r.nama || x.r.username}, ${Math.round(x.d)} m`);
+        b.setAttribute("aria-label", `${x.r.nama || x.r.username}, ${KIND[x.k][0].toLowerCase()}, ${Math.round(x.d)} m`);
         b.onmouseenter = () => hl(i, true); b.onmouseleave = () => hl(i, false);
         b.onclick = () => { view.card = x.r; view.sel = 0; remember(x.r); draw(); };
         return b;
@@ -2514,18 +2544,20 @@
       box.redraw = () => tileMap(box, r, n, radius, rows); // after going full screen and back
       box.pon = (set) => { box.ponSet = set; dots.forEach((d, i) => d.classList.toggle("pon", set.has(n.list[i].r.username))); };
       if (box.ponSet) box.pon(box.ponSet);
-      const base = el("div", "seg basemap");
-      for (const [k, label] of [["dark", "Map"], ["sat", "Satellite"]]) { const b = el("button", null, label); b.type = "button"; b.setAttribute("aria-pressed", String(kind === k));
-        b.onclick = () => { ls.set(BASEMAP, k); tileMap(box, r, n, radius, rows); }; base.append(b); }
       const me = el("span", "mdot me"); me.style.left = `${hx}px`; me.style.top = `${hy}px`;
       const zoom = el("div", "zoom");
       const full = box.classList.contains("full"), fs = el("button", null, full ? "⤡" : "⤢"); fs.type = "button"; fs.title = full ? "Back (F or Esc)" : "Full screen (F)";
       fs.setAttribute("aria-label", full ? "Leave full screen" : "Full screen"); fs.onclick = () => toggleFull(box); zoom.append(fs);
       for (const [t, dz, label] of [["+", 1, "Zoom in"], ["−", -1, "Zoom out"]]) { const b = el("button", null, t); b.type = "button"; b.setAttribute("aria-label", label);
         b.disabled = (dz > 0 && z >= T.max) || (dz < 0 && z <= 12); b.onclick = () => { view.zoom = (view.zoom || 0) + dz; tileMap(box, r, n, radius, rows); }; zoom.append(b); }
-      zoom.append(recentre(box));
+      zoom.append(recentre(box), baseButton(box, kind), shareButton(box));
       box.classList.toggle("sat", kind === "sat"); box.classList.toggle("carto", !!carto);
-      box.replaceChildren(tiles, ring(0.5, "half"), ring(1, ""), ...dots, me, tip, zoom, base, el("span", "attr", T.attr));
+      const at = (p) => { const [x, y] = world(p); return [x - left, y - top]; };
+      const scene = briefScene({ pts: [{ c: r, p: n.c, k: health(r), me: true }, ...n.list.map((x) => ({ c: x.r, p: x.p, k: x.k }))], at, mpp, w, h,
+        rings: [[hx, hy, radius / 2 / mpp, `${radius / 2} m`], [hx, hy, radius / mpp, radius < 1000 ? `${radius} m` : "1 km"]],
+        me: [hx, hy, r.nama || r.username], about: { what: `Radius ${radius < 1000 ? `${radius} m` : "1 km"} dari ${r.nama || r.username}`, near: r } });
+      box.scene = scene;
+      box.replaceChildren(tiles, ring(0.5, "half"), ring(1, ""), ...briefUnder(scene), ...dots, me, ...briefOver(scene), tip, zoom, el("span", "attr", T.attr));
     }
     // Drag a map to pan it: the picture follows the pointer, and every ~100 px (and on release) the tiles are drawn
     // again around the new centre, kept as a share of the world so zooming keeps the place. A press that moves less
@@ -2533,7 +2565,7 @@
     function panMap(box) {
       if (box.panReady) return; box.panReady = true;
       let start = null, moved = false;
-      const layer = () => [...box.children].filter((c) => !c.matches(".zoom, .seg, .attr, .tip"));
+      const layer = () => [...box.children].filter((c) => !c.matches(".zoom, .seg, .attr, .tip, .brief, .foot, .sharesheet"));
       const shift = (dx, dy) => layer().forEach((c) => { c.style.translate = dx || dy ? `${dx}px ${dy}px` : ""; });
       const commit = (dx, dy) => { const g = box.geo; if (!g) return; box.ctr = [(g.cx - dx) / g.size, (g.cy - dy) / g.size]; box.redraw?.(); };
       box.addEventListener("pointerdown", (e) => {
@@ -2560,6 +2592,194 @@
     function recentre(box) {
       const b = el("button", null, "◎"); b.type = "button"; b.title = "Back to the start"; b.setAttribute("aria-label", "Recentre the map");
       b.disabled = !box.ctr; b.onclick = () => { box.ctr = null; box.redraw?.(); }; return b;
+    }
+    // ---- the map as a brief for a technician ----
+    // What's wrong, where, and how bad, readable on the map itself and in the picture it shares: a strip with the
+    // severity and the counts, a legend, the problem customers named, labelled rings and a scale bar, the network boxes
+    // from Planning's asset list (cached when Planning was opened in this browser), and the box most likely at fault.
+    // Words on the map are Indonesian like the outage report, since the picture goes to the technicians.
+    // A customer's condition: the customer list says online or not; the OLT's modem list says why it's down (LOS is a
+    // cut or bent fibre, dying gasp is the power) and how strong the signal is (critical below −28 dBm, the ERP's line).
+    const KIND = { los: ["Putus (LOS)", "#f12614"], pwr: ["Mati listrik", "#6b6c6b"], off: ["Offline", "#a3a4a3"], weak: ["Redaman tinggi", "#e0b252"], iso: ["Isolir", "#8a8b8a"], on: ["Online", "#55bc82"] };
+    const RANK = { on: 0, iso: 1, weak: 2, off: 3, pwr: 3, los: 4 }, DOWN = new Set(["los", "pwr", "off"]);
+    const LEVEL = { high: ["BERAT", "#f12614"], mid: ["SEDANG", "#e0b252"], low: ["RINGAN", "#a3a4a3"], ok: ["NORMAL", "#55bc82"] };
+    function health(c, on = !!c.online) {
+      if (c.isolir) return "iso";
+      const o = modemOf(c).ont;
+      if (!on) return o && /los/i.test(o.st) ? "los" : o && /dying|power/i.test(o.st) ? "pwr" : "off";
+      return o && usable(o) && o.rx < -28 ? "weak" : "on";
+    }
+    const detail = (z) => (z.k === "weak" ? dbm(modemOf(z.c).ont?.rx) : z.k === "los" ? "LOS" : z.k === "pwr" ? "mati listrik" : "offline");
+    const shortName = (c) => String(c.nama || c.username || "").trim().split(/\s+/).slice(0, 2).join(" ");
+    // FAT/ODP/FDT/ODC with a location, from Planning's cached asset list; [] when Planning hasn't been opened here
+    let netList = null, netLoading = null;
+    const netAssets = () => (netLoading ||= (async () => {
+      try { const cache = await caches.open(CACHE);
+        for (const req of await cache.keys()) {
+          if (!/networkAssets/.test(req.url) || !/OLT.*FAT|FAT.*OLT/.test(decodeURIComponent(req.url))) continue;
+          const j = await (await cache.match(req)).json(), seen = new Set(), out = [];
+          for (const a of j.data || []) {
+            const type = String(a.tipeAset || "").toUpperCase(); if (seen.has(a.id) || !/^(FAT|ODP|FDT|ODC)$/.test(type)) continue; seen.add(a.id);
+            const lat = num(a.lokasiKoordinat?.latitude ?? a.lat), lng = num(a.lokasiKoordinat?.longitude ?? a.lng); if (!lat || !lng) continue;
+            const code = String(a.kodeAset || "").trim(); out.push({ type, code: code.toUpperCase().startsWith(type) ? code : `${type} ${code}`, p: { lat, lng } });
+          }
+          return (netList = out);
+        }
+      } catch {}
+      return (netList = []);
+    })());
+    // the modem list and the asset list arrive after the first drawing: draw once more when they're in
+    function waitForBrief(box) {
+      if (!netList && !box.netWait) { box.netWait = true; netAssets().then(() => box.isConnected && box.redraw?.()); }
+      if (!onts && !box.ontWait) { box.ontWait = true; ontIndex().then(() => box.isConnected && box.redraw?.()).catch(() => {}); }
+    }
+    // The box most likely at fault: with two or more customers down, the FAT/ODP closest to all of them (least total
+    // distance), if it's within 400 m of them on average. A pointer for where to look first, not a proof.
+    function suspect(down) {
+      if (down.length < 2 || !netList?.length) return null;
+      const mid = { lat: down.reduce((a, z) => a + z.p.lat, 0) / down.length, lng: down.reduce((a, z) => a + z.p.lng, 0) / down.length };
+      let best = null;
+      for (const a of netList) { if (!/FAT|ODP/.test(a.type) || metres(mid, a.p) > 800) continue;
+        const sum = down.reduce((t, z) => t + metres(z.p, a.p), 0); if (!best || sum < best.sum) best = { a, sum }; }
+      return best && best.sum / down.length <= 400 ? { ...best.a, avg: Math.round(best.sum / down.length) } : null;
+    }
+    function severity(pts) {
+      const n = {}; for (const z of pts) n[z.k] = (n[z.k] || 0) + 1;
+      const act = pts.filter((z) => z.k !== "iso").length, down = (n.los || 0) + (n.pwr || 0) + (n.off || 0), weak = n.weak || 0;
+      const lv = down >= 5 || (down >= 3 && down / Math.max(1, act) >= 0.25) || (n.los || 0) >= 3 ? "high" : down >= 2 || weak >= 3 ? "mid" : down || weak ? "low" : "ok";
+      return { n, act, down, weak, lv };
+    }
+    // Everything the brief shows, in map pixels, so the map on screen and the shared picture are drawn from one plan.
+    function briefScene({ pts, at, mpp, w, h, rings = [], me = null, about = {} }) {
+      const sev = severity(pts), probs = pts.filter((z) => z.k !== "on" && z.k !== "iso").sort((a, b) => RANK[b.k] - RANK[a.k]);
+      const down = pts.filter((z) => DOWN.has(z.k)), fault = suspect(down);
+      const vil = new Map(); for (const z of (probs.length ? probs : pts)) { const d = z.c.desa ? titleCase(z.c.desa.trim()) : ""; if (d) vil.set(d, (vil.get(d) || 0) + 1); }
+      const villages = [...vil].sort((a, b) => b[1] - a[1]);
+      const title = sev.down ? `${sev.down} dari ${sev.act} pelanggan mati` : sev.weak ? `${sev.weak} dari ${sev.act} redaman tinggi` : `Semua ${sev.act} pelanggan online`;
+      const counts = ["los", "pwr", "off", "weak", "iso", "on"].filter((k) => sev.n[k]).map((k) => `${sev.n[k]} ${KIND[k][0].toLowerCase()}`).join(" · ");
+      const sub = [about.what, villages.slice(0, 3).map(([d]) => d).join(", "), about.since ? `sejak ${hhmm(about.since)}` : `per ${hhmm(Date.now())}`].filter(Boolean).join(" · ");
+      const inView = ([x, y], m = 0) => x >= -m && y >= -m && x <= w + m && y <= h + m;
+      const assets = (netList || []).map((a) => ({ ...a, xy: at(a.p) })).filter((a) => inView(a.xy, 10));
+      const faultXY = fault ? at(fault.p) : null;
+      // name the problems where there's room: beside the dot, else the other side, above or below; never over the strip,
+      // the legend or another name
+      const used = [[0, 0, w, 72], [0, h - 58, w, h]], labels = [];
+      const free = (r) => r[0] >= 4 && r[2] <= w - 40 && used.every((u) => r[2] < u[0] || r[0] > u[2] || r[3] < u[1] || r[1] > u[3]);
+      if (faultXY) used.push([faultXY[0] - 18, faultXY[1] - 18, faultXY[0] + 18, faultXY[1] + 18], [faultXY[0] - 75, faultXY[1] + 18, faultXY[0] + 75, faultXY[1] + 40]); // the ring and its tag
+      for (const z of probs) { if (labels.length >= 14) break;
+        const [x, y] = at(z.p); if (!inView([x, y])) continue;
+        const text = `${shortName(z.c)} · ${detail(z)}`, tw = text.length * 6.3 + 12, th = 18;
+        const r = [[x + 9, y - th / 2], [x - 9 - tw, y - th / 2], [x - tw / 2, y - 12 - th], [x - tw / 2, y + 12]].map(([a, b]) => [a, b, a + tw, b + th]).find(free);
+        if (r) { used.push(r); labels.push({ x: r[0], y: r[1], w: tw, text, k: z.k }); }
+      }
+      const shown = assets.length <= 30; // codes only when they fit; the squares always
+      const nice = [10, 20, 50, 100, 200, 500, 1000, 2000, 5000].filter((m) => m / mpp <= 110).pop() || 10;
+      const legend = ["los", "pwr", "off", "weak", "iso", "on"].filter((k) => sev.n[k]).map((k) => [k, KIND[k][0]]);
+      if (assets.length) legend.push(["box", "FAT / ODP"]);
+      if (fault) legend.push(["fault", "Cek di sini"]);
+      const dots = pts.map((z) => ({ ...z, xy: at(z.p) })).filter((z) => inView(z.xy, 8)).sort((a, b) => RANK[a.k] - RANK[b.k]);
+      return { w, h, dots, sev, title, counts, sub, villages, probs, labels, rings, me, assets, shown, fault, faultXY, legend, scale: { px: nice / mpp, label: nice >= 1000 ? `${nice / 1000} km` : `${nice} m` }, about, noNet: netList && !netList.length };
+    }
+    // below the dots: the network boxes and the suspected one; above them: names, strip, legend, scale
+    function briefUnder(s) {
+      const out = [];
+      for (const a of s.assets) { const d = el("span", `asset ${a.type.toLowerCase()}`); d.style.left = `${a.xy[0]}px`; d.style.top = `${a.xy[1]}px`; d.title = a.code;
+        if (s.shown && a.code !== s.fault?.code) d.append(el("i", null, a.code)); out.push(d); }
+      if (s.faultXY) { const f = el("span", "fault"); f.style.left = `${s.faultXY[0]}px`; f.style.top = `${s.faultXY[1]}px`; f.append(el("i", null, `Cek di sini · ${s.fault.code}`)); out.push(f); }
+      return out;
+    }
+    function briefOver(s) {
+      const out = [];
+      for (const [x, y, R, t] of s.rings) { const l = el("span", "ringlbl", t); l.style.left = `${x}px`; l.style.top = `${y - R}px`; out.push(l); }
+      if (s.me) { const l = el("span", "melbl", s.me[2]); l.style.left = `${s.me[0]}px`; l.style.top = `${s.me[1]}px`; out.push(l); }
+      for (const l of s.labels) { const d = el("span", `plbl ${l.k}`, l.text); d.style.left = `${l.x}px`; d.style.top = `${l.y}px`; out.push(d); }
+      const strip = el("div", "brief"), lv = LEVEL[s.sev.lv], badge = el("b", `lv ${s.sev.lv}`, lv[0]);
+      const t = el("div", "bt"); t.append(badge, el("span", null, s.title)); strip.append(t, el("div", "bs", s.sub));
+      if (s.fault) strip.append(el("div", "bf", `Cek di sini: ${s.fault.code} (rata-rata ${s.fault.avg} m dari yang mati)`));
+      out.push(strip);
+      const leg = el("div", "legend"); for (const [k, label] of s.legend) { const i = el("span"); i.append(el("i", `k ${k}`), label); leg.append(i); }
+      const sc = el("div", "scale"); sc.append(el("i"), s.scale.label); sc.firstChild.style.width = `${Math.round(s.scale.px)}px`;
+      const foot = el("div", "foot"); foot.append(sc, leg); out.push(foot);
+      return out;
+    }
+    // The note that goes with the picture: severity, where to look, and the problem customers with phone and location.
+    function briefText(s) {
+      const link = (p) => `https://www.google.com/maps?q=${p.lat.toFixed(6)},${p.lng.toFixed(6)}`;
+      const lines = [`*GANGGUAN ${LEVEL[s.sev.lv][0]}* · ${s.title}`, s.about.what || "", s.counts];
+      if (s.villages.length) lines.push(`Desa: ${s.villages.slice(0, 6).map(([d, n]) => `${d} (${n})`).join(", ")}`);
+      if (s.fault) lines.push(`Cek di sini: ${s.fault.code} (perkiraan) ${link(s.fault.p)}`);
+      for (const k of ["los", "pwr", "off", "weak"]) {
+        const l = s.probs.filter((z) => z.k === k); if (!l.length) continue;
+        lines.push("", `${KIND[k][0]} (${l.length}):`);
+        l.slice(0, 20).forEach((z, i) => lines.push(`${i + 1}. ${z.c.nama || z.c.username} (${z.c.username})${k === "weak" ? ` · ${detail(z)}` : ""}${z.c.phone ? ` · ${z.c.phone}` : ""} · ${link(z.p)}`));
+        if (l.length > 20) lines.push(`… dan ${l.length - 20} lagi`);
+      }
+      lines.push("", `Dibuat ${wib()} WIB`);
+      return lines.filter((x, i, a) => x !== "" || (i > 0 && a[i - 1] !== "")).join("\n");
+    }
+    // The picture: the map's own tiles (those that allow it; Google's satellite doesn't, so that one shares on plain
+    // dark) with the brief drawn on top, at twice the size for a phone screen.
+    async function briefPng(box) {
+      const s = box.scene, w = s.w, h = s.h, k = 2, cv = el("canvas"); cv.width = w * k; cv.height = h * k;
+      const g = cv.getContext("2d"); g.scale(k, k); g.fillStyle = "#0f1214"; g.fillRect(0, 0, w, h);
+      const imgs = [...box.querySelectorAll(".tiles img")];
+      g.filter = imgs[0] ? getComputedStyle(imgs[0]).filter : "none";
+      await Promise.all(imgs.map((im) => new Promise((ok) => { const i = new Image(); i.crossOrigin = "anonymous";
+        i.onload = () => { try { g.drawImage(i, parseFloat(im.style.left), parseFloat(im.style.top), 256, 256); } catch {} ok(); }; i.onerror = () => ok(); i.src = im.src; })));
+      g.filter = "none";
+      const font = (wt, px) => { g.font = `${wt} ${px}px Inter, ui-sans-serif, system-ui, sans-serif`; };
+      const pill = (x, y, ww, hh, r, fill) => { g.beginPath(); g.roundRect(x, y, ww, hh, r); g.fillStyle = fill; g.fill(); };
+      const dot = (x, y, kind, r = 6) => { g.beginPath(); g.arc(x, y, r, 0, 7);
+        if (kind === "iso") { g.fillStyle = "rgba(7,9,11,.6)"; g.fill(); g.lineWidth = 2; g.strokeStyle = KIND.iso[1]; g.stroke(); return; }
+        g.fillStyle = KIND[kind][1]; g.fill(); g.lineWidth = 2; g.strokeStyle = "rgba(255,255,255,.9)"; g.stroke(); };
+      for (const [x, y, R] of s.rings) { g.beginPath(); g.arc(x, y, R, 0, 7); g.lineWidth = 1.5; g.strokeStyle = "rgba(233,225,220,.6)"; g.stroke(); }
+      for (const a of s.assets) { g.fillStyle = "#3e7edf"; g.strokeStyle = "#07090b"; g.lineWidth = 1.5; g.fillRect(a.xy[0] - 4, a.xy[1] - 4, 8, 8); g.strokeRect(a.xy[0] - 4, a.xy[1] - 4, 8, 8);
+        if (s.shown && a.code !== s.fault?.code) { font(500, 10); g.fillStyle = "rgba(170,200,255,.95)"; g.fillText(a.code, a.xy[0] + 7, a.xy[1] + 3); } }
+      if (s.faultXY) { const [x, y] = s.faultXY; g.beginPath(); g.arc(x, y, 16, 0, 7); g.setLineDash([4, 3]); g.lineWidth = 2.5; g.strokeStyle = "#f12614"; g.stroke(); g.setLineDash([]);
+        font(600, 11); const t = `Cek di sini · ${s.fault.code}`, tw = g.measureText(t).width + 12; pill(x - tw / 2, y + 20, tw, 18, 4, "#f12614"); g.fillStyle = "#fff"; g.fillText(t, x - tw / 2 + 6, y + 33); }
+      for (const z of s.dots) if (!z.me) dot(z.xy[0], z.xy[1], z.k, RANK[z.k] > 1 ? 6.5 : 5);
+      if (s.me) { const [x, y, name] = s.me; g.beginPath(); g.arc(x, y, 8, 0, 7); g.fillStyle = "#e9e1dc"; g.fill(); g.lineWidth = 3; g.strokeStyle = "#07090b"; g.stroke();
+        font(600, 12); const tw = g.measureText(name).width + 12; pill(x - tw / 2, y + 12, tw, 20, 4, "rgba(233,225,220,.95)"); g.fillStyle = "#07090b"; g.fillText(name, x - tw / 2 + 6, y + 26); }
+      for (const [x, y, R, t] of s.rings) { font(500, 10); const tw = g.measureText(t).width + 8; pill(x - tw / 2, y - R - 8, tw, 16, 3, "rgba(9,11,12,.85)"); g.fillStyle = "#e9e1dc"; g.fillText(t, x - tw / 2 + 4, y - R + 4); }
+      for (const l of s.labels) { font(500, 11); pill(l.x, l.y, l.w, 18, 4, "rgba(9,11,12,.9)"); g.fillStyle = KIND[l.k][1]; g.fillRect(l.x, l.y + 3, 2.5, 12); g.fillStyle = "#efefed"; g.fillText(l.text, l.x + 7, l.y + 13); }
+      // strip
+      pill(8, 8, w - 16, s.fault ? 62 : 46, 6, "rgba(9,11,12,.92)");
+      const lv = LEVEL[s.sev.lv]; font(700, 11); const bw = g.measureText(lv[0]).width + 12; pill(16, 15, bw, 18, 3, lv[1]); g.fillStyle = s.sev.lv === "high" ? "#fff" : "#07090b"; g.fillText(lv[0], 22, 28);
+      font(600, 13); g.fillStyle = "#efefed"; g.fillText(s.title, 16 + bw + 8, 28, w - bw - 48);
+      font(400, 11); g.fillStyle = "#b3b0af"; g.fillText(s.sub, 16, 46, w - 32);
+      if (s.fault) { font(500, 11); g.fillStyle = "#ff8a7a"; g.fillText(`Cek di sini: ${s.fault.code} (rata-rata ${s.fault.avg} m dari yang mati)`, 16, 62, w - 32); }
+      // legend and scale
+      font(500, 11); const items = [], lines = [[]]; let x = 0;
+      for (const [k, l] of s.legend) { const iw = g.measureText(l).width + 13; if (x && x + iw > w - 40) { lines.push([]); x = 0; } lines.at(-1).push([k, l, x]); x += iw + 10; }
+      const fh = 30 + lines.length * 16; pill(8, h - fh - 6, w - 16, fh, 6, "rgba(9,11,12,.88)");
+      const sy = h - fh + 12; g.fillStyle = "#e9e1dc"; g.fillRect(16, sy, s.scale.px, 1.5); g.fillRect(16, sy - 5, 1.5, 6); g.fillRect(16 + s.scale.px - 1.5, sy - 5, 1.5, 6); g.fillText(s.scale.label, 22 + s.scale.px, sy + 4);
+      lines.forEach((row, i) => { const ly = sy + 22 + i * 16; for (const [k, l, lx] of row) { const x0 = 16 + lx;
+        if (k === "box") { g.fillStyle = "#3e7edf"; g.fillRect(x0, ly - 8, 8, 8); }
+        else if (k === "fault") { g.beginPath(); g.arc(x0 + 4, ly - 4, 5, 0, 7); g.setLineDash([2, 2]); g.lineWidth = 1.5; g.strokeStyle = "#f12614"; g.stroke(); g.setLineDash([]); }
+        else dot(x0 + 4, ly - 4, k, 4);
+        g.fillStyle = "#e9e1dc"; g.fillText(l, x0 + 13, ly); } });
+      return cv;
+    }
+    function baseButton(box, kind) {
+      const b = el("button", "bm", kind === "sat" ? "Map" : "Sat"); b.type = "button"; b.title = kind === "sat" ? "Street map" : "Satellite";
+      b.onclick = () => { ls.set(BASEMAP, kind === "sat" ? "dark" : "sat"); box.redraw(); }; return b;
+    }
+    function shareButton(box) {
+      const b = el("button", null, "⇪"); b.type = "button"; b.title = "Share with a technician: copies a picture of this map, then the note"; b.setAttribute("aria-label", "Share with a technician");
+      b.onclick = () => {
+        const png = briefPng(box).then((cv) => new Promise((ok) => cv.toBlob(ok, "image/png")));
+        const sheet = el("div", "sharesheet"), msg = el("span", null, "Making the picture…"), acts = el("span");
+        const done = el("button", "copy", "Close"); done.type = "button"; done.onclick = () => sheet.remove();
+        const note = el("button", "copy", "Copy note"); note.type = "button"; note.onclick = () => copy(briefText(box.scene), note);
+        const save = el("button", "copy", "Save PNG"); save.type = "button";
+        save.onclick = () => png.then((bl) => { const a = el("a"); a.href = URL.createObjectURL(bl); a.download = `gangguan-${new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "")}.png`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); });
+        acts.append(note, save, done); sheet.append(msg, acts); box.querySelector(".sharesheet")?.remove(); box.append(sheet);
+        sheet.addEventListener("pointerdown", (e) => e.stopPropagation());
+        (navigator.clipboard?.write ? navigator.clipboard.write([new ClipboardItem({ "image/png": png })]) : Promise.reject())
+          .then(() => { msg.textContent = "Picture copied: paste it into the chat, then the note."; })
+          .catch(() => { msg.textContent = "Couldn't copy the picture here: save it instead."; });
+      };
+      return b;
     }
     // the customers on the same OLT PON port: when many of them are down together it's the line (PON, splitter, ODP),
     // not one house. Statuses come from the OLTs' cached ONT lists (kept 2 hours).
