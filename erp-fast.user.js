@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.56
+// @version      2.57
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -3374,7 +3374,8 @@
     }, true);
     function confirmWatch() {
       if (!armed) return;
-      const open = [...document.querySelectorAll("[role=dialog]")].some((d) => /Aktivasi Akun/.test(d.textContent));
+      // the ERP keeps a closed copy of the form in the page (data-state="closed"), so only an open one counts
+      const open = [...document.querySelectorAll("[role=dialog]")].some((d) => d.dataset.state !== "closed" && /Aktivasi Akun/.test(d.textContent));
       if (open) { if (Date.now() - armed.at > 180e3) armed = null; return; } // still open long after: it failed, nothing to check
       if (armed.user) {
         const a = { ...armed, start: Date.now() };
