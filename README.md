@@ -43,6 +43,13 @@ Colours everywhere in the Dock: online green, isolir red, offline grey; red also
 
 The ERP deploys many times an hour, and each deploy showed a blue "Versi baru aplikasi… Muat ulang" bar (or reloaded an idle page by itself). The script switches both off: the ERP's own "Nanti" snooze is set far ahead, and the page no longer reacts to a new service worker taking over. You get the new version whenever you reload or open a tab yourself.
 
+So a page never drifts far behind the server:
+
+- **Update dot:** the build is checked every 2 minutes. When it changes, the Dock button gets a small pulsing dot.
+- **Safe reload:** the page then reloads by itself once nothing is at stake: no typing in the page's fields for 10 minutes (or since you moved to another page), no dialog or Dock open, no Dock payment running, and a minute without touching anything.
+- **Old-page warning:** if a page has stayed on an old build for over an hour and you save something, it asks first. Cancel stops the save so you can copy what you typed and reload.
+- **No double payments:** when a Dock payment fails (for example the server restarting mid-deploy), the Dock asks the ERP what the invoice says now. A payment that went through anyway shows as Lunas; otherwise it says it's safe to try again.
+
 ### Maps for technicians
 
 Every Dock map (Nearby, a router's offline customers, a PON port) reads as a brief:

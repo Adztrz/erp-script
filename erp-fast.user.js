@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.47
+// @version      2.48
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -133,9 +133,24 @@
 
   const realFetch = window.fetch;
   let lastAuth = null; // the page's latest sign-in header (memory only)
+  let payingNow = 0;   // Dock payments in flight: the update reload waits for them
+  let staleSince = 0;  // when a newer ERP build was first seen (0 = this page is current); see "ERP updated" below
+  let staleOk = 0;     // when you last chose to save on an old build anyway
+  let touched = Date.now(); // your last click, key or scroll wheel
   window.fetch = async function (input, init) {
     let url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     const u = new URL(url, location.href);
+
+    // a save from a page that's been out of date for over an hour: ask first (the page and the server may no longer agree)
+    const method = (init?.method || (input instanceof Request ? input.method : "GET")).toUpperCase();
+    // (only right after a click or key, so the page's own background requests never raise it)
+    if (method !== "GET" && method !== "HEAD" && u.origin === location.origin && staleSince && Date.now() - touched < 5000 && Date.now() - staleSince > 3600e3 && Date.now() - staleOk > 600e3
+        && !u.pathname.startsWith("/api/version") && !u.pathname.startsWith("/api/auth")) {
+      if (!confirm("The ERP was updated over an hour ago and this page is still the old version.\n\nSaving from an old page can fail or save something wrongly. Press Cancel, copy anything you typed, then reload the page (F5) and save there.\n\nPress OK to save anyway.")) {
+        throw new TypeError("Not sent: this page is an old version of the ERP. Reload the page (F5) and try again.");
+      }
+      staleOk = Date.now();
+    }
 
     // fast search: the page's own sign-in and which month it shows (see fastSearch below)
     if (u.pathname.startsWith("/api/")) {
@@ -1588,7 +1603,8 @@
     async function payQueue(queue, st, redraw, defaultNote) {
       if (!queue.length) return;
       st.phase = "paying"; st.stop = false; st.armed = 0; st.done = 0; st.total = queue.length; redraw();
-      for (const [row, v] of queue) {
+      payingNow++;
+      try { for (const [row, v] of queue) {
         if (st.stop) break;
         v.result = { busy: true }; redraw();
         try {
@@ -1599,10 +1615,28 @@
           if (sum.marked) row.paidTo = v.period || row.paidTo;
           v.result = sum.marked ? { ok: true, text: sum.recharged ? "Lunas · recharged" : "Lunas", warn: failed ? `RADIUS recharge failed: ${failed.reason}` : "" }
             : older ? { text: `Skipped: ${older.reason}` } : waiting ? { text: "Not processed yet (server restarting): try again" } : { text: `Skipped${skip?.reason ? `: ${skip.reason}` : ""}` };
-        } catch (e) { v.result = { text: e.message || "Failed" }; }
+        } catch (e) {
+          // the request failed, but the server may have saved it anyway (a deploy restarting it mid-request):
+          // ask the ERP what the invoice says now, so a retry can't pay it twice
+          v.result = { busy: true }; redraw();
+          const now = await settled(v.no);
+          if (now === "Lunas") { row.paidTo = v.period || row.paidTo; v.result = { ok: true, text: "Lunas (saved, though the answer was lost)" }; }
+          else v.result = { text: `${e.message || "Failed"} · ${now ? `checked: still ${now}, safe to try again` : "couldn't check: look at the invoice before trying again"}` };
+        }
         st.done++; redraw();
-      }
+      } } finally { payingNow--; }
       st.phase = "done"; redraw();
+    }
+    // an invoice's status straight from the ERP, retried a few times while the server comes back
+    async function settled(no) {
+      for (let i = 0; i < 4; i++) {
+        await new Promise((ok) => setTimeout(ok, 2500 + i * 2500));
+        try {
+          const j = await api(`/api/finance/invoices/list?month=all&year=${new Date().getFullYear()}&page=1&pageSize=20&q=${encodeURIComponent(no)}`);
+          const v = (j.invoices || []).find((x) => x.invoiceNumber === no); if (v) return v.status;
+        } catch {}
+      }
+      return null;
     }
     // a customer's unpaid months, each with its RADIUS recharge and, once paid, the result
     function monthRows(r, key, busy, st, redraw) {
@@ -3067,6 +3101,42 @@
     for (const t of ["mousedown", "keydown", "touchstart", "scroll"]) addEventListener(t, real, { capture: true, passive: true });
     chan.onmessage = () => dispatchEvent(new Event("scroll"));
   } catch { /* no BroadcastChannel: each tab keeps its own clock */ }
+
+  // ---------- ERP updated: reload by itself only when it's safe ----------
+  // The "new version" bar is gone (see the top), but a page left open on an old build drifts from the server. Here the
+  // build is checked every 2 minutes; once it changes, the Dock button gets a small dot and the page reloads by itself
+  // the moment nothing is at stake: no typing on this page for 10 minutes (or since you last moved to another page),
+  // no dialog or Dock open, no Dock payment running, and a minute without touching anything.
+  {
+    let build = null, typed = 0, typedOn = location.pathname;
+    for (const t of ["pointerdown", "keydown", "wheel", "touchstart"]) addEventListener(t, (e) => { if (e.isTrusted) touched = Date.now(); }, { capture: true, passive: true });
+    // typing into the page's own fields (not the Dock) counts as work in progress
+    addEventListener("input", (e) => { if (e.isTrusted && !e.target.closest?.(".erp-dock, .erp-fs")) { typed = Date.now(); typedOn = location.pathname; } }, true);
+    const safe = () => payingNow === 0 && !document.querySelector(".erp-dock, [role='dialog'], [role='alertdialog']")
+      && Date.now() - touched > 60e3 && !(typed && typedOn === location.pathname && Date.now() - typed < 600e3);
+    const mark = () => {
+      const fab = document.querySelector(".erp-dock-fab"); if (!fab) return;
+      fab.classList.toggle("stale", !!staleSince);
+      if (staleSince) fab.title = "The ERP was updated: this page reloads by itself once you're not using it (or press F5)"; else fab.removeAttribute("title");
+    };
+    async function check() {
+      try {
+        const j = await (await realFetch("/api/version", { cache: "no-store" })).json(); if (!j?.version) return;
+        if (!build) build = j.version;
+        else if (j.version !== build && !staleSince) staleSince = Date.now();
+      } catch { /* server restarting: next time */ }
+      mark();
+    }
+    check(); setInterval(() => { if (!document.hidden) check(); }, 120e3);
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) check(); });
+    setInterval(() => { mark(); if (staleSince && safe()) location.reload(); }, 15e3);
+    const css = el("style"); css.textContent = `
+      .erp-dock-fab.stale::before { content: ""; position: absolute; bottom: 6px; right: 6px; width: 7px; height: 7px; border-radius: 50%; background: #e9e1dc;
+        box-shadow: 0 0 0 2px #090b0c; animation: erp-stale 2.4s ease-in-out infinite; }
+      @keyframes erp-stale { 50% { opacity: .35; } }
+      @media (prefers-reduced-motion: reduce) { .erp-dock-fab.stale::before { animation: none; } }`;
+    (document.head || document.documentElement).append(css);
+  }
 
   // the site moves between pages without reloading: redraw when the address changes
   for (const m of ["pushState", "replaceState"]) {
