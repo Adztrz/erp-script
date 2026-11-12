@@ -41,7 +41,7 @@ Colours everywhere in the Dock: online green, isolir red, offline grey; red also
 
 ### Aktivasi helper
 
-In Technical → Antrean Aktivasi, the ⚡ activation form gets a Dock card on top:
+In Technical → Antrean Aktivasi, the ⚡ activation form stays exactly as the ERP made it. While it's open, the Dock button gets a white dot; pressing it opens the activation helper next to the button (press again or × to close), without closing the form:
 
 - **Technician's report:** technician, reported ODP and port, signal, modem.
 - **FAT from the technician:** paste what they sent (`pakai fat jimat 4c ya pak, port 3`). It finds the FAT in the database despite chat words and loose spelling, reads the port, and **Use** fills both.
