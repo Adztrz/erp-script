@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.53
+// @version      2.54
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -3126,7 +3126,7 @@
     document.addEventListener("pointerdown", (e) => { const tr = e.target.closest?.("tr"); if (tr && location.pathname.startsWith(AQ)) lastRow = tr.textContent; }, true);
     async function loadQueue() {
       if (queue && Date.now() - queueAt < 120e3) return queue;
-      const f = "fields=namaPemohon,dataId,installationData,networkSurvey,shareLokasiGmaps,teknologiKoneksi,jadwalPemasangan,desa,kecamatan";
+      const f = "fields=namaPemohon,dataId,installationData,networkSurvey,shareLokasiGmaps,teknologiKoneksi,jadwalPemasangan,desa,kecamatan,kabupaten";
       const parts = await Promise.all(["Menunggu Aktivasi Akun", "Menunggu Aktivasi Account"].map((v) => get(`/api/pg-read/prospectiveCustomers?where=statusVerifikasi%3A${encodeURIComponent(v)}&limit=500&${f}`).then((j) => j.data || []).catch(() => [])));
       queue = parts.flat(); queueAt = Date.now(); return queue;
     }
@@ -3178,7 +3178,8 @@
       const olt = [...dlg.querySelectorAll("select")].find((x) => /^Semua OLT/.test(x.options[0]?.textContent || ""))?.value;
       const text = dlg.textContent, user = /Username "[^"]+" tersedia/.test(text) ? true : /Ganti username|sudah dipakai/i.test(text) ? false : null;
       const scanning = /Sedang memindai/.test(text);
-      return [["FAT/ODP", !!fat], ["Port", !!port], ["OLT or modem", !!(sn || olt)], ["Modem SN", !!sn], ["Username", user]].map(([k, ok]) => ({ k, ok })).concat(scanning ? [{ k: "Scanning…", ok: null, busy: true }] : []);
+      const name = [...dlg.querySelectorAll("label")].find((l) => l.textContent.trim() === "Nama Pelanggan")?.parentElement?.querySelector("input")?.value || "";
+      return [["Name", /STARLITE\s*$/i.test(name)], ["FAT/ODP", !!fat], ["Port", !!port], ["OLT or modem", !!(sn || olt)], ["Modem SN", !!sn], ["Username", user]].map(([k, ok]) => ({ k, ok })).concat(scanning ? [{ k: "Scanning…", ok: null, busy: true }] : []);
     }
     const km = (m) => m == null ? "" : m < 1000 ? `${m} m` : `${(m / 1000).toFixed(1)} km`;
     async function build(dlg) {
@@ -3246,16 +3247,22 @@
           if (code.length === 5 && /[2-9]$/.test(code)) code = code.slice(0, 4);
           const fit = (b, suf = "") => b.slice(0, Math.max(1, 15 - code.length - suf.length)) + code + suf;
           const desa = String(c?.desa || "").toLowerCase().replace(/[^a-z]/g, "");
+          // a name that's taken (the form added a 2–9) gets the village name instead of a number
+          const taken = /\d{4}[2-9]$/.test(v) || /Ganti username/i.test(ulabel?.parentElement?.textContent || ""); // only the username's own message
+          const vil = (b) => desa && b.slice(0, 10) + desa.slice(0, 10);
           const ideas = [...new Set([
-            words.length > 1 && fit(words[0] + words[1]),                            // danangagus0706
-            words.length > 1 && fit(words[1] + words[0][0]),                         // agusd0706
-            words.length > 1 && fit(words[words.length - 1] + words[0].slice(0, 3)), // prasdan0706
-            words.length > 2 && fit(words[0] + words[1][0] + words[2]),              // danangapras0706
-            words.length === 1 && fit(words[0].slice(0, 6)),                         // turkha0610
-            words.length === 1 && desa && fit(words[0].slice(0, 5) + desa.slice(0, 3)), // turkhbel0610
+            vil(words[0] || ""),                                                     // budisukorejo
+            words.length > 1 && vil(base),                                           // budiswsukorejo
+            words.length > 1 && vil(words[0].slice(0, 5) + words[words.length - 1].slice(0, 3)),
+            words.length > 1 && fit(words[0] + words[1]),                            // budisantoso0601
+            words.length > 1 && fit(words[1] + words[0][0]),                         // santosob0601
+            words.length > 1 && fit(words[words.length - 1] + words[0].slice(0, 3)), // wijayabud0601
+            words.length > 2 && fit(words[0] + words[1][0] + words[2]),              // budiswijaya0601
+            words.length === 1 && fit(words[0].slice(0, 6)),                         // sutris0610
+            words.length === 1 && desa && fit(words[0].slice(0, 5) + desa.slice(0, 3)), // sutrisuko0610
             fit(base, "3"), fit(base, "4"),
-          ].filter((u) => u && u.length >= 3 && u !== uin.value))].slice(0, 5);
-          un.append(el("p", "sub", `In the form: ${uin.value || "–"}. Other names in the same style:`));
+          ].filter((u) => u && u.length >= 3 && u !== uin.value))].slice(0, 6);
+          un.append(el("p", taken ? "warn" : "sub", taken ? `In the form: ${uin.value}: the plain name was taken, so the form added a number. With the village name instead:` : `In the form: ${uin.value || "–"}. Other names, the village-name ones first:`));
           for (const u of ideas) {
             const r = el("div", "opt"), st = el("span", "sub", "checking…");
             r.append(el("span", "code", u), st);
@@ -3267,11 +3274,16 @@
             }).catch(() => { st.textContent = "couldn't check"; });
           }
         }
-        // modem
-        const mod = el("div", "blk"); mod.append(el("h4", null, "Modem"));
-        const scan = el("button", "wide", "Scan all OLTs and routers"); scan.type = "button"; scan.onclick = () => scanAll(dlg);
-        mod.append(scan, el("p", "sub", "Runs the form's own scan of all 46 OLTs at once (about 20 s); pick the modem in its list. A modem picked there also fills the OLT and the router."));
-        body.append(fat, un, mod);
+        // the customer's name as the ERP lists it: name + village + STARLITE
+        const nm = el("div", "blk"); nm.append(el("h4", null, "Nama Pelanggan"));
+        const nin = [...dlg.querySelectorAll("label")].find((l) => l.textContent.trim() === "Nama Pelanggan")?.parentElement?.querySelector("input");
+        if (nin && c?.desa) {
+          const want = `${String(c.namaPemohon || nin.value).trim()} ${String(c.desa).trim()} STARLITE`.toUpperCase().replace(/\s+/g, " ");
+          if (nin.value.trim().toUpperCase() === want) nm.append(el("p", "sub", `${want} (already in the form)`));
+          else { const r = el("div", "opt"); r.append(el("span", "code", want), el("span", "sub", `adds the village (${c.desa}${c.kecamatan ? `, Kec. ${c.kecamatan}` : ""}) and STARLITE`));
+            const b = el("button", null, "Use"); b.type = "button"; b.onclick = () => { set(nin, want); b.textContent = "Filled"; setTimeout(() => (b.textContent = "Use"), 1500); }; r.append(b); nm.append(r); }
+        } else nm.append(el("p", "sub", "No village on record for this customer."));
+        body.append(nm, fat, un);
       } catch (e) { body.replaceChildren(el("p", "warn", `Helper not loaded: ${e.message}`)); }
     }
     // ---- the helper lives in its own Dock-style panel next to the Dock button ----
@@ -3346,7 +3358,18 @@
       if (!armed) return;
       const open = [...document.querySelectorAll("[role=dialog]")].some((d) => /Aktivasi Akun/.test(d.textContent));
       if (open) { if (Date.now() - armed.at > 180e3) armed = null; return; } // still open long after: it failed, nothing to check
-      if (armed.user) { keep([...checks().filter((c) => c.user !== armed.user), { ...armed, start: Date.now() }]); drawChecks(); }
+      if (armed.user) {
+        const a = { ...armed, start: Date.now() };
+        keep([...checks().filter((c) => c.user !== a.user), a]); drawChecks();
+        // the technician and the location come from the calon pelanggan record of the same name
+        loadQueue().then((rows) => {
+          const n = a.name.toUpperCase(), r = rows.filter((x) => x.namaPemohon && n.startsWith(String(x.namaPemohon).trim().toUpperCase())).sort((x, y) => y.namaPemohon.length - x.namaPemohon.length)[0];
+          if (!r) return;
+          const at = where(r);
+          keep(checks().map((c) => c.user === a.user ? { ...c, tech: r.installationData?.teknisi || "", desa: r.desa || "", kec: r.kecamatan || "", maps: at ? `https://maps.google.com/?q=${at.lat},${at.lng}` : /^https?:/.test(r.shareLokasiGmaps || "") ? r.shareLokasiGmaps : "" } : c));
+          drawChecks();
+        }).catch(() => {});
+      }
       armed = null;
     }
     let sessions = null, ontCache = null;
@@ -3394,11 +3417,10 @@
       if (c.done) return { cls: "bad", t: "Not online after 15 minutes: check the activation went through, the modem's PPPoE settings and the cable" };
       return { cls: "wait", t: "Waiting for the modem to log in…" };
     }
+    // the snippet to paste: modem SN, name, username, technician, location
     function note(c) {
-      const rx = c.ont?.rx != null && c.ont.rx !== 0 ? Number(c.ont.rx) : null;
-      return [`✅ Aktivasi ${c.name || c.user}`, `User PPPoE: ${c.user}`, c.sn && `SN modem: ${c.sn}${c.ont ? ` · ${c.ont.olt} PON ${c.ont.pon}` : ""}`,
-        c.fat && `FAT: ${c.fat}${c.port ? ` port ${c.port}` : ""}`, rx != null && `Redaman: ${rx.toFixed(1)} dBm (${rx >= -25 ? "bagus" : rx >= -27 ? "cukup" : "lemah, mohon dicek"})`,
-        c.sess ? `Status: online sejak ${hm(Date.now() - c.sess.up * 1000)}${c.sess.ip ? ` · IP ${c.sess.ip}` : ""}` : "Status: belum online"].filter(Boolean).join("\n");
+      const loc = [c.desa && `Desa ${c.desa}`, c.kec && `Kec. ${c.kec}`].filter(Boolean).join(", ");
+      return [`SN Modem: ${c.sn || "-"}`, `Nama: ${c.name || "-"}`, `Username: ${c.user}`, `Teknisi: ${c.tech || "-"}`, `Lokasi: ${loc || "-"}${c.maps ? `\n${c.maps}` : ""}`].join("\n");
     }
     function drawChecks() {
       const list = checks().filter((c) => !c.closed);
@@ -3417,9 +3439,11 @@
         for (const [k, t] of lines) { const r = el("p", "kv"); r.append(el("b", null, k), t); bd.append(r); }
         if (c.err) bd.append(el("p", "warn", c.err));
         bd.append(el("p", "sub", c.done ? `Checked ${hm(c.last)}` : `Checking every 20 s since ${hm(c.start)}${c.last ? ` · last ${hm(c.last)}` : ""}`));
-        const cp = el("button", null, "Copy WhatsApp note"); cp.type = "button";
-        cp.onclick = () => navigator.clipboard?.writeText(note(c)).then(() => { cp.textContent = "Copied"; setTimeout(() => (cp.textContent = "Copy WhatsApp note"), 1500); }).catch(() => { cp.textContent = "Couldn't copy"; });
-        bd.append(cp); it.append(hd, bd); return it;
+        const snip = el("pre", "snip", note(c)); snip.tabIndex = 0; snip.title = "Click to select";
+        snip.onclick = () => { const r = document.createRange(); r.selectNodeContents(snip); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); };
+        const cp = el("button", null, "Copy"); cp.type = "button";
+        cp.onclick = () => navigator.clipboard?.writeText(note(c)).then(() => { cp.textContent = "Copied"; setTimeout(() => (cp.textContent = "Copy"), 1500); }).catch(() => { cp.textContent = "Couldn't copy: select the text"; });
+        bd.append(snip, cp); it.append(hd, bd); return it;
       }));
     }
     const when = (t) => { const m = Math.floor((Date.now() - new Date(t)) / 60000); return m < 1 ? "just now" : m < 120 ? `${m} min ago` : `${Math.round(m / 60)} h ago`; };
@@ -3450,6 +3474,8 @@
       .erp-akt-after .verdict.ok { color: var(--green); } .erp-akt-after .verdict.warn { color: var(--amber); } .erp-akt-after .verdict.bad { color: #ff8a7a; } .erp-akt-after .verdict.wait { color: var(--paper); }
       .erp-akt-after .kv { margin: 0; font-size: 12px; } .erp-akt-after .kv b { display: inline-block; width: 52px; font-weight: 500; color: var(--muted); }
       .erp-akt-after .bd > button { justify-self: start; }
+      .erp-akt-after .snip { margin: 2px 0 0; padding: 8px 10px; border-radius: 6px; background: #1a1d1e; box-shadow: inset 0 0 0 1px #363738; color: #efefed;
+        font: 12px/1.5 "JetBrains Mono", ui-monospace, monospace; white-space: pre-wrap; word-break: break-all; user-select: all; cursor: text; }
       .erp-akt { --bone: #e9e1dc; --paper: #efefed; --body: #b3b0af; --muted: #8a8b8a; --hair: #262727; --edge: #363738; --green: #55bc82; --red: #f12614; --amber: #e0b04f;
         margin: 4px 0 8px; border-radius: 8px; background: #090b0c; box-shadow: inset 0 0 0 1px var(--edge); color: var(--body); font: 400 13px/1.45 Inter, ui-sans-serif, system-ui, sans-serif; }
       .erp-akt .hd { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px 14px; border-bottom: 1px solid var(--hair); }

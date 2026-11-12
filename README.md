@@ -47,16 +47,16 @@ In Technical → Antrean Aktivasi, the ⚡ activation form stays exactly as the 
 - **FAT from the technician:** paste what they sent (`pakai fat jimat 4c ya pak, port 3`). It finds the FAT in the database despite chat words and loose spelling, reads the port, and **Use** fills both.
 - **FAT/ODP from the report:** matched to the database even when typed loosely (`\FAT LDN NW15`, `FAT 8BBLH`).
 - **Nearest FATs/ODPs with free ports** (folded, as a cross-check): measured from the install point, with distance and ports in use. **Use** fills the form's FAT and port fields.
-- **Username ideas:** other names in the ERP's own style (first name + initials + village code), each checked against RADIUS as free or taken. **Use** puts one in the form.
-- **Scan all OLTs and routers:** runs the form's own scan of every OLT at once.
-- **Checklist:** FAT, port, OLT or modem, serial, and username, updated live.
+- **Nama Pelanggan:** the name as the ERP lists customers, name + village + STARLITE (`BUDI SANTOSO SUKOREJO STARLITE`). **Use** puts it in the form.
+- **Username ideas:** village-name versions first (`budisukorejo`), then the ERP's own style (first name + initials + village code). When the plain name is taken, the village name replaces the form's extra number. Each idea is checked against RADIUS as free or taken; **Use** puts one in the form.
+- **Checklist:** name, FAT, port, OLT or modem, serial, and username, updated live.
 
 After you press **Konfirmasi**, a card in the bottom-left corner checks every 20 seconds, for up to 15 minutes, that the activation really works:
 
 - the PPPoE session in RADIUS: online, router, IP and uptime;
 - the modem on its OLT: status, PON and signal.
 
-It ends with a verdict: working, weak signal (below −27 dBm, while the technician is still on site), or not online after 15 minutes. **Copy WhatsApp note** gives an Indonesian summary for the technician or the customer.
+It ends with a verdict: working, weak signal (below −27 dBm, while the technician is still on site), or not online after 15 minutes. It also shows a snippet to copy: modem SN, name, username, technician and location (village, kecamatan, map link). The technician and location come from the calon pelanggan record with the same name.
 
 The queue shows how many days each customer has waited, and marks anything over 30 days. The helper only reads and fills the form; Konfirmasi stays yours.
 
