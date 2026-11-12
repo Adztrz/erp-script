@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.39
+// @version      2.40
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -1202,7 +1202,7 @@
       .erp-dock .near .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
       .erp-dock canvas { display: block; width: 100%; height: 170px; margin: 10px 0 6px; }
       .erp-dock .map { position: relative; height: 340px; margin: 10px 0 6px; border-radius: 8px; overflow: hidden; background: #0f1214; box-shadow: inset 0 0 0 1px var(--hair); }
-      .erp-dock .map { cursor: grab; touch-action: none; user-select: none; } .erp-dock .map.panning { cursor: grabbing; } .erp-dock .map.panning .mdot { pointer-events: none; }
+      .erp-dock .map { cursor: grab; touch-action: none; user-select: none; overflow: clip; } /* clip, not hidden: a hidden box can still be scrolled (by focus or the share panel), sliding the strip and legend away */ .erp-dock .map.panning { cursor: grabbing; } .erp-dock .map.panning .mdot { pointer-events: none; }
       .erp-dock .map .tiles img { position: absolute; width: 256px; height: 256px; max-width: none; pointer-events: none; user-select: none; }
       .erp-dock .map .tiles img { filter: invert(1) hue-rotate(180deg) brightness(.78) contrast(.92) saturate(.35); } /* OSM's light map, made dark */
       .erp-dock .map.sat .tiles img, .erp-dock .map.carto .tiles img { filter: none; } .erp-dock .map.sat .tiles img { filter: brightness(.8) saturate(.9); }
@@ -2704,7 +2704,9 @@
       const counts = ["los", "pwr", "off", "weak", "iso", "on"].filter((k) => sev.n[k]).map((k) => `${sev.n[k]} ${KIND[k][0].toLowerCase()}`).join(" · ");
       const sub = [about.what, villages.slice(0, 3).map(([d]) => d).join(", "), about.since ? `sejak ${hhmm(about.since)}` : `per ${hhmm(Date.now())}`].filter(Boolean).join(" · ");
       const inView = ([x, y], m = 0) => x >= -m && y >= -m && x <= w + m && y <= h + m;
-      const assets = (netList || []).map((a) => ({ ...a, xy: at(a.p) })).filter((a) => inView(a.xy, 10));
+      let assets = (netList || []).map((a) => ({ ...a, xy: at(a.p) })).filter((a) => inView(a.xy, 10));
+      // zoomed out, hundreds of boxes bury the customers: keep the ones near a problem (200 m), at most 80
+      if (assets.length > 80) assets = assets.filter((a) => probs.some((z) => metres(z.p, a.p) <= 200)).slice(0, 80);
       const faultXY = fault ? at(fault.p) : null;
       // name the problems where there's room: beside the dot, else the other side, above or below; never over the strip,
       // the legend or another name
