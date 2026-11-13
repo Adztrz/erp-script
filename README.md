@@ -136,7 +136,7 @@ Joko susilo 15 spk
 
 A **heading** sets the type of what follows (`Aktivasi FDT`, `Tarik kabel distribusi`…; an Aktivasi heading over routes means Tarik & Aktivasi). With no heading, routes use the panel's route type and counts are Aktivasi ODP/FAT. A **name** on its own line gives the routes under it to that technician's team (a team name, `Tim Ngadirojo 2`, works too). Routes with nobody named above them go to the team picked in the panel.
 
-**Manual** (the switch at the top of the panel) skips the message: each row is a type, a team and how many, and **+ Add row** adds another. It makes the same count SPKs as above (route types aren't offered there, since they need a DARI → KE pair, nor the three form-only types).
+**Manual** (the switch at the top of the panel) skips the message: each row is a type, a team and how many (type part of the team's name: pick it from the list, or type any of its words in any order and press Enter), and **+ Add row** adds another. It makes the same count SPKs as above (route types aren't offered there, since they need a DARI → KE pair, nor the three form-only types).
 
 Names are matched to employees forgivingly, but a name spelt exactly as typed wins over one that only sounds close. When several teams fit, the one named after the project's area wins, then the one where the person is a technician; if it's still unclear, or nobody fits a count line, that row shows a team picker. Pick the project (or *Bukan proyek*, as the form's checkbox) and date, and press **Create** twice.
 

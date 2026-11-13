@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.71
+// @version      2.72
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -295,6 +295,7 @@
     #erp-bulk-spk .man { display: grid; gap: 6px; }
     #erp-bulk-spk .mr { display: grid; grid-template-columns: minmax(0, 1fr) 64px 32px; gap: 6px; align-items: center; padding: 6px; border-radius: 8px; background: var(--canvas); }
     #erp-bulk-spk .mr select[aria-label="Type"] { grid-column: 1 / -1; } #erp-bulk-spk .mr select, #erp-bulk-spk .mr input { background: var(--raised); }
+    #erp-bulk-spk .mr input.tf, #erp-bulk-spk .rt input.tf { text-align: left; } #erp-bulk-spk .rt input.tf { grid-column: 2; font-size: 13px; color: var(--paper); margin-top: 4px; height: 28px; padding: 0 8px; }
     #erp-bulk-spk .mr input { height: 32px; padding: 0 8px; text-align: right; font-variant-numeric: tabular-nums; }
     #erp-bulk-spk .mr .s { grid-column: 1 / -1; font-size: 12px; color: var(--muted); } #erp-bulk-spk .mr .bad { color: var(--red); }
     #erp-bulk-spk button.add { justify-self: start; }
@@ -675,6 +676,26 @@
     const field = (label, control) => { const l = mk("label", "row"); l.append(mk("span", null, label), control); p.append(l); return control; };
     const sel = (opts, value, on) => { const s = mk("select"); for (const [v, t] of opts) s.append(new Option(t, v, false, v === value)); s.value = value; s.onchange = () => on(s.value); return s; };
     const again = () => { spk.armed = false; jobsResolve(); spkDraw(); };
+    // a team picker you can type in: pick from the list as you type, or type any words of the name (any order) and
+    // press Enter; a text that fits no single team goes back to what was there
+    const teamFind = (value, on, ph) => {
+      const teams = spk.lists?.teams || [], name = (t) => t.namaTim || t.id;
+      let dl = document.getElementById("erp-team-list");
+      if (!dl) { dl = document.createElement("datalist"); dl.id = "erp-team-list"; document.body.append(dl); }
+      if (dl.childElementCount !== teams.length) dl.replaceChildren(...teams.map((t) => new Option(name(t))));
+      const i = mk("input", "tf"); i.setAttribute("list", dl.id); i.autocomplete = "off"; i.placeholder = teams.length ? ph : "Loading…";
+      const was = value ? name(teams.find((t) => t.id === value) || { id: value }) : ""; i.value = was;
+      i.onfocus = () => i.select();
+      i.oninput = () => { const t = teams.find((t) => name(t) === i.value); if (t) on(t.id); }; // picked from the list
+      i.onchange = () => {
+        if (!i.value.trim()) return on("");
+        const w = fold(i.value).split(" "), exact = teams.find((t) => fold(name(t)) === fold(i.value));
+        const hits = exact ? [exact] : teams.filter((t) => { const f = ` ${fold(name(t))} `; return w.every((x) => f.includes(x)); });
+        if (hits.length === 1) return on(hits[0].id);
+        i.value = was; i.title = hits.length ? `${hits.length} teams fit: type more of the name` : "No team has that name";
+      };
+      return i;
+    };
     p.replaceChildren();
     const head = mk("div", "hd"); head.append(mk("span", "tag", "Bulk SPK"), btn("✕", bulkSpkToggle, "x")); head.lastChild.setAttribute("aria-label", "Close"); p.append(head);
     const editing = spk.phase === "input", manual = spk.mode === "manual";
@@ -690,7 +711,7 @@
       spk.rows.forEach((r, i) => {
         const row = mk("div", "mr"), j = spk.jobs[i];
         const ty = sel(MANUAL_TYPES.map((t) => [t, t]), r.type, (v) => { r.type = v; manualJobs(); again(); }); ty.setAttribute("aria-label", "Type");
-        const tm = sel([["", L0 ? "Team…" : "Loading…"], ...(L0?.teams || []).map((t) => [t.id, t.namaTim || t.id])], r.team, (v) => { r.team = v; manualJobs(); again(); }); tm.setAttribute("aria-label", "Team");
+        const tm = teamFind(r.team, (v) => { r.team = v; manualJobs(); again(); }, "Type a team…"); tm.setAttribute("aria-label", "Team");
         const n = mk("input"); n.inputMode = "numeric"; n.value = r.n; n.dataset.f = `n${i}`; n.setAttribute("aria-label", "How many SPKs");
         n.oninput = () => { r.n = n.value.replace(/\D/g, ""); const at = n.selectionStart; manualJobs(); again(); const n2 = document.querySelector(`#erp-bulk-spk [data-f="n${i}"]`); n2?.focus(); n2?.setSelectionRange(at, at); };
         const x = btn("✕", () => { spk.rows.splice(i, 1); manualJobs(); again(); }, "x"); x.setAttribute("aria-label", "Remove row");
@@ -729,7 +750,7 @@
     // the panel's team only serves routes with no technician above them; its type only routes with no type heading
     const viaPanel = routes.some((j) => j.viaPanel), plainType = routes.some((j) => !ROUTE_TYPES.includes(headType(j.head)) && !/akti[vf]asi/i.test(j.head));
     const ctl = [];
-    if (viaPanel) ctl.push(field("Team", sel([["", L ? "Choose a team…" : "Loading…"], ...(L?.teams || []).map((t) => [t.id, t.namaTim || t.id])], spk.team, (v) => { spk.team = v; remember(); again(); })));
+    if (viaPanel) ctl.push(field("Team", teamFind(spk.team, (v) => { spk.team = v; remember(); again(); }, "Type a team…")));
     ctl.push(field("Project", sel([["", L ? "Choose a project…" : "Loading…"], ["-", "Bukan proyek (outside any project)"], ...(L?.projects || []).map((t) => [t.id, t.name || t.id])], spk.project, (v) => { spk.project = v; remember(); again(); })));
     if (plainType) ctl.push(field("Route type", sel(ROUTE_TYPES.map((t) => [t, t]), spk.type, (v) => { spk.type = v; remember(); again(); })));
     const dateIn = mk("input"); dateIn.type = "date"; dateIn.value = spk.date; dateIn.onchange = () => { spk.date = dateIn.value; spk.armed = false; }; ctl.push(field("Date", dateIn));
@@ -755,9 +776,10 @@
         if (j.why) bits.push(j.why);
         if (L && editing && j.who && (!j.opts.length && j.kind !== "route" || j.opts.length > 1 || spk.picks[j.who])) {
           // nobody or several fit: pick the team here, once per name (every team when the name wasn't found)
-          const opts = j.opts.length ? j.opts.map((o) => [o.team, o.emp ? `${o.teamName} (${o.emp})` : o.teamName]) : L.teams.map((t) => [t.id, t.namaTim || t.id]);
-          const s = sel([["", j.opts.length ? `${j.opts.length} teams fit ${j.who}: choose one…` : `No technician called ${j.who}: choose a team…`], ...opts], j.team, (v) => { spk.picks[j.who] = v; again(); });
-          s.className = "s"; s.setAttribute("aria-label", `Team for ${j.who}`); row.append(s);
+          // a few fits: a short list; nobody found: search every team
+          const s = j.opts.length ? sel([["", `${j.opts.length} teams fit ${j.who}: choose one…`], ...j.opts.map((o) => [o.team, o.emp ? `${o.teamName} (${o.emp})` : o.teamName])], j.team, (v) => { spk.picks[j.who] = v; again(); })
+            : teamFind(j.team, (v) => { spk.picks[j.who] = v; again(); }, `No technician called ${j.who}: type a team…`);
+          s.classList.add("s"); s.setAttribute("aria-label", `Team for ${j.who}`); row.append(s);
         } else bits.splice(1, 0, tn || (L ? "" : "Loading teams…"));
         const sub = bits.filter(Boolean).join(" · ");
         if (sub) row.append(mk("span", "s", sub));
