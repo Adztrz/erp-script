@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.60
+// @version      2.61
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -371,10 +371,12 @@
     }
   }
 
-  // ---------- Bulk SPK on Planning: one team, one FDT to many FATs ----------
-  // Technicians send "FDT DAYU ke: * FAT DAYU 1 * FAT DAYU 2 …" and each route needs its own SPK, titled after where
-  // it goes. Paste the message, pick team, project, type and date once, press Create twice: one SPK per route, with no
-  // form to fill. Each is the same record Planning's manual form saves for a team (read off its code and checked against
+  // ---------- Bulk SPK on Planning: routes and activation counts, per technician ----------
+  // Two kinds of SPK come in messages. Route types (Tarik & Aktivasi FAT/FDT, Tarik Kabel, Perbaikan, Splicing) need
+  // a DARI → KE pair: "FDT DAYU ke: * FAT DAYU 1 * FAT DAYU 2 …", one SPK per route, titled after where it goes. Plain
+  // types (Aktivasi ODP/FAT, Aktivasi FDT…) are just a number: "Budi santoso 10 spk". One message can mix both, with a
+  // heading saying the type and a technician's name above their routes. Paste it, pick project and date, press Create
+  // twice: no form to fill. A route SPK is the same record Planning's manual form saves for a team (read off its code and checked against
   // SPKs made by hand on 11 Nov 2026: only the title and the KE asset differ between them): status Baru, the team, the
   // project, no tasks or equipment, progress 0/1, and the route under both target and cableRoute, with the cable length
   // set to the straight line rounded to 10 m as the form pre-fills it. Saved through Firestore's REST API with your own
@@ -388,48 +390,61 @@
   const ATYPE = { fdt: "FDT", fat: "FAT", odp: "ODP", odc: "ODC", olt: "OLT", joinbox: "Joinbox", jb: "Joinbox", tiang: "Tiang" };
   const typeOf = (name) => ATYPE[(/^\s*(fdt|fat|odp|odc|olt|joinbox|jb|tiang)\b/i.exec(name)?.[1] || "").toLowerCase()] || null;
 
-  // the message → [{ from, to }]: a line with "ke" after it (or a plain line) is where cables start, the bullet lines
-  // under it are where they go; "FDT A ke FAT B" on one line also works; names and team lines are skipped
-  function parseRoutes(text) {
+  // the type a heading names ("Tarik & aktivasi FAT", "Aktivasi FDT"…), or null when the line isn't a heading
+  function headType(line) {
+    const t = String(line).toLowerCase();
+    return /perbaikan/.test(t) ? "Perbaikan Kabel Backbone" : /splic/.test(t) ? "Splicing Fiber"
+      : /tarik.*akti[vf]asi.*fdt/.test(t) ? "Tarik & Aktivasi FDT" : /tarik.*akti[vf]asi/.test(t) ? "Tarik & Aktivasi FAT"
+      : /tarik.*backbone/.test(t) ? "Tarik Kabel Backbone" : /tarik.*distribusi/.test(t) ? "Tarik Kabel Distribusi"
+      : /akti[vf]asi.*fdt/.test(t) ? "Aktivasi FDT" : /akti[vf]asi/.test(t) ? "Aktivasi ODP/FAT"
+      : /joinbox/.test(t) ? "Instalasi Joinbox" : /instalasi.*tiang|tanam.*tiang/.test(t) ? "Instalasi Tiang" : /instalasi.*olt/.test(t) ? "Instalasi OLT" : null;
+  }
+  // the message → jobs, in order. A heading sets the type for what follows; a plain line is a technician (or team) for
+  // the routes under it; "Name 10 spk" is that many SPKs for that person; an asset line with "ke" after it (or a plain
+  // one) is where cables start and the bullet lines under it are where they go; "FDT A ke FAT B" on one line also works.
+  function parseJobs(text) {
     const lines = String(text).split(/\r?\n/).map((raw) => {
       const t = raw.trim(), bare = t.replace(/^(?:[*\-•·>]+|\d+[.)])\s*/, "").trim();
       return { bullet: bare !== t, line: bare };
     }).filter((x) => x.line);
-    const routes = []; let from = null;
+    const jobs = []; let head = "", who = "", from = null;
     lines.forEach((x, i) => {
       let { line } = x;
-      const pair = line.split(/\s+(?:ke|->|→|=>)\s*:?\s+/i);
-      if (pair.length === 2 && typeOf(pair[0]) && typeOf(pair[1])) { from = pair[0].trim(); routes.push({ from, to: pair[1].trim() }); return; }
       if (/^ke\s*:?$/i.test(line)) return;
+      const cnt = /^(.+?)\s*[:=\-–]?\s*(\d+)\s*spk\b\.?$/i.exec(line);
+      if (cnt && +cnt[2] > 0 && !typeOf(cnt[1])) { from = null; jobs.push({ kind: "count", who: cnt[1].trim(), head, n: Math.min(+cnt[2], 100) }); return; }
+      const pair = line.split(/\s+(?:ke|->|→|=>)\s*:?\s+/i);
+      if (pair.length === 2 && typeOf(pair[0]) && typeOf(pair[1])) { from = pair[0].trim(); jobs.push({ kind: "route", who, head, from, to: pair[1].trim() }); return; }
       const endsKe = /\s+ke\s*:?$/i.test(line); line = line.replace(/\s+ke\s*:?$/i, "").trim();
-      if (!typeOf(line)) return;
-      const nextKe = /^ke\s*:?$/i.test(lines[i + 1]?.line || "");
-      if (endsKe || nextKe || !x.bullet || !from) from = line; else routes.push({ from, to: line });
+      if (typeOf(line)) {
+        const nextKe = /^ke\s*:?$/i.test(lines[i + 1]?.line || "");
+        if (endsKe || nextKe || !x.bullet || !from) from = line; else jobs.push({ kind: "route", who, head, from, to: line });
+        return;
+      }
+      from = null;
+      // "Penarikan" alone is a heading too: routes of the panel's route type
+      if (headType(line) || /^(?:penarikan|tarik(?:an)?)\b/i.test(line)) { head = line; who = ""; } else who = line.replace(/[:,.]+$/, "").trim();
     });
-    return routes;
+    return jobs;
   }
+  // a job's SPK type: the heading's, made to fit the job (an Aktivasi heading over routes means Tarik & Aktivasi), else
+  // the panel's route type for routes and Aktivasi ODP/FAT for counts
+  function jobType(j) {
+    const h = headType(j.head);
+    if (j.kind === "route") return ROUTE_TYPES.includes(h) ? h : h === "Aktivasi FDT" ? "Tarik & Aktivasi FDT" : h === "Aktivasi ODP/FAT" ? "Tarik & Aktivasi FAT" : spk.type;
+    return h || "Aktivasi ODP/FAT";
+  }
+  const countTitle = (j) => (j.head || (j.type === "Aktivasi ODP/FAT" ? "Aktivasi FAT" : j.type)).replace(/\s+/g, " ").trim().toUpperCase();
 
-  // Bulk FAT: "Aktivasi FAT" then "Budi santoso 10 spk" lines → { head, people: [{ who, n }] }, or null when no line counts SPKs
-  function parseCounts(text) {
-    const people = [], head = [];
-    for (const raw of String(text).split(/\r?\n/)) {
-      const t = raw.trim().replace(/^(?:[*\-•·>]+|\d+[.)])\s+/, "");
-      if (!t) continue;
-      const m = /^(.+?)\s*[:=\-–]?\s*(\d+)\s*spk\b\.?$/i.exec(t);
-      if (m && +m[2] > 0) people.push({ who: m[1].trim(), n: Math.min(+m[2], 100) });
-      else if (!people.length) head.push(t);
-    }
-    return people.length ? { head: head.join(" ").replace(/\s+/g, " ").trim(), people } : null;
-  }
-  // the form's manual SPK types an activation list can be; the heading picks one ("…FDT…" → Aktivasi FDT)
-  const COUNT_TYPES = ["Aktivasi ODP/FAT", "Aktivasi FDT", "Instalasi Joinbox", "Instalasi Tiang", "Instalasi OLT"];
-  const countType = (head) => /\bfdt\b/i.test(head) ? "Aktivasi FDT" : /joinbox|\bjb\b/i.test(head) ? "Instalasi Joinbox" : /tiang/i.test(head) ? "Instalasi Tiang" : "Aktivasi ODP/FAT";
   // a typed name → the teams of the employees it fits: each typed word starts a word of the name, or sounds close to one
   // (SETIYAWAN = SETIAWAN); several fits are narrowed to teams named after the project's area, then to technicians
   function teamsFor(who, emps, teams, projectName) {
     const typed = fold(who).split(" ").filter(Boolean);
     const spelt = (x, w) => x === w || (w.length >= 3 && x.startsWith(w)), close = (x, w) => sound(x) === sound(w) || (w.length >= 5 && near(sound(w), sound(x), w.length >= 8 ? 2 : 1));
     const fits = (name, how) => { const words = fold(name).split(" "); return typed.every((w) => words.some((x) => how(x, w))); };
+    // "Tim Ngadirojo 2" names a team, not a person
+    const named = teams.filter((t) => fits(t.namaTim || "", spelt)).map((t) => ({ team: t.id, teamName: t.namaTim || t.id, emp: "", role: "" }));
+    if (/^tim\b/i.test(who) || named.length === 1 && typed.length > 1) return named;
     const live = emps.filter((e) => !/non ?aktif|keluar|resign/i.test(e.status || ""));
     // a name spelt as typed beats one that only sounds close (HARIYANTO, not HERIYANTO)
     const exact = live.filter((e) => fits(e.name, spelt)), people = exact.length ? exact : live.filter((e) => fits(e.name, (x, w) => spelt(x, w) || close(x, w)));
@@ -527,8 +542,8 @@
     const id = Array.from(crypto.getRandomValues(new Uint8Array(20)), (n) => "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"[n % 62]).join("");
     return { id, write: {
       update: { name: `${db}/documents/workOrders/${id}`, fields: {
-        name: S(title(r)), status: S("Baru"), workOrderType: S(spk.type), scheduledDate: { timestampValue: when.toISOString() },
-        assignedTeamId: S(spk.team), assignmentType: S("team"), assignedEmployeeIds: { arrayValue: {} }, assignedEmployeeNames: { arrayValue: {} },
+        name: S(title(r)), status: S("Baru"), workOrderType: S(r.type), scheduledDate: { timestampValue: when.toISOString() },
+        assignedTeamId: S(r.team), assignmentType: S("team"), assignedEmployeeIds: { arrayValue: {} }, assignedEmployeeNames: { arrayValue: {} },
         tasks: { arrayValue: {} }, installationTasks: { arrayValue: {} }, progress: { mapValue: { fields: { total: I(1), completed: I(0) } } },
         target: { mapValue: { fields: { type: S("cable-route"), ...route } } }, cableRoute: { mapValue: { fields: route } }, projectId: S(spk.project) } },
       updateTransforms: [{ fieldPath: "createdAt", setToServerValue: "REQUEST_TIME" }, { fieldPath: "updatedAt", setToServerValue: "REQUEST_TIME" }],
@@ -541,50 +556,35 @@
     const id = Array.from(crypto.getRandomValues(new Uint8Array(20)), (n) => "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"[n % 62]).join("");
     const team = spk.lists.teams.find((t) => t.id === p.team);
     return { update: { name: `${db}/documents/workOrders/${id}`, fields: {
-        name: S(spk.ctitle.trim()), status: S("Baru"), workOrderType: S(spk.ctype), scheduledDate: { timestampValue: when.toISOString() },
+        name: S(p.title), status: S("Baru"), workOrderType: S(p.type), scheduledDate: { timestampValue: when.toISOString() },
         assignedTeamId: S(p.team), assignmentType: S("team"), assignedEmployeeIds: { arrayValue: {} }, assignedEmployeeNames: { arrayValue: {} },
         tasks: { arrayValue: {} }, installationTasks: { arrayValue: {} }, progress: { mapValue: { fields: { total: I(1), completed: I(0) } } },
         target: { mapValue: { fields: { type: S("manual") } } }, projectId: S(spk.project), ...(team && !(team.anggotaIds || []).length ? { teamEmptyAtCreate: B(true) } : {}) } },
       updateTransforms: [{ fieldPath: "createdAt", setToServerValue: "REQUEST_TIME" }, { fieldPath: "updatedAt", setToServerValue: "REQUEST_TIME" }],
       currentDocument: { exists: false } };
   }
-  // each technician's SPKs go in one commit: all of them are made, or none
-  async function countCreate() {
-    spk.phase = "creating"; spk.stop = false; spk.note = ""; spkDraw();
-    const db = spk.lists.db;
-    for (const p of spk.counts.people) {
-      if (spk.stop) break;
-      if (p.state === "ok") continue;
-      p.state = "busy"; p.why = ""; spkDraw();
-      try { await fsCall(`${db}/documents:commit`, { writes: Array.from({ length: p.n }, () => countDoc(db, p)) }); p.state = "ok"; }
-      catch (e) { p.state = "err"; p.why = e.message; }
-      spkDraw();
-    }
-    if (spk.counts.people.some((p) => p.state === "ok")) await mirror();
-    spk.phase = "done"; spkDraw();
-  }
-  async function mirror() {
-    spk.note = "Adding them to Daftar SPK…"; spkDraw();
-    try {
-      const auth = await fsToken(), res = await realFetch("/api/spk/mirror", { method: "POST", headers: auth ? { authorization: auth } : {} });
-      const j = await res.json().catch(() => null);
-      spk.note = res.ok && j?.ok !== false ? "" : "They're saved, but didn't reach Daftar SPK yet: opening Technical → Misi adds them.";
-    } catch { spk.note = "They're saved, but didn't reach Daftar SPK yet: opening Technical → Misi adds them."; }
-  }
+  // a count job's SPKs go in one commit (all of them are made, or none); a route is one SPK
   async function spkCreate() {
     spk.phase = "creating"; spk.stop = false; spk.note = ""; spkDraw();
     const db = spk.lists.db;
-    for (const r of spk.routes) {
+    for (const j of spk.jobs) {
       if (spk.stop) break;
-      if (r.state === "ok") continue;
-      r.state = "busy"; r.why = ""; spkDraw();
-      try { const c = spkDoc(db, r); await fsCall(`${db}/documents:commit`, { writes: [c.write] }); r.state = "ok"; r.id = c.id; }
-      catch (e) { r.state = "err"; r.why = e.message; }
+      if (j.state === "ok") continue;
+      j.state = "busy"; j.why = ""; spkDraw();
+      try { await fsCall(`${db}/documents:commit`, { writes: j.kind === "count" ? Array.from({ length: j.n }, () => countDoc(db, j)) : [spkDoc(db, j).write] }); j.state = "ok"; }
+      catch (e) { j.state = "err"; j.why = e.message; }
       spkDraw();
     }
     // Daftar SPK reads a copy of the SPKs that the ERP refreshes when its own pages call this sync (Misi, SPK
     // monitor); without it new SPKs stay out of the list until someone opens one of those
-    if (spk.routes.some((r) => r.state === "ok")) await mirror();
+    if (spk.jobs.some((j) => j.state === "ok")) {
+      spk.note = "Adding them to Daftar SPK…"; spkDraw();
+      try {
+        const auth = await fsToken(), res = await realFetch("/api/spk/mirror", { method: "POST", headers: auth ? { authorization: auth } : {} });
+        const j = await res.json().catch(() => null);
+        spk.note = res.ok && j?.ok !== false ? "" : "They're saved, but didn't reach Daftar SPK yet: opening Technical → Misi adds them.";
+      } catch { spk.note = "They're saved, but didn't reach Daftar SPK yet: opening Technical → Misi adds them."; }
+    }
     spk.phase = "done"; spkDraw();
   }
 
@@ -592,13 +592,13 @@
     if (bulkSpkOpen()) { document.getElementById("erp-bulk-spk").remove(); draw(); return; }
     if (!spk) {
       let pick = {}; try { pick = JSON.parse(localStorage.getItem(SPK_PICK) || "{}"); } catch {}
-      const t = new Date(); spk = { text: "", routes: [], phase: "input", team: pick.team || "", project: pick.project || "", type: pick.type || ROUTE_TYPES[0],
+      const t = new Date(); spk = { text: "", jobs: [], picks: {}, phase: "input", team: pick.team || "", project: pick.project || "", type: pick.type || ROUTE_TYPES[0],
         date: new Date(t - t.getTimezoneOffset() * 60000).toISOString().slice(0, 10) };
     }
     const p = document.createElement("div"); p.id = "erp-bulk-spk"; p.setAttribute("role", "dialog"); p.setAttribute("aria-label", "Bulk SPK");
     document.body.append(p); spkDraw(); draw();
     p.querySelector("textarea")?.focus();
-    if (!spk.lists) spkLists().then((l) => { spk.lists = l; countTeams(); spkDraw(); }, (e) => { spk.note = `Couldn't read teams and projects: ${e.message}`; spkDraw(); });
+    if (!spk.lists) spkLists().then((l) => { spk.lists = l; jobsResolve(); spkDraw(); }, (e) => { spk.note = `Couldn't read teams and projects: ${e.message}`; spkDraw(); });
   }
   const remember = () => { try { localStorage.setItem(SPK_PICK, JSON.stringify({ team: spk.team, project: spk.project, type: spk.type })); } catch {} };
   function spkDraw() {
@@ -607,126 +607,100 @@
     const btn = (t, run, cls = "") => { const b = mk("button", cls, t); b.type = "button"; b.onclick = run; return b; };
     const field = (label, control) => { const l = mk("label", "row"); l.append(mk("span", null, label), control); p.append(l); return control; };
     const sel = (opts, value, on) => { const s = mk("select"); for (const [v, t] of opts) s.append(new Option(t, v, false, v === value)); s.value = value; s.onchange = () => on(s.value); return s; };
+    const again = () => { spk.armed = false; jobsResolve(); spkDraw(); };
     p.replaceChildren();
     const head = mk("div", "hd"); head.append(mk("span", "tag", "Bulk SPK"), btn("✕", bulkSpkToggle, "x")); head.lastChild.setAttribute("aria-label", "Close"); p.append(head);
     const editing = spk.phase === "input";
-    const ta = mk("textarea"); ta.rows = 6; ta.placeholder = "Paste the message, e.g.\nFDT DAYU\nke :\n* FAT DAYU 1\n* FAT DAYU 2\n\nor, for activation SPKs per technician:\nAktivasi FAT\nBudi santoso 10 spk"; ta.value = spk.text; ta.disabled = !editing;
+    const ta = mk("textarea"); ta.rows = 7; ta.value = spk.text; ta.disabled = !editing;
+    ta.placeholder = "Paste the message, e.g.\nTarik & aktivasi FAT\nBudi santoso\nFDT DAYU ke :\n* FAT DAYU 1\n* FAT DAYU 2\n\nAktivasi FAT\nAgus setiawan 10 spk";
     ta.oninput = async () => {
       spk.text = ta.value; spk.armed = false; await spkPlan();
       const at = ta.selectionStart; spkDraw(); // redraw, then put the caret back where it was
-      const again = document.querySelector("#erp-bulk-spk textarea"); again?.focus(); again?.setSelectionRange(at, at);
+      const t2 = document.querySelector("#erp-bulk-spk textarea"); t2?.focus(); t2?.setSelectionRange(at, at);
     };
     p.append(ta);
-    if (spk.counts) return countDraw(p, { mk, btn, field, sel, editing });
-    const L = spk.lists;
-    const teamSel = field("Team", sel([["", L ? "Choose a team…" : "Loading…"], ...(L?.teams || []).map((t) => [t.id, t.namaTim || t.id])], spk.team, (v) => { spk.team = v; spk.armed = false; remember(); spkDraw(); }));
-    const projSel = field("Project", sel([["", L ? "Choose a project…" : "Loading…"], ...(L?.projects || []).map((t) => [t.id, t.name || t.id])], spk.project, (v) => { spk.project = v; spk.armed = false; remember(); spkDraw(); }));
-    const typeSel = field("Type", sel(ROUTE_TYPES.map((t) => [t, t]), spk.type, (v) => { spk.type = v; spk.armed = false; remember(); }));
-    const dateIn = mk("input"); dateIn.type = "date"; dateIn.value = spk.date; dateIn.onchange = () => { spk.date = dateIn.value; spk.armed = false; }; field("Date", dateIn);
-    const ti = mk("input"); ti.value = spkTpl(); ti.oninput = () => { try { localStorage.setItem(SPK_TPL, ti.value); } catch {} spk.armed = false; spkListDraw(); }; field("Title", ti);
-    for (const c of [teamSel, projSel, typeSel, dateIn, ti]) c.disabled = !editing;
-    p.append(mk("p", "hint", "{dari} and {ke} become the asset names."));
+    const L = spk.lists, J = spk.jobs || [], routes = J.filter((j) => j.kind === "route");
+    // the panel's team only serves routes with no technician above them; its type only routes with no type heading
+    const viaPanel = routes.some((j) => j.viaPanel), plainType = routes.some((j) => !ROUTE_TYPES.includes(headType(j.head)) && !/akti[vf]asi/i.test(j.head));
+    const ctl = [];
+    if (viaPanel) ctl.push(field("Team", sel([["", L ? "Choose a team…" : "Loading…"], ...(L?.teams || []).map((t) => [t.id, t.namaTim || t.id])], spk.team, (v) => { spk.team = v; remember(); again(); })));
+    ctl.push(field("Project", sel([["", L ? "Choose a project…" : "Loading…"], ...(L?.projects || []).map((t) => [t.id, t.name || t.id])], spk.project, (v) => { spk.project = v; remember(); again(); })));
+    if (plainType) ctl.push(field("Route type", sel(ROUTE_TYPES.map((t) => [t, t]), spk.type, (v) => { spk.type = v; remember(); again(); })));
+    const dateIn = mk("input"); dateIn.type = "date"; dateIn.value = spk.date; dateIn.onchange = () => { spk.date = dateIn.value; spk.armed = false; }; ctl.push(field("Date", dateIn));
+    if (routes.length) {
+      const ti = mk("input"); ti.value = spkTpl(); ti.oninput = () => { try { localStorage.setItem(SPK_TPL, ti.value); } catch {} spk.armed = false; jobsResolve(); listDraw(); }; ctl.push(field("Route title", ti));
+      p.append(mk("p", "hint", "{dari} and {ke} become the asset names."));
+    }
+    for (const c of ctl) c.disabled = !editing;
     const team = L?.teams.find((t) => t.id === spk.team);
-    const members = team && ["anggotaIds", "memberIds", "members"].some((k) => Array.isArray(team[k])) ? ["anggotaIds", "memberIds", "members"].reduce((n, k) => n + (team[k]?.length || 0), 0) : null;
-    if (members === 0) p.append(mk("p", "note", `${team.namaTim} has no members on file: its SPKs won't reach anyone's dashboard.`));
+    if (viaPanel && team && !(team.anggotaIds || []).length) p.append(mk("p", "note", `${team.namaTim} has no members on file: its SPKs won't reach anyone's dashboard.`));
     const proj = L?.projects.find((t) => t.id === spk.project);
     if (proj && /internet rakyat/i.test(`${proj.name} ${proj.program || ""}`)) p.append(mk("p", "note", "This looks like an Internet Rakyat project: those SPKs are normally issued from Pemecah SPK per desa."));
     const list = mk("div", "list"); p.append(list);
-    function spkListDraw() {
+    function listDraw() {
       list.replaceChildren();
-      if (!spk.routes.length) { if (spk.text.trim()) list.append(mk("p", "hint", "No FDT → FAT routes found in this text yet.")); return; }
-      spk.routes.forEach((r, i) => {
-        const row = mk("div", `rt ${r.state || ""}`);
-        row.append(mk("span", "n", { ok: "✓", err: "✕", busy: "…" }[r.state] ?? String(i + 1)), mk("span", "t", title(r)));
-        const sub = [r.a?.ok === false ? r.a.why : r.a?.planned ? `${r.a.code}: new (Calon Aset)` : "",
-          r.b?.ok === false ? r.b.why : r.b?.planned ? `${r.b.code}: new (Calon Aset)` : "", r.why || ""].filter(Boolean).join(" · ");
+      if (!J.length) { if (spk.text.trim()) list.append(mk("p", "hint", "No routes or \u201cname 10 spk\u201d lines found in this text yet.")); return; }
+      J.forEach((j, i) => {
+        const row = mk("div", `rt ${j.state || ""}`), tn = L?.teams.find((t) => t.id === j.team)?.namaTim || "";
+        row.append(mk("span", "n", { ok: "✓", err: "✕", busy: "…" }[j.state] ?? String(i + 1)), mk("span", "t", j.kind === "count" ? `${j.title} × ${j.n}` : title(j)));
+        const bits = [j.type, j.emp && j.emp !== tn ? j.emp : ""];
+        if (j.bad) bits.push(j.bad);
+        if (j.kind === "route") bits.push(j.a?.ok === false ? j.a.why : j.a?.planned ? `${j.a.code}: new (Calon Aset)` : "", j.b?.ok === false ? j.b.why : j.b?.planned ? `${j.b.code}: new (Calon Aset)` : "");
+        if (j.why) bits.push(j.why);
+        if (L && editing && j.who && (!j.opts.length && j.kind === "count" || j.opts.length > 1 || spk.picks[j.who])) {
+          // nobody or several fit: pick the team here, once per name (every team when the name wasn't found)
+          const opts = j.opts.length ? j.opts.map((o) => [o.team, o.emp ? `${o.teamName} (${o.emp})` : o.teamName]) : L.teams.map((t) => [t.id, t.namaTim || t.id]);
+          const s = sel([["", j.opts.length ? `${j.opts.length} teams fit ${j.who}: choose one…` : `No technician called ${j.who}: choose a team…`], ...opts], j.team, (v) => { spk.picks[j.who] = v; again(); });
+          s.className = "s"; s.setAttribute("aria-label", `Team for ${j.who}`); row.append(s);
+        } else bits.splice(1, 0, tn || (L ? "" : "Loading teams…"));
+        const sub = bits.filter(Boolean).join(" · ");
         if (sub) row.append(mk("span", "s", sub));
         list.append(row);
       });
     }
-    spkListDraw();
+    listDraw();
     if (spk.note) p.append(mk("p", "note", spk.note));
-    const foot = mk("div", "ft"), n = spk.routes.length, bad = spk.routes.some((r) => r.a?.ok === false || r.b?.ok === false);
+    const foot = mk("div", "ft"), many = (j) => j.kind === "count" ? j.n : 1, total = J.reduce((n, j) => n + many(j), 0);
     if (editing) {
-      const missing = !n ? "Paste a message" : bad ? "Fix the names marked above" : !spk.team ? "Choose a team" : !spk.project ? "Choose a project" : !spk.date ? "Choose a date" : !spk.idx ? "Assets still loading" : "";
-      const go = btn(missing || (spk.armed ? `Press again: create ${n} SPK${n > 1 ? "s" : ""} for ${team?.namaTim}` : `Create ${n} SPK${n > 1 ? "s" : ""}`), () => {
+      const assets = routes.some((j) => j.a?.ok === false || j.b?.ok === false), bad = J.find((j) => j.bad), noTeam = J.find((j) => !j.team);
+      const missing = !J.length ? "Paste a message" : !L ? "Loading teams…" : assets ? "Fix the names marked above" : bad ? "Fix the line marked above"
+        : noTeam ? (noTeam.viaPanel ? "Choose a team" : `Choose a team for ${noTeam.who}`) : !spk.project ? "Choose a project" : !spk.date ? "Choose a date" : routes.length && !spk.idx ? "Assets still loading" : "";
+      const teams = new Set(J.map((j) => j.team)).size;
+      const go = btn(missing || (spk.armed ? `Press again: create ${total} SPK${total > 1 ? "s" : ""} for ${teams} team${teams > 1 ? "s" : ""}` : `Create ${total} SPK${total > 1 ? "s" : ""}`), () => {
         if (!spk.armed) { spk.armed = true; spkDraw(); setTimeout(() => { if (spk.armed && spk.phase === "input") { spk.armed = false; spkDraw(); } }, 6000); return; }
         spk.armed = false; spkCreate();
       }, "primary");
       go.disabled = !!missing; foot.append(go);
     } else if (spk.phase === "creating") {
-      foot.append(mk("span", "hint", `Making SPKs… ${spk.routes.filter((r) => r.state === "ok").length} of ${n}`), btn("Stop", () => { spk.stop = true; }));
+      foot.append(mk("span", "hint", `Making SPKs… ${J.filter((j) => j.state === "ok").reduce((n, j) => n + many(j), 0)} of ${total}`), btn("Stop", () => { spk.stop = true; }));
     } else {
-      const ok = spk.routes.filter((r) => r.state === "ok").length, err = spk.routes.filter((r) => r.state === "err").length;
-      foot.append(mk("span", "hint", `${ok} SPK${ok === 1 ? "" : "s"} made${err ? `, ${err} failed` : ""}${spk.stop ? " (stopped)" : ""}.`));
+      const ok = J.filter((j) => j.state === "ok").reduce((n, j) => n + many(j), 0), err = J.filter((j) => j.state === "err").length;
+      foot.append(mk("span", "hint", `${ok} SPK${ok === 1 ? "" : "s"} made${err ? `, ${err} line${err > 1 ? "s" : ""} failed` : ""}${spk.stop ? " (stopped)" : ""}.`));
       if (err) foot.append(btn("Retry failed", () => spkCreate()));
       const open = mk("a", "lnk", "Open Daftar SPK"); open.href = "/work-orders"; foot.append(open);
-      foot.append(btn("New list", () => { spk = { ...spk, text: "", routes: [], counts: null, phase: "input", note: "", stop: false }; spkDraw(); }));
-    }
-    p.append(foot);
-  }
-  // Bulk FAT: a set number of SPKs for each technician's team
-  function countDraw(p, { mk, btn, field, sel, editing }) {
-    const L = spk.lists, C = spk.counts, total = C.people.reduce((n, x) => n + x.n, 0);
-    const projSel = field("Project", sel([["", L ? "Choose a project…" : "Loading…"], ...(L?.projects || []).map((t) => [t.id, t.name || t.id])], spk.project, (v) => { spk.project = v; spk.armed = false; remember(); countTeams(); spkDraw(); }));
-    const typeSel = field("Type", sel(COUNT_TYPES.map((t) => [t, t]), spk.ctype, (v) => { spk.ctype = v; spk.armed = false; }));
-    const dateIn = mk("input"); dateIn.type = "date"; dateIn.value = spk.date; dateIn.onchange = () => { spk.date = dateIn.value; spk.armed = false; }; field("Date", dateIn);
-    const ti = mk("input"); ti.value = spk.ctitle; ti.oninput = () => { spk.ctitle = ti.value; spk.armed = false; }; field("Title", ti);
-    for (const c of [projSel, typeSel, dateIn, ti]) c.disabled = !editing;
-    const proj = L?.projects.find((t) => t.id === spk.project);
-    if (proj && /internet rakyat/i.test(`${proj.name} ${proj.program || ""}`)) p.append(mk("p", "note", "This looks like an Internet Rakyat project: those SPKs are normally issued from Pemecah SPK per desa."));
-    const list = mk("div", "list"); p.append(list);
-    C.people.forEach((x, i) => {
-      const row = mk("div", `rt ${x.state || ""}`), name = x.opts?.find((o) => o.team === x.team);
-      row.append(mk("span", "n", { ok: "✓", err: "✕", busy: "…" }[x.state] ?? String(i + 1)), mk("span", "t", `${name?.emp || x.who} · ${x.n} SPK`));
-      if (!L) row.append(mk("span", "s", "Loading teams…"));
-      else if (editing && (!x.opts.length || x.opts.length > 1 || x.picked)) {
-        // nobody or several fit: pick the team here (every team when the name wasn't found)
-        const opts = x.opts.length ? x.opts.map((o) => [o.team, `${o.teamName} (${o.emp})`]) : L.teams.map((t) => [t.id, t.namaTim || t.id]);
-        const s = sel([["", x.opts.length ? `${x.opts.length} teams fit: choose one…` : `No technician called ${x.who}: choose a team…`], ...opts], x.team, (v) => { x.team = v; x.picked = true; spk.armed = false; spkDraw(); });
-        s.className = "s"; s.setAttribute("aria-label", `Team for ${x.who}`); row.append(s);
-      } else row.append(mk("span", "s", [name?.teamName || L.teams.find((t) => t.id === x.team)?.namaTim || "", x.why || ""].filter(Boolean).join(" · ")));
-      list.append(row);
-    });
-    if (spk.note) p.append(mk("p", "note", spk.note));
-    const foot = mk("div", "ft"), unset = C.people.find((x) => !x.team);
-    if (editing) {
-      const missing = !L ? "Loading teams…" : !spk.project ? "Choose a project" : unset ? `Choose a team for ${unset.who}` : !spk.date ? "Choose a date" : !spk.ctitle.trim() ? "Write a title" : "";
-      const teams = new Set(C.people.map((x) => x.team)).size;
-      const go = btn(missing || (spk.armed ? `Press again: create ${total} SPKs for ${teams} team${teams > 1 ? "s" : ""}` : `Create ${total} SPK${total > 1 ? "s" : ""}`), () => {
-        if (!spk.armed) { spk.armed = true; spkDraw(); setTimeout(() => { if (spk.armed && spk.phase === "input") { spk.armed = false; spkDraw(); } }, 6000); return; }
-        spk.armed = false; countCreate();
-      }, "primary");
-      go.disabled = !!missing; foot.append(go);
-    } else if (spk.phase === "creating") {
-      const made = C.people.filter((x) => x.state === "ok").reduce((n, x) => n + x.n, 0);
-      foot.append(mk("span", "hint", `Making SPKs… ${made} of ${total}`), btn("Stop", () => { spk.stop = true; }));
-    } else {
-      const ok = C.people.filter((x) => x.state === "ok").reduce((n, x) => n + x.n, 0), err = C.people.filter((x) => x.state === "err").length;
-      foot.append(mk("span", "hint", `${ok} SPK${ok === 1 ? "" : "s"} made${err ? `, ${err} technician${err > 1 ? "s" : ""} failed` : ""}${spk.stop ? " (stopped)" : ""}.`));
-      if (err) foot.append(btn("Retry failed", () => countCreate()));
-      const open = mk("a", "lnk", "Open Daftar SPK"); open.href = "/work-orders"; foot.append(open);
-      foot.append(btn("New list", () => { spk = { ...spk, text: "", routes: [], counts: null, phase: "input", note: "", stop: false }; spkDraw(); }));
+      foot.append(btn("New list", () => { spk = { ...spk, text: "", jobs: [], phase: "input", note: "", stop: false }; spkDraw(); }));
     }
     p.append(foot);
   }
   async function spkPlan() {
-    if (!spk.idx) spk.idx = await assetIndex().catch(() => null);
-    spk.routes = parseRoutes(spk.text).map((r) => ({ ...r, a: placeAsset(spk.idx, r.from), b: placeAsset(spk.idx, r.to) }));
-    const was = spk.counts, c = parseCounts(spk.text);
-    if (c) {
-      if (!was || was.head !== c.head) { spk.ctitle = c.head.toUpperCase() || spk.ctitle || "AKTIVASI FAT"; spk.ctype = countType(c.head); }
-      c.people.forEach((p) => { const old = was?.people.find((o) => o.who === p.who); if (old?.picked) { p.team = old.team; p.picked = true; } });
-    }
-    spk.counts = c; countTeams();
+    const jobs = parseJobs(spk.text);
+    if (!spk.idx && jobs.some((j) => j.kind === "route")) spk.idx = await assetIndex().catch(() => null);
+    spk.jobs = jobs.map((j) => j.kind === "route" ? { ...j, a: placeAsset(spk.idx, j.from), b: placeAsset(spk.idx, j.to) } : j);
+    jobsResolve();
   }
-  // fill in each technician's team (a team picked by hand stays)
-  function countTeams() {
-    const L = spk.lists; if (!spk.counts || !L) return;
-    const proj = L.projects.find((t) => t.id === spk.project)?.name || "";
-    for (const p of spk.counts.people) {
-      p.opts = teamsFor(p.who, L.emps, L.teams, proj);
-      if (!p.picked) p.team = p.opts.length === 1 ? p.opts[0].team : "";
+  // each job's type, title and team: the technician's team, a team picked by hand for that name, or (for routes with
+  // nobody named above them) the panel's team
+  function jobsResolve() {
+    const L = spk.lists, proj = L?.projects.find((t) => t.id === spk.project)?.name || "", seen = new Map();
+    for (const j of spk.jobs || []) {
+      j.type = jobType(j); j.bad = "";
+      if (j.kind === "count") { j.title = countTitle(j); if (ROUTE_TYPES.includes(j.type)) j.bad = `${j.type} needs a DARI → KE route, not a count`; }
+      if (!L) { j.opts = []; j.team = ""; continue; }
+      if (!seen.has(j.who)) seen.set(j.who, j.who ? teamsFor(j.who, L.emps, L.teams, proj) : []);
+      j.opts = seen.get(j.who);
+      j.viaPanel = j.kind === "route" && !j.opts.length && !spk.picks[j.who];
+      j.team = spk.picks[j.who] || (j.opts.length === 1 ? j.opts[0].team : j.viaPanel ? spk.team : "");
+      j.emp = j.opts.find((o) => o.team === j.team)?.emp || "";
     }
   }
 
