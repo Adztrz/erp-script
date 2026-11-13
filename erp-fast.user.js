@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.66
-// @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
+// @version      2.67
+// @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
 // @grant        none
@@ -322,6 +322,8 @@
       width: max-content; max-width: calc(100vw - 32px); padding: 8px 14px; border-radius: 8px; background: #090b0c; color: #b3b0af;
       font: 400 13px/1.5 Inter, ui-sans-serif, system-ui, sans-serif; font-feature-settings: "cv11", "tnum"; -webkit-font-smoothing: antialiased;
       box-shadow: inset 0 0 0 1px #363738, 0 12px 10px rgba(0,0,0,.25), 0 2px 2px rgba(0,0,0,.2); }
+    #erp-review .pick { max-height: 300px; overflow: auto; overscroll-behavior: contain; }
+    #erp-review .pick .rt { grid-template-columns: 20px 1fr; cursor: pointer; } #erp-review .pick input { width: 16px; height: 16px; margin: 2px 0 0; accent-color: #e9e1dc; }
     #erp-review-hud b { color: #efefed; font-weight: 500; } #erp-review-hud .k { color: #8a8b8a; font-size: 12px; }
     #erp-review-hud kbd { display: inline-block; min-width: 16px; padding: 0 4px; border-radius: 4px; background: #1a1d1e; color: #efefed; font: 12px/18px "JetBrains Mono", ui-monospace, monospace; text-align: center; }
     #erp-review-hud .m { color: #e0b252; } #erp-review-hud .m:empty { display: none; }
@@ -809,6 +811,9 @@
   // Before it starts it sets aside reports you may not decide and those whose photos are still on the technician's phone
   // (address offline://, which the ERP shows as "Masih di HP"), and puts the rest in an order that keeps alike work together:
   // Lengkap first, then by type, technician and time reported.
+  // Pick & approve does the same for the reports you tick: each is opened, given the window's Centang Semua and Setujui,
+  // and checked to have left Menunggu before the next. A report whose Setujui stays locked is skipped and left for you;
+  // anything unexpected (the window not closing, a question, an unconfirmed save) stops the run.
   let rv = null; // { list, i, run, type, auto, aside, armed: { k, at }, msg, waiting }
   const reviewOpen = () => !!document.getElementById("erp-review");
   const fiberOf = (el) => el && el[Object.keys(el).find((k) => k.startsWith("__reactFiber"))];
@@ -866,6 +871,11 @@
     p.style.display = rv.run ? "none" : ""; // out of the way of the ERP's window (a click outside it closes it)
     p.replaceChildren();
     const head = mk("div", "hd"); head.append(mk("span", "tag", "Review queue"), btn("✕", () => reviewStop(true), "x")); head.lastChild.setAttribute("aria-label", "Close"); p.append(head);
+    const modes = mk("div", "seg");
+    for (const [m, t] of [["one", "One by one"], ["pick", "Pick & approve"]]) {
+      const b = btn(t, () => { rv.mode = m; rv.msg = ""; reviewDraw(); }, (rv.mode || "one") === m ? "on" : ""); b.setAttribute("aria-pressed", String((rv.mode || "one") === m)); modes.append(b);
+    }
+    p.append(modes);
     const q = queue(), a = rv.aside, aside = [a.phone && `${a.phone} with photos still on the phone`, a.notYours && `${a.notYours} not yours to decide`].filter(Boolean);
     p.append(mk("p", "hint", `${q.length} to review${aside.length ? ` · set aside: ${aside.join(", ")}` : ""}.`));
     if (!rv.known) p.append(mk("p", "note", "Couldn't read the page's report data, so nothing is set aside: watch for photos marked \u201cMasih di HP\u201d."));
@@ -874,6 +884,7 @@
     for (const [t, n] of Object.entries(types).sort((x, y) => y[1] - x[1])) s.append(new Option(`${t} · ${n}`, t, false, t === rv.type));
     s.onchange = () => { rv.type = s.value; rv.i = 0; reviewDraw(); };
     const l = mk("label", "row"); l.append(mk("span", null, "Type"), s); p.append(l);
+    if (rv.mode === "pick") return pickDraw(p, q, mk, btn);
     const auto = mk("label", "row"), cb = mk("input"); cb.type = "checkbox"; cb.checked = rv.auto; cb.style.width = "auto"; cb.onchange = () => { rv.auto = cb.checked; };
     auto.append(cb, mk("span", null, "Open the next report after each decision")); auto.style.gridTemplateColumns = "auto 1fr"; p.append(auto);
     const list = mk("div", "list");
@@ -892,6 +903,81 @@
     if (rv.i) foot.append(btn("From the top", () => { rv.i = 0; reviewGo(0); }));
     foot.append(btn("Reload list", () => { const b = reviewBuild(); Object.assign(rv, { all: b.items, aside: b.aside, known: b.known, i: 0, msg: "" }); reviewDraw(); }));
     p.append(foot);
+  }
+  // Pick & approve: tick reports, then approve them one after another the way the keys would
+  function pickDraw(p, q, mk, btn) {
+    const sel = rv.sel ||= new Set(), res = rv.res ||= {};
+    const quick = mk("div", "ft");
+    quick.append(btn("Tick all Lengkap", () => { for (const x of q) if (x.val === "Lengkap" && x.gps !== false) sel.add(x.id); reviewDraw(); }),
+      btn("Clear", () => { sel.clear(); reviewDraw(); }));
+    p.append(quick);
+    const list = mk("div", "list pick");
+    for (const x of q) {
+      const row = mk("label", `rt ${res[x.id] && res[x.id] !== "ok" ? "err" : ""}`), cb = mk("input"); cb.type = "checkbox"; cb.checked = sel.has(x.id);
+      cb.onchange = () => { cb.checked ? sel.add(x.id) : sel.delete(x.id); rv.pArmed = false; reviewDraw(); };
+      row.append(cb, mk("span", "t", x.job), mk("span", "s", [x.type, x.tech, x.val, x.gps === false ? "GPS off" : "", res[x.id] && res[x.id] !== "ok" ? res[x.id].replace(/^!/, "") : ""].filter(Boolean).join(" · ")));
+      list.append(row);
+    }
+    p.append(list);
+    p.append(mk("p", "hint", "Each ticked report opens in the ERP's window and gets Centang Semua and Setujui, as if you pressed them, so only tick what you're sure of. One whose Setujui stays locked is skipped and left for you. Esc stops."));
+    if (rv.msg) p.append(mk("p", "note", rv.msg));
+    const n = q.filter((x) => sel.has(x.id)).length, foot = mk("div", "ft");
+    const go = btn(!n ? "Tick the reports to approve" : rv.pArmed ? `Press again: approve ${n} report${n > 1 ? "s" : ""}` : `Approve ${n} ticked`, () => {
+      if (!rv.pArmed) { rv.pArmed = true; reviewDraw(); setTimeout(() => { if (rv.pArmed) { rv.pArmed = false; reviewDraw(); } }, 6000); return; }
+      rv.pArmed = false; autoRun();
+    }, "primary");
+    go.disabled = !n; foot.append(go);
+    foot.append(btn("Reload list", () => { const b = reviewBuild(); Object.assign(rv, { all: b.items, aside: b.aside, known: b.known, i: 0, msg: "" }); reviewDraw(); }));
+    p.append(foot);
+  }
+  const decided = (id) => {
+    const tr = [...document.querySelectorAll("main table tbody > tr")].find((r) => rowKey(r) === id), r = pageState().reps?.find((x) => x.id === id);
+    return (r && r.status !== "Menunggu Verifikasi") || (!tr && !dlg());
+  };
+  function autoHud(text) {
+    let h = document.getElementById("erp-review-hud");
+    if (!h) { h = document.createElement("div"); h.id = "erp-review-hud"; h.setAttribute("role", "status"); document.body.append(h); }
+    h.textContent = text;
+  }
+  // one report: open, tick, approve, and see it leave Menunggu. "ok", a reason it was skipped, or "!reason" to stop the run
+  async function autoOne(id) {
+    if (dlg()) { dlgBtn(/^Tutup$/)?.click(); await until(() => !dlg(), 3000); }
+    const tr = [...document.querySelectorAll("main table tbody > tr")].find((r) => rowKey(r) === id);
+    if (!tr || !/^Menunggu/.test(tr.cells[0]?.textContent.trim() || "")) return "already decided";
+    [...tr.querySelectorAll("button")].pop()?.click();
+    if (!await until(() => dlg(), 8000)) return "!The report didn't open";
+    await sleep(900); // the window fills in its checks and photos
+    const d = dlg(), ok = () => dlgBtn(/^Setujui/, /tanpa/i);
+    for (const c of [...d.querySelectorAll("button")].filter((b) => /^Centang Semua$/.test(b.textContent.trim()))) {
+      if (ok() && !ok().disabled) break;
+      c.click(); await sleep(300);
+    }
+    const b = ok();
+    if (!b) return "no Setujui button: open it yourself";
+    if (b.disabled) { const why = /Tombol Setujui terbuka[^.—]*/.exec(d.textContent)?.[0]; dlgBtn(/^Tutup$/)?.click(); return `${why ? "checks left unticked" : "Setujui stays locked"}: open it yourself`; }
+    if (rv.stopAuto) { dlgBtn(/^Tutup$/)?.click(); return "stopped"; }
+    b.click();
+    if (!await until(() => dlg() !== d, 20000)) return "!The ERP didn't finish saving: look at the open window";
+    if (dlg()) return "!The ERP asked something: answer it, then start again";
+    return await until(() => decided(id), 10000) ? "ok" : "!The approval wasn't confirmed: check this report";
+  }
+  async function autoRun() {
+    const ids = queue().filter((x) => rv.sel.has(x.id)).map((x) => x.id);
+    rv.autoOn = true; rv.stopAuto = false; rv.msg = ""; reviewDraw();
+    const p = document.getElementById("erp-review"); if (p) p.style.display = "none";
+    let ok = 0, skipped = 0, why = "";
+    for (const [n, id] of ids.entries()) {
+      if (rv.stopAuto) break;
+      autoHud(`Approving ${n + 1} of ${ids.length} · ${ok} approved${skipped ? `, ${skipped} skipped` : ""} · Esc stops`);
+      const r = await autoOne(id);
+      rv.res[id] = r;
+      if (r === "ok") { ok++; rv.sel.delete(id); rv.all = rv.all.filter((x) => x.id !== id); }
+      else if (r.startsWith("!")) { why = r.slice(1); break; }
+      else if (r !== "stopped") skipped++;
+    }
+    rv.autoOn = false;
+    rv.msg = `${ok} approved${skipped ? `, ${skipped} skipped (marked in the list)` : ""}.${why ? ` Stopped: ${why}.` : rv.stopAuto ? " Stopped." : ""}`;
+    document.getElementById("erp-review-hud")?.remove(); reviewDraw();
   }
   function hud() {
     let h = document.getElementById("erp-review-hud");
@@ -928,6 +1014,7 @@
     rv.armed = null; rv.waiting = { id: queue()[rv.i].id, at: Date.now() }; say("Saving…"); b.click();
   }
   document.addEventListener("keydown", (e) => {
+    if (rv?.autoOn && e.key === "Escape") { e.preventDefault(); e.stopPropagation(); rv.stopAuto = true; autoHud("Stopping after this report…"); return; }
     if (!rv?.run || !dlg() || e.ctrlKey || e.metaKey || e.altKey) return;
     const d = dlg(), typing = e.target.closest?.("input, textarea, select, [contenteditable='true']");
     // Enter in the note goes back to the keys

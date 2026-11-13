@@ -108,7 +108,9 @@ Goes through the waiting reports one after another from the keyboard. On Technic
 
 After a decision is saved, by key or by clicking Setujui / Tolak yourself, the next report opens (switch that off in the panel); closing the window with Tutup pauses. A strip at the top shows where you are, who sent the report and its Validasi, and why Setujui or Tolak isn't open yet.
 
-Nothing is decided without your keys, and nothing goes around the ERP: who may decide, all checks ticked before Setujui, and the photos being the ones you saw are still checked by the ERP as when you click. Before starting, the queue sets aside reports you may not decide and those whose photos are still on the technician's phone (the ERP's "Masih di HP"), and puts the rest in an order that keeps alike work together: Lengkap first, then by type, technician and time reported.
+**Pick & approve** (the switch at the top of the panel) lists the same reports with a box each. Tick the ones to approve (**Tick all Lengkap** ticks those marked Lengkap with GPS matching), press **Approve** twice, and each one is opened in the ERP's window, given **Centang Semua** and **Setujui**, and checked to have left Menunggu before the next. A report whose Setujui stays locked (checks the button doesn't tick, a step of its own) is skipped and marked in the list for you to open; anything unexpected (the window not closing, a question from the ERP, an approval it doesn't confirm) stops the run there. `Esc` stops after the report in hand. Only tick what you're sure of: it attests the checklist as if you had ticked it.
+
+Nothing is decided without your keys or ticks, and nothing goes around the ERP: who may decide, all checks ticked before Setujui, and the photos being the ones you saw are still checked by the ERP as when you click. Before starting, the queue sets aside reports you may not decide and those whose photos are still on the technician's phone (the ERP's "Masih di HP"), and puts the rest in an order that keeps alike work together: Lengkap first, then by type, technician and time reported.
 
 ## Bulk SPK (Planning)
 
