@@ -91,6 +91,25 @@ Every Dock map (Nearby, a router's offline customers, a PON port) reads as a bri
 
 The half-circle button at the top of the Dock turns the whole ERP black and bone, like Faust: near-black pages, graphite cards, bone for primary buttons, links and focus. Panels with hard-coded blue, violet or cyan (BOQ box, route cards, badges) turn to warm greys of the same lightness. Red, green and amber stay, so errors and status still read. It's applied before the page draws (no flash), remembered in this browser, and the button turns it off again.
 
+## Review queue (Approvals)
+
+Goes through the waiting reports one after another from the keyboard. On Technical → Approvals press **Review queue** in the bar, pick a type if you like, and **Start**. Each report opens in the ERP's own review window, and the keys press that window's own controls:
+
+| Key | Does |
+|---|---|
+| `C` | the window's **Centang Semua** (look at the photos first) |
+| `1`–`9` | tick or untick one check |
+| `Shift`+`1`–`9` | pick a reject code (on reports that have them) |
+| `T` | write a note; `Enter` goes back to the keys |
+| `A` `A` | **Setujui**, pressed twice so one stray key does nothing |
+| `R` `R` | **Tolak & Minta Revisi**, pressed twice |
+| `N` / `P` | next / previous report |
+| `Esc` | close the window and pause; **Continue** picks up where you were |
+
+After a decision is saved the next report opens (switch that off in the panel). A strip at the top shows where you are, who sent the report and its Validasi, and why Setujui or Tolak isn't open yet.
+
+Nothing is decided without your keys, and nothing goes around the ERP: who may decide, all checks ticked before Setujui, and the photos being the ones you saw are still checked by the ERP as when you click. Before starting, the queue sets aside reports you may not decide and those whose photos are still on the technician's phone (the ERP's "Masih di HP"), and puts the rest in an order that keeps alike work together: Lengkap first, then by type, technician and time reported.
+
 ## Bulk SPK (Planning)
 
 Makes SPKs from a pasted message, with no form to fill. On Planning press **Bulk SPK** in the bar and paste the message. **How to write it** under the box has an example of each kind, in a box of its own that scrolls; it's open while the box is empty. It understands both kinds of SPK, and one message can mix them:

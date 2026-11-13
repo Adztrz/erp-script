@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.64
-// @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
+// @version      2.65
+// @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
 // @grant        none
@@ -318,6 +318,13 @@
     #erp-bulk-spk button:focus-visible, #erp-bulk-spk .lnk:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
     #erp-bulk-spk .lnk { color: var(--paper); font-size: 13px; }
     @media (prefers-reduced-motion: reduce) { #erp-bulk-spk { animation: none; } }
+    #erp-review-hud { position: fixed; left: 50%; top: 12px; transform: translateX(-50%); z-index: 2147483001; pointer-events: none;
+      width: max-content; max-width: calc(100vw - 32px); padding: 8px 14px; border-radius: 8px; background: #090b0c; color: #b3b0af;
+      font: 400 13px/1.5 Inter, ui-sans-serif, system-ui, sans-serif; font-feature-settings: "cv11", "tnum"; -webkit-font-smoothing: antialiased;
+      box-shadow: inset 0 0 0 1px #363738, 0 12px 10px rgba(0,0,0,.25), 0 2px 2px rgba(0,0,0,.2); }
+    #erp-review-hud b { color: #efefed; font-weight: 500; } #erp-review-hud .k { color: #8a8b8a; font-size: 12px; }
+    #erp-review-hud kbd { display: inline-block; min-width: 16px; padding: 0 4px; border-radius: 4px; background: #1a1d1e; color: #efefed; font: 12px/18px "JetBrains Mono", ui-monospace, monospace; text-align: center; }
+    #erp-review-hud .m { color: #e0b252; } #erp-review-hud .m:empty { display: none; }
     #erp-fast .of { padding-right: 8px; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
     #erp-fast .seg { display: inline-flex; padding: 3px; gap: 2px; border-radius: 8px; background: var(--canvas); box-shadow: inset 0 0 0 1px var(--hair); }
     #erp-fast button { height: 30px; min-width: 44px; padding: 0 12px; border: 0; border-radius: 6px; background: none; color: var(--muted);
@@ -337,7 +344,9 @@
   function draw() {
     if (!document.body) return void document.addEventListener("DOMContentLoaded", draw, { once: true });
     if (!document.getElementById("erp-fast-css")) {
-      const s = document.createElement("style"); s.id = "erp-fast-css"; s.textContent = css; document.head.append(s);
+      const s = document.createElement("style"); s.id = "erp-fast-css";
+      // the review panel wears the Bulk SPK panel's rules
+      s.textContent = css + (css.match(/[^{}]*#erp-bulk-spk[^{]*\{[^{}]*\}/g) || []).map((r) => r.replaceAll("#erp-bulk-spk", "#erp-review")).join("\n"); document.head.append(s);
     }
     let bar = document.getElementById("erp-fast");
     const onWO = location.pathname.startsWith("/work-orders"), onPlan = location.pathname.startsWith("/planning"), onAp = onApprovals();
@@ -347,6 +356,7 @@
       cut.textContent = `main table tbody > tr:nth-child(n+${Number(rowsShown()) + 1}) { display: none; }`;
     } else cut?.remove();
     if (!onPlan) document.getElementById("erp-bulk-spk")?.remove();
+    if (!onAp && (rv?.run || reviewOpen())) reviewStop(true);
     if (!onWO && !onPlan && !onAp) { bar?.remove(); return; }
     if (!bar) { bar = document.createElement("div"); bar.id = "erp-fast"; bar.setAttribute("role", "group"); document.body.append(bar); }
     bar.replaceChildren();
@@ -361,6 +371,7 @@
       const seg = document.createElement("span"); seg.className = "seg"; bar.append(seg);
       for (const v of ["50", "100", "all"]) button(seg, v === "all" ? "All" : v, want === v, () => { try { localStorage.setItem(ROWS, v); } catch {} draw(); });
       if (n) { const of = document.createElement("span"); of.className = "of"; of.textContent = `of ${n}`; bar.append(of); }
+      button(bar, "Review queue", reviewOpen(), () => reviewToggle(), "solo");
       rowCount = n;
     } else if (onWO) {
       bar.setAttribute("aria-label", "Work orders to load");
@@ -790,6 +801,166 @@
       j.emp = j.opts.find((o) => o.team === j.team)?.emp || "";
     }
   }
+
+  // ---------- Review queue on Approvals ----------
+  // Goes through the waiting reports one after another with the keyboard, on the ERP's own review window and buttons: the
+  // checklist, "Centang Semua", the reject codes, Setujui and Tolak are the page's, so every check the ERP makes (who may
+  // decide, photos unchanged since opened, all checks ticked) still applies and nothing is decided without a key press.
+  // Before it starts it sets aside reports you may not decide and those whose photos are still on the technician's phone
+  // (address offline://, which the ERP shows as "Masih di HP"), and puts the rest in an order that keeps alike work together:
+  // Lengkap first, then by type, technician and time reported.
+  let rv = null; // { list, i, run, type, auto, aside, armed: { k, at }, msg, waiting }
+  const reviewOpen = () => !!document.getElementById("erp-review");
+  const fiberOf = (el) => el && el[Object.keys(el).find((k) => k.startsWith("__reactFiber"))];
+  const rowKey = (tr) => { let f = fiberOf(tr); for (let i = 0; i < 4 && f; i++, f = f.return) if (f.key) return f.key; return null; };
+  // the page's own lists, read off its React state: the reports (photo addresses, GPS check) and who may decide each one
+  function pageState() {
+    let f = fiberOf(document.querySelector("main table")), reps = null, hak = null;
+    for (let i = 0; i < 50 && f && !(reps && hak); i++, f = f.return) {
+      for (let h = f.memoizedState, j = 0; h && j < 200; h = h.next, j++) {
+        const v = h.memoizedState; if (!v || typeof v !== "object") continue;
+        if (!reps && Array.isArray(v) && v[0] && typeof v[0] === "object" && "spkId" in v[0] && "status" in v[0]) reps = v;
+        else if (!hak && !Array.isArray(v)) { const x = v[Object.keys(v)[0]]; if (x && x.hak && "boleh" in x.hak) hak = v; }
+      }
+    }
+    return { reps, hak };
+  }
+  const RANK = { Lengkap: 0, "Belum dicek": 1, "N/A": 1, "Tidak Lengkap": 2 };
+  function reviewBuild() {
+    const st = pageState(), byId = new Map((st.reps || []).map((r) => [r.id, r]));
+    const items = [], aside = { phone: 0, notYours: 0 };
+    for (const tr of document.querySelectorAll("main table tbody > tr")) {
+      const id = rowKey(tr), c = [...tr.cells].map((x) => x.textContent.replace(/\s+/g, " ").trim());
+      if (!id || c.length < 9 || !/^Menunggu/.test(c[0])) continue;
+      const r = byId.get(id), h = st.hak?.[id];
+      if (h && !h.hak.boleh) { aside.notYours++; continue; }
+      if (r && JSON.stringify(r).includes("offline://")) { aside.phone++; continue; }
+      const val = /Tidak Lengkap|Lengkap|Belum dicek|N\/A/.exec(c[7])?.[0] || "";
+      items.push({ id, job: c[4] || c[1], tech: c[3], type: c[5], val, at: r?.reportedAt?.seconds ?? 0, gps: r?.compliance?.gpsMatch });
+    }
+    items.sort((a, b) => (RANK[a.val] ?? 1) - (RANK[b.val] ?? 1) || a.type.localeCompare(b.type) || a.tech.localeCompare(b.tech) || a.at - b.at);
+    return { items, aside, known: !!st.reps };
+  }
+  const dlg = () => [...document.querySelectorAll('[role="dialog"]:not([id^="erp-"]):not([data-state="closed"])')].pop() || null; // the ERP's open window, not the dock's
+  const dlgBtn = (re, not) => [...(dlg()?.querySelectorAll("button") || [])].reverse().find((b) => re.test(b.textContent.trim()) && !(not && not.test(b.textContent.trim())));
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  async function until(test, ms) { for (const end = Date.now() + ms; Date.now() < end; await sleep(150)) if (test()) return true; return !!test(); }
+
+  function reviewToggle() {
+    if (reviewOpen()) return reviewStop(true);
+    rv = rv || { i: 0, type: "", auto: true };
+    const b = reviewBuild(); Object.assign(rv, { all: b.items, aside: b.aside, known: b.known, run: false, msg: "" });
+    const p = document.createElement("div"); p.id = "erp-review"; p.setAttribute("role", "dialog"); p.setAttribute("aria-label", "Review queue");
+    document.body.append(p); reviewDraw(); draw();
+  }
+  function reviewStop(close) {
+    if (rv) { rv.run = false; rv.waiting = null; }
+    document.getElementById("erp-review-hud")?.remove();
+    if (close) { document.getElementById("erp-review")?.remove(); draw(); } else reviewDraw();
+  }
+  const queue = () => rv.all.filter((x) => !rv.type || x.type === rv.type);
+  function reviewDraw() {
+    const p = document.getElementById("erp-review"); if (!p || !rv) return;
+    const mk = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+    const btn = (t, run, cls = "") => { const b = mk("button", cls, t); b.type = "button"; b.onclick = run; return b; };
+    p.style.display = rv.run ? "none" : ""; // out of the way of the ERP's window (a click outside it closes it)
+    p.replaceChildren();
+    const head = mk("div", "hd"); head.append(mk("span", "tag", "Review queue"), btn("✕", () => reviewStop(true), "x")); head.lastChild.setAttribute("aria-label", "Close"); p.append(head);
+    const q = queue(), a = rv.aside, aside = [a.phone && `${a.phone} with photos still on the phone`, a.notYours && `${a.notYours} not yours to decide`].filter(Boolean);
+    p.append(mk("p", "hint", `${q.length} to review${aside.length ? ` · set aside: ${aside.join(", ")}` : ""}.`));
+    if (!rv.known) p.append(mk("p", "note", "Couldn't read the page's report data, so nothing is set aside: watch for photos marked \u201cMasih di HP\u201d."));
+    const types = {}; for (const x of rv.all) types[x.type] = (types[x.type] || 0) + 1;
+    const s = mk("select"); s.append(new Option(`All types · ${rv.all.length}`, ""));
+    for (const [t, n] of Object.entries(types).sort((x, y) => y[1] - x[1])) s.append(new Option(`${t} · ${n}`, t, false, t === rv.type));
+    s.onchange = () => { rv.type = s.value; rv.i = 0; reviewDraw(); };
+    const l = mk("label", "row"); l.append(mk("span", null, "Type"), s); p.append(l);
+    const auto = mk("label", "row"), cb = mk("input"); cb.type = "checkbox"; cb.checked = rv.auto; cb.style.width = "auto"; cb.onchange = () => { rv.auto = cb.checked; };
+    auto.append(cb, mk("span", null, "Open the next report after each decision")); auto.style.gridTemplateColumns = "auto 1fr"; p.append(auto);
+    const list = mk("div", "list");
+    q.slice(rv.i, rv.i + 6).forEach((x, k) => {
+      const row = mk("div", "rt"); row.append(mk("span", "n", String(rv.i + k + 1)), mk("span", "t", x.job), mk("span", "s", [x.type, x.tech, x.val, x.gps === false ? "GPS off" : ""].filter(Boolean).join(" · ")));
+      list.append(row);
+    });
+    if (q.length) p.append(list);
+    const keys = mk("pre", null, "C  the ERP's Centang Semua    1–9  tick one check\nA A  approve (press twice)    R R  reject (twice)\nShift+1–9  a reject code    T  write a note, Enter\nN / P  next / previous       Esc  close and pause");
+    keys.style.cssText = "margin:0;font:12px/1.5 'JetBrains Mono',ui-monospace,monospace;color:var(--muted);white-space:pre-wrap";
+    p.append(keys);
+    if (rv.msg) p.append(mk("p", "note", rv.msg));
+    const foot = mk("div", "ft");
+    const go = btn(!q.length ? "Nothing to review" : rv.i ? `Continue at ${rv.i + 1} of ${q.length}` : `Start · ${q.length} reports`, () => reviewGo(rv.i), "primary");
+    go.disabled = !q.length; foot.append(go);
+    if (rv.i) foot.append(btn("From the top", () => { rv.i = 0; reviewGo(0); }));
+    foot.append(btn("Reload list", () => { const b = reviewBuild(); Object.assign(rv, { all: b.items, aside: b.aside, known: b.known, i: 0, msg: "" }); reviewDraw(); }));
+    p.append(foot);
+  }
+  function hud() {
+    let h = document.getElementById("erp-review-hud");
+    if (!rv?.run) return h?.remove();
+    if (!h) { h = document.createElement("div"); h.id = "erp-review-hud"; h.setAttribute("role", "status"); document.body.append(h); }
+    const q = queue(), x = q[rv.i]; if (!x) return;
+    h.innerHTML = "";
+    const b = document.createElement("b"); b.textContent = `${rv.i + 1} / ${q.length}`;
+    const t = document.createElement("span"); t.textContent = `  ${x.tech} · ${x.val}${x.gps === false ? " · GPS off" : ""}  `;
+    const k = document.createElement("span"); k.className = "k"; k.innerHTML = "<kbd>C</kbd> tick all · <kbd>A</kbd><kbd>A</kbd> approve · <kbd>T</kbd> note · <kbd>R</kbd><kbd>R</kbd> reject · <kbd>N</kbd> next · <kbd>Esc</kbd> pause";
+    const m = document.createElement("div"); m.className = "m"; m.textContent = rv.msg || "";
+    h.append(b, t, k, m);
+  }
+  const say = (m) => { rv.msg = m; hud(); };
+  // open the report at i in the ERP's own window (closing the one open first)
+  async function reviewGo(i) {
+    const q = queue();
+    if (i >= q.length) { rv.i = q.length ? q.length - 1 : 0; rv.msg = "That was the last one. Reload list to pick up new reports."; return reviewStop(false); }
+    rv.i = Math.max(0, i); rv.run = true; rv.opening = true; rv.msg = ""; rv.armed = null; rv.waiting = null; reviewDraw();
+    if (dlg()) { const t = dlgBtn(/^Tutup$/); if (t) t.click(); else document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); await until(() => !dlg(), 3000); }
+    const x = q[rv.i], tr = [...document.querySelectorAll("main table tbody > tr")].find((r) => rowKey(r) === x.id);
+    if (!tr || !/^Menunggu/.test(tr.cells[0]?.textContent.trim() || "")) return reviewGo(rv.i + 1); // decided meanwhile
+    const open = [...tr.querySelectorAll("button")].pop(); if (!open) return reviewGo(rv.i + 1);
+    open.click();
+    const ok = await until(() => dlg(), 6000); rv.opening = false;
+    if (!ok) { rv.msg = "The report didn't open."; return reviewStop(false); }
+    hud();
+  }
+  // a decision key: the first press arms, a second within 2.5 s presses the ERP's button
+  function twice(k, b, why) {
+    if (!b) return say(`No ${k === "a" ? "Setujui" : "Tolak"} button on this report.`);
+    if (b.disabled) return say(why());
+    if (rv.armed?.k !== k || Date.now() - rv.armed.at > 2500) { rv.armed = { k, at: Date.now() }; return say(`Press ${k.toUpperCase()} again to ${k === "a" ? "approve" : "reject"}.`); }
+    rv.armed = null; rv.waiting = { id: queue()[rv.i].id, at: Date.now() }; say("Saving…"); b.click();
+  }
+  document.addEventListener("keydown", (e) => {
+    if (!rv?.run || !dlg() || e.ctrlKey || e.metaKey || e.altKey) return;
+    const d = dlg(), typing = e.target.closest?.("input, textarea, select, [contenteditable='true']");
+    // Enter in the note goes back to the keys
+    if (typing) { if (e.key === "Enter" && !e.shiftKey && d.contains(e.target) && e.target.tagName !== "TEXTAREA") { e.preventDefault(); e.target.blur(); d.focus?.(); } return; }
+    const k = e.key.toLowerCase(), digit = /^Digit([1-9])$/.exec(e.code);
+    let done = true;
+    if (k === "a") twice("a", dlgBtn(/^Setujui/, /tanpa/i), () => /Tombol Setujui terbuka[^.]*/.exec(d.textContent)?.[0] || "Setujui isn't open yet: tick the checks (C or 1–9).");
+    else if (k === "r") twice("r", dlgBtn(/^Tolak/), () => d.querySelector('[aria-label="Kode tolak"]') ? "Pick a reject code (Shift+1–9) or write a note (T) first." : "Write the reason in the note first: T, type, Enter.");
+    else if (k === "t") { const f = [...d.querySelectorAll("textarea, input[type=text], input:not([type])")].find((x) => /catatan|alasan/i.test(x.placeholder)) || [...d.querySelectorAll("textarea, input[type=text]")].pop(); f ? f.focus() : say("No note field on this report."); }
+    else if (k === "escape") { const t = dlgBtn(/^Tutup$/); if (t) t.click(); else done = false; } // the ERP's window ignores Esc
+    else if (k === "c") { const b = dlgBtn(/^Centang Semua$/); b ? b.click() : say("No Centang Semua on this report: tick with 1–9."); }
+    else if (digit && !e.shiftKey) { const c = d.querySelectorAll('[role="checkbox"]')[digit[1] - 1]; c ? c.click() : say(`There's no check ${digit[1]}.`); }
+    else if (digit && e.shiftKey) { const c = d.querySelectorAll('[aria-label="Kode tolak"] button')[digit[1] - 1]; c ? c.click() : say(`There's no reject code ${digit[1]}.`); }
+    else if (k === "n") reviewGo(rv.i + 1);
+    else if (k === "p") reviewGo(rv.i - 1);
+    else done = false;
+    if (done) { e.preventDefault(); e.stopPropagation(); }
+  }, true);
+  // follows the ERP's window: once a decision is saved (the report leaves Menunggu) the next one opens; a window closed
+  // by hand pauses the queue
+  setInterval(() => {
+    if (!rv?.run || rv.opening) return;
+    if (rv.waiting) {
+      const { id, at } = rv.waiting, tr = [...document.querySelectorAll("main table tbody > tr")].find((r) => rowKey(r) === id);
+      const r = pageState().reps?.find((x) => x.id === id), decided = (r && r.status !== "Menunggu Verifikasi") || (!tr && !dlg());
+      if (decided && !dlg()) {
+        rv.waiting = null; rv.all = rv.all.filter((x) => x.id !== id);
+        if (rv.auto) reviewGo(rv.i); else { rv.msg = "Saved."; reviewStop(false); }
+      } else if (!dlg() && Date.now() - at > 20000) { rv.waiting = null; rv.msg = "The decision wasn't confirmed: check that report before going on."; reviewStop(false); }
+      return;
+    }
+    if (!dlg()) reviewStop(false);
+  }, 400);
 
   // ---------- fast search: LDN Radius → Pelanggan, and Finance → Invoices ----------
   // Measured 10 Nov 2026: both pages ask the server on every search (LDN 1–4 s, invoices ~2.8 s) and match the typed text
