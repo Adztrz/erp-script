@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.69
+// @version      2.70
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -917,7 +917,8 @@
   function pickDraw(p, q, mk, btn) {
     const sel = rv.sel ||= new Set(), res = rv.res ||= {};
     const quick = mk("div", "ft");
-    quick.append(btn("Tick all Lengkap", () => { for (const x of q) if (x.val === "Lengkap" && x.gps !== false) sel.add(x.id); reviewDraw(); }),
+    quick.append(btn(`Tick all ${q.length}`, () => { for (const x of q) sel.add(x.id); reviewDraw(); }),
+      btn("Tick all Lengkap", () => { for (const x of q) if (x.val === "Lengkap" && x.gps !== false) sel.add(x.id); reviewDraw(); }),
       btn("Clear", () => { sel.clear(); reviewDraw(); }));
     p.append(quick);
     const list = mk("div", "list pick");
