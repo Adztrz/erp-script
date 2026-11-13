@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.67
+// @version      2.68
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -660,7 +660,15 @@
     if (!spk.lists) spkLists().then((l) => { spk.lists = l; jobsResolve(); spkDraw(); }, (e) => { spk.note = `Couldn't read teams and projects: ${e.message}`; spkDraw(); });
   }
   const remember = () => { try { localStorage.setItem(SPK_PICK, JSON.stringify({ team: spk.team, project: spk.project, type: spk.type, mode: spk.mode })); } catch {} };
-  function spkDraw() {
+  // a panel redrawn from scratch keeps where it (and its scrolling boxes) were scrolled to
+  function keepScroll(id, boxes, drawNow) {
+    const p = document.getElementById(id); if (!p) return drawNow();
+    const at = [p.scrollTop, ...boxes.map((b) => p.querySelector(b)?.scrollTop || 0)];
+    drawNow();
+    p.scrollTop = at[0]; boxes.forEach((b, i) => { const e = p.querySelector(b); if (e) e.scrollTop = at[i + 1]; });
+  }
+  const spkDraw = () => keepScroll("erp-bulk-spk", [".list", ".ex"], spkDrawNow);
+  function spkDrawNow() {
     const p = document.getElementById("erp-bulk-spk"); if (!p || !spk) return;
     const mk = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
     const btn = (t, run, cls = "") => { const b = mk("button", cls, t); b.type = "button"; b.onclick = run; return b; };
@@ -864,7 +872,8 @@
     if (close) { document.getElementById("erp-review")?.remove(); draw(); } else reviewDraw();
   }
   const queue = () => rv.all.filter((x) => !rv.type || x.type === rv.type);
-  function reviewDraw() {
+  const reviewDraw = () => keepScroll("erp-review", [".list"], reviewDrawNow);
+  function reviewDrawNow() {
     const p = document.getElementById("erp-review"); if (!p || !rv) return;
     const mk = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
     const btn = (t, run, cls = "") => { const b = mk("button", cls, t); b.type = "button"; b.onclick = run; return b; };
@@ -882,7 +891,7 @@
     const types = {}; for (const x of rv.all) types[x.type] = (types[x.type] || 0) + 1;
     const s = mk("select"); s.append(new Option(`All types · ${rv.all.length}`, ""));
     for (const [t, n] of Object.entries(types).sort((x, y) => y[1] - x[1])) s.append(new Option(`${t} · ${n}`, t, false, t === rv.type));
-    s.onchange = () => { rv.type = s.value; rv.i = 0; reviewDraw(); };
+    s.onchange = () => { rv.type = s.value; rv.i = 0; reviewDraw(); const l = document.querySelector("#erp-review .list"); if (l) l.scrollTop = 0; }; // another list starts at its top
     const l = mk("label", "row"); l.append(mk("span", null, "Type"), s); p.append(l);
     if (rv.mode === "pick") return pickDraw(p, q, mk, btn);
     const auto = mk("label", "row"), cb = mk("input"); cb.type = "checkbox"; cb.checked = rv.auto; cb.style.width = "auto"; cb.onchange = () => { rv.auto = cb.checked; };
@@ -914,19 +923,23 @@
     const list = mk("div", "list pick");
     for (const x of q) {
       const row = mk("label", `rt ${res[x.id] && res[x.id] !== "ok" ? "err" : ""}`), cb = mk("input"); cb.type = "checkbox"; cb.checked = sel.has(x.id);
-      cb.onchange = () => { cb.checked ? sel.add(x.id) : sel.delete(x.id); rv.pArmed = false; reviewDraw(); };
+      cb.onchange = () => { cb.checked ? sel.add(x.id) : sel.delete(x.id); rv.pArmed = false; label(); }; // in place: the list keeps its scroll
       row.append(cb, mk("span", "t", x.job), mk("span", "s", [x.type, x.tech, x.val, x.gps === false ? "GPS off" : "", res[x.id] && res[x.id] !== "ok" ? res[x.id].replace(/^!/, "") : ""].filter(Boolean).join(" · ")));
       list.append(row);
     }
     p.append(list);
     p.append(mk("p", "hint", "Each ticked report opens in the ERP's window and gets Centang Semua and Setujui, as if you pressed them, so only tick what you're sure of. One whose Setujui stays locked is skipped and left for you. Esc stops."));
     if (rv.msg) p.append(mk("p", "note", rv.msg));
-    const n = q.filter((x) => sel.has(x.id)).length, foot = mk("div", "ft");
-    const go = btn(!n ? "Tick the reports to approve" : rv.pArmed ? `Press again: approve ${n} report${n > 1 ? "s" : ""}` : `Approve ${n} ticked`, () => {
-      if (!rv.pArmed) { rv.pArmed = true; reviewDraw(); setTimeout(() => { if (rv.pArmed) { rv.pArmed = false; reviewDraw(); } }, 6000); return; }
+    const foot = mk("div", "ft");
+    const go = btn("", () => {
+      if (!rv.pArmed) { rv.pArmed = true; label(); setTimeout(() => { if (rv.pArmed) { rv.pArmed = false; label(); } }, 6000); return; }
       rv.pArmed = false; autoRun();
     }, "primary");
-    go.disabled = !n; foot.append(go);
+    function label() {
+      const n = q.filter((x) => sel.has(x.id)).length;
+      go.textContent = !n ? "Tick the reports to approve" : rv.pArmed ? `Press again: approve ${n} report${n > 1 ? "s" : ""}` : `Approve ${n} ticked`; go.disabled = !n;
+    }
+    label(); foot.append(go);
     foot.append(btn("Reload list", () => { const b = reviewBuild(); Object.assign(rv, { all: b.items, aside: b.aside, known: b.known, i: 0, msg: "" }); reviewDraw(); }));
     p.append(foot);
   }
