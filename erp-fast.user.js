@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.72
+// @version      2.73
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -1637,6 +1637,7 @@
       if (n) ls.set(PAGES, m); };
 
     // ---- going somewhere and filling its search ----
+    const OPEN_TOOL = "erpFast.openTool";
     function go(path, fill) {
       if (fill) sessionStorage.setItem(PENDING, JSON.stringify({ path, ...fill, at: Date.now() }));
       close();
@@ -1994,6 +1995,30 @@
       b.append(svg("M9 11l3 3 8-8M4 6h5M4 12h3M4 18h9"), el("span", "t", "Bulk Lunas"), el("span", "r", "paste a list"), el("span", "s", "Paste usernames, check each one's unpaid months, mark them paid"));
       b.onclick = () => openBulk(); return b;
     }
+    // the SPK tools (Bulk SPK on Planning, the Review queue on Approvals) from anywhere: opens the page first when needed,
+    // then the tool once the page has loaded
+    const SPK_TOOLS = {
+      bulk: ["Bulk SPK", "/planning", "Make SPKs from a pasted message or by hand: routes, a number per technician, poles", "M4 4h16v6H4zM4 14h7v6H4zM15 14h5v6h-5z", () => bulkSpkToggle(), () => bulkSpkOpen(), () => !!fsDb()],
+      review: ["Review queue", "/technical/approvals", "Go through waiting reports from the keyboard, or approve the ones you tick", "M9 11l3 3 8-8M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9", () => reviewToggle(), () => reviewOpen(), () => document.querySelectorAll("main table tbody > tr").length > 0 && !!pageState().reps],
+    };
+    function spkToolItem(i, key) {
+      const [t, path, sub, icon, toggle, isOpen] = SPK_TOOLS[key], b = el("button", "item rise"); b.type = "button"; b.style.setProperty("--i", String(i));
+      b.append(svg(icon), el("span", "t", t), el("span", "r", path === "/planning" ? "Planning" : "Approvals"), el("span", "s", sub));
+      b.onclick = () => {
+        close();
+        if (location.pathname.startsWith(path)) { if (!isOpen()) toggle(); return; }
+        sessionStorage.setItem(OPEN_TOOL, JSON.stringify({ key, at: Date.now() }));
+        if (window.next?.router?.push) window.next.router.push(path); else location.assign(path);
+      };
+      return b;
+    }
+    setInterval(() => {
+      let p; try { p = JSON.parse(sessionStorage.getItem(OPEN_TOOL)); } catch {} if (!p) return;
+      const tool = SPK_TOOLS[p.key];
+      if (!tool || Date.now() - p.at > 60000) return void sessionStorage.removeItem(OPEN_TOOL);
+      if (!location.pathname.startsWith(tool[1]) || !tool[6]()) return; // not there yet, or still loading
+      sessionStorage.removeItem(OPEN_TOOL); if (!tool[5]()) tool[4]();
+    }, 500);
     function pageItem(p, i) {
       const b = el("button", "item rise"); b.type = "button"; b.style.setProperty("--i", String(i));
       b.append(svg(ICON.page), el("span", "t", p.t), el("span", "r", p.h)); b.onclick = () => go(p.h); return b;
@@ -3070,7 +3095,7 @@
       const g = el("div", "grid");
       SHORTCUTS.forEach(([label, path, icon], i) => { const t = el("button", "tile rise"); t.type = "button"; t.style.setProperty("--i", String(i)); t.append(svg(icon), label); t.onclick = () => go(path); g.append(t); });
       out.push(g);
-      const e4 = el("div", "eyebrow"); e4.append("Tools"); out.push(e4, radarItem(0), boardItem(1, "pon"), boardItem(2, "signal"), boardItem(3, "health")); // Bulk Lunas shows when searched (or a list is pasted)
+      const e4 = el("div", "eyebrow"); e4.append("Tools"); out.push(e4, spkToolItem(0, "bulk"), spkToolItem(1, "review"), radarItem(2), boardItem(3, "pon"), boardItem(4, "signal"), boardItem(5, "health")); // Bulk Lunas shows when searched (or a list is pasted)
       const recent = ls.get(RECENT, []).map((u) => customers?.find((r) => r.username === u)).filter(Boolean);
       if (recent.length) { const e3 = el("div", "eyebrow"); e3.append("Recent customers"); out.push(e3, ...recent.slice(0, 5).map(custItem)); }
       if (!customers) out.push(el("p", "note", "To look customers up here, open LDN Radius → Pelanggan once: its fast search keeps the list in this browser."));
@@ -3086,8 +3111,10 @@
       }
       const tool = /^(bul|lun|bay|tan|pay|mas|mar)/.test(fold(q)), net = /^(rad|out|gan|mat|rou|off|jar|dow|put)/.test(fold(q));
       const sig = /^(sig|sin|red|rx|lem|wea|dbm|red)/.test(fold(q)), pn = /^(pon|odp|spl|olt|lin)/.test(fold(q)), hl = /^(dat|hea|sta|pol|wro|sal|kes)/.test(fold(q));
+      const sb = /^(spk|bul|akt|tar|tia|cek|wor|pla|buat)/.test(fold(q)), rq = /^(rev|app|set|que|ver|lap|qc|per)/.test(fold(q));
+      if (sb || rq) { const e = el("div", "eyebrow"); e.append("SPK tools"); out.push(e); if (sb) out.push(spkToolItem(0, "bulk")); if (rq) out.push(spkToolItem(1, "review")); }
       if (tool || net || sig || pn || hl) { const e = el("div", "eyebrow"); e.append("Tools"); out.push(e); if (net) out.push(radarItem(0)); if (pn) out.push(boardItem(1, "pon")); if (sig) out.push(boardItem(2, "signal")); if (hl) out.push(boardItem(3, "health")); if (tool) out.push(toolItem(4)); }
-      if (!cs.length && !ps.length && !tool && !net && !sig && !pn && !hl && !snLike(q)) out.push(el("p", "note", customers ? "Nothing matches all of those words." : "No customer list yet: open LDN Radius → Pelanggan once."));
+      if (!cs.length && !ps.length && !tool && !net && !sig && !pn && !hl && !sb && !rq && !snLike(q)) out.push(el("p", "note", customers ? "Nothing matches all of those words." : "No customer list yet: open LDN Radius → Pelanggan once."));
       return out;
     }
     function cardView(r) {
