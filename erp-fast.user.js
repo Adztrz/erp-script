@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.61
+// @version      2.62
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -390,14 +390,25 @@
   const ATYPE = { fdt: "FDT", fat: "FAT", odp: "ODP", odc: "ODC", olt: "OLT", joinbox: "Joinbox", jb: "Joinbox", tiang: "Tiang" };
   const typeOf = (name) => ATYPE[(/^\s*(fdt|fat|odp|odc|olt|joinbox|jb|tiang)\b/i.exec(name)?.[1] || "").toLowerCase()] || null;
 
-  // the type a heading names ("Tarik & aktivasi FAT", "Aktivasi FDT"…), or null when the line isn't a heading
+  // every Tipe Pekerjaan in Planning's manual form (read off its list on 13 Nov 2026)
+  const ALL_TYPES = ["Instalasi OLT", "Aktivasi FDT", "Aktivasi ODP/FAT", "Instalasi Tiang", "Instalasi Joinbox", "Tarik Kabel Backbone", "Tarik Kabel Distribusi",
+    "Tarik & Aktivasi FAT", "Tarik & Aktivasi FDT", "Splicing Fiber", "Survey Lokasi", "Perbaikan Kabel Backbone", "Migrasi HTB ke FTTH",
+    "Visit Pelanggan Isolir atau Dismantle", "Maintenance Jaringan Umum", "Audit Tiang Existing", "Pemasangan CCTV HiView", "Pengecekan Port ODP", "Lain-lain"];
+  // types the form makes from picked customers or a camera's purpose: bulk leaves them to the form
+  const FORM_ONLY = { "Migrasi HTB ke FTTH": "picks the customers to migrate", "Visit Pelanggan Isolir atau Dismantle": "picks the customers to visit",
+    "Pemasangan CCTV HiView": "is 1 SPK per camera, with what the camera is for" };
+  // the type a heading names ("Tarik & aktivasi FAT", "Aktivasi FDT", "Cek port"…), or null when the line isn't a heading
   function headType(line) {
-    const t = String(line).toLowerCase();
+    const t = String(line).toLowerCase(), f = fold(line);
+    const exact = ALL_TYPES.find((x) => fold(x) === f); if (exact) return exact;
     return /perbaikan/.test(t) ? "Perbaikan Kabel Backbone" : /splic/.test(t) ? "Splicing Fiber"
       : /tarik.*akti[vf]asi.*fdt/.test(t) ? "Tarik & Aktivasi FDT" : /tarik.*akti[vf]asi/.test(t) ? "Tarik & Aktivasi FAT"
       : /tarik.*backbone/.test(t) ? "Tarik Kabel Backbone" : /tarik.*distribusi/.test(t) ? "Tarik Kabel Distribusi"
+      : /migrasi/.test(t) ? "Migrasi HTB ke FTTH" : /isolir|dismant/.test(t) ? "Visit Pelanggan Isolir atau Dismantle" : /cctv/.test(t) ? "Pemasangan CCTV HiView"
+      : /(cek|pengecekan).*port/.test(t) ? "Pengecekan Port ODP" : /audit.*tiang/.test(t) ? "Audit Tiang Existing"
       : /akti[vf]asi.*fdt/.test(t) ? "Aktivasi FDT" : /akti[vf]asi/.test(t) ? "Aktivasi ODP/FAT"
-      : /joinbox/.test(t) ? "Instalasi Joinbox" : /instalasi.*tiang|tanam.*tiang/.test(t) ? "Instalasi Tiang" : /instalasi.*olt/.test(t) ? "Instalasi OLT" : null;
+      : /joinbox/.test(t) ? "Instalasi Joinbox" : /(instalasi|tanam|pasang).*tiang/.test(t) ? "Instalasi Tiang" : /instalasi.*olt/.test(t) ? "Instalasi OLT"
+      : /^surve[iy]\b/.test(t) ? "Survey Lokasi" : /^(maintenance|pemeliharaan)\b/.test(t) ? "Maintenance Jaringan Umum" : /^lain/.test(t) ? "Lain-lain" : null;
   }
   // the message → jobs, in order. A heading sets the type for what follows; a plain line is a technician (or team) for
   // the routes under it; "Name 10 spk" is that many SPKs for that person; an asset line with "ke" after it (or a plain
@@ -411,8 +422,11 @@
     lines.forEach((x, i) => {
       let { line } = x;
       if (/^ke\s*:?$/i.test(line)) return;
+      // under a tiang heading, "Sudimoro 5-24" is poles 5 to 24 there, one SPK each, named as the form names them
+      const poles = headType(head) === "Instalasi Tiang" && /^(?:tanam\s+tiang\s+)?(?:wilayah\s+)?(.+?)\s+(?:no\.?\s*)?(\d+)\s*(?:-|–|s\.?\s*\/?\s*d\.?|sampai)\s*(\d+)$/i.exec(line);
+      if (poles && +poles[3] >= +poles[2]) { from = null; jobs.push({ kind: "poles", who, head, area: poles[1].trim(), first: +poles[2], n: +poles[3] - +poles[2] + 1 }); return; }
       const cnt = /^(.+?)\s*[:=\-–]?\s*(\d+)\s*spk\b\.?$/i.exec(line);
-      if (cnt && +cnt[2] > 0 && !typeOf(cnt[1])) { from = null; jobs.push({ kind: "count", who: cnt[1].trim(), head, n: Math.min(+cnt[2], 100) }); return; }
+      if (cnt && +cnt[2] > 0 && !typeOf(cnt[1])) { from = null; jobs.push({ kind: "count", who: cnt[1].trim(), head, n: +cnt[2] }); return; }
       const pair = line.split(/\s+(?:ke|->|→|=>)\s*:?\s+/i);
       if (pair.length === 2 && typeOf(pair[0]) && typeOf(pair[1])) { from = pair[0].trim(); jobs.push({ kind: "route", who, head, from, to: pair[1].trim() }); return; }
       const endsKe = /\s+ke\s*:?$/i.test(line); line = line.replace(/\s+ke\s*:?$/i, "").trim();
@@ -432,9 +446,15 @@
   function jobType(j) {
     const h = headType(j.head);
     if (j.kind === "route") return ROUTE_TYPES.includes(h) ? h : h === "Aktivasi FDT" ? "Tarik & Aktivasi FDT" : h === "Aktivasi ODP/FAT" ? "Tarik & Aktivasi FAT" : spk.type;
+    if (j.kind === "poles") return "Instalasi Tiang";
     return h || "Aktivasi ODP/FAT";
   }
-  const countTitle = (j) => (j.head || (j.type === "Aktivasi ODP/FAT" ? "Aktivasi FAT" : j.type)).replace(/\s+/g, " ").trim().toUpperCase();
+  const countTitle = (j) => j.kind === "poles" ? `Tanam Tiang wilayah ${j.area} no ${j.first}${j.n > 1 ? `–${j.first + j.n - 1}` : ""}`
+    : j.type === "Pengecekan Port ODP" ? "Pengecekan Port ODP" : (j.head || (j.type === "Aktivasi ODP/FAT" ? "Aktivasi FAT" : j.type)).replace(/\s+/g, " ").trim().toUpperCase();
+  // why a count can't be made here, if it can't (the form's own limits)
+  const countBad = (j) => ROUTE_TYPES.includes(j.type) ? `${j.type} needs a DARI → KE route, not a count`
+    : FORM_ONLY[j.type] ? `${j.type} ${FORM_ONLY[j.type]}: use the form` : j.kind === "poles" && j.n > 200 ? "200 poles at most in one go"
+    : j.type === "Pengecekan Port ODP" && j.n > 100 ? "100 Pengecekan Port ODP at most in one go" : j.n > 100 ? "100 SPKs at most per line" : "";
 
   // a typed name → the teams of the employees it fits: each typed word starts a word of the name, or sounds close to one
   // (SETIYAWAN = SETIAWAN); several fits are narrowed to teams named after the project's area, then to technicians
@@ -545,21 +565,25 @@
         name: S(title(r)), status: S("Baru"), workOrderType: S(r.type), scheduledDate: { timestampValue: when.toISOString() },
         assignedTeamId: S(r.team), assignmentType: S("team"), assignedEmployeeIds: { arrayValue: {} }, assignedEmployeeNames: { arrayValue: {} },
         tasks: { arrayValue: {} }, installationTasks: { arrayValue: {} }, progress: { mapValue: { fields: { total: I(1), completed: I(0) } } },
-        target: { mapValue: { fields: { type: S("cable-route"), ...route } } }, cableRoute: { mapValue: { fields: route } }, projectId: S(spk.project) } },
+        target: { mapValue: { fields: { type: S("cable-route"), ...route } } }, cableRoute: { mapValue: { fields: route } }, ...projField() } },
       updateTransforms: [{ fieldPath: "createdAt", setToServerValue: "REQUEST_TIME" }, { fieldPath: "updatedAt", setToServerValue: "REQUEST_TIME" }],
       currentDocument: { exists: false } } };
   }
   // the same record the manual form saves for a team with no route: target manual, no tasks, progress 0/1
-  function countDoc(db, p) {
+  // the project, or the form's «Bukan proyek»
+  const projField = () => spk.project === "-" ? { projectId: { nullValue: null }, bukanProyek: B(true) } : { projectId: S(spk.project) };
+  function countDoc(db, p, k = 0) {
     const [y, m, d] = spk.date.split("-").map(Number), day = new Date(y, m - 1, d), now = new Date();
     const when = day.toDateString() === now.toDateString() ? now : day;
     const id = Array.from(crypto.getRandomValues(new Uint8Array(20)), (n) => "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"[n % 62]).join("");
     const team = spk.lists.teams.find((t) => t.id === p.team);
     return { update: { name: `${db}/documents/workOrders/${id}`, fields: {
-        name: S(p.title), status: S("Baru"), workOrderType: S(p.type), scheduledDate: { timestampValue: when.toISOString() },
+        name: S(p.kind === "poles" ? `Tanam Tiang wilayah ${p.area} no ${p.first + k}` : p.type === "Pengecekan Port ODP" ? (p.n > 1 ? `Pengecekan Port ODP (${k + 1}/${p.n})` : "Pengecekan Port ODP") : p.title),
+        status: S("Baru"), workOrderType: S(p.type), scheduledDate: { timestampValue: when.toISOString() },
         assignedTeamId: S(p.team), assignmentType: S("team"), assignedEmployeeIds: { arrayValue: {} }, assignedEmployeeNames: { arrayValue: {} },
         tasks: { arrayValue: {} }, installationTasks: { arrayValue: {} }, progress: { mapValue: { fields: { total: I(1), completed: I(0) } } },
-        target: { mapValue: { fields: { type: S("manual") } } }, projectId: S(spk.project), ...(team && !(team.anggotaIds || []).length ? { teamEmptyAtCreate: B(true) } : {}) } },
+        // Pengecekan Port ODP: the technician picks each ODP when reporting, so the SPK only says which one of how many it is
+        target: { mapValue: { fields: p.type === "Pengecekan Port ODP" ? { type: S("cek-port-odp"), urutan: I(k + 1), dari: I(p.n) } : { type: S("manual") } } }, ...projField(), ...(team && !(team.anggotaIds || []).length ? { teamEmptyAtCreate: B(true) } : {}) } },
       updateTransforms: [{ fieldPath: "createdAt", setToServerValue: "REQUEST_TIME" }, { fieldPath: "updatedAt", setToServerValue: "REQUEST_TIME" }],
       currentDocument: { exists: false } };
   }
@@ -571,7 +595,7 @@
       if (spk.stop) break;
       if (j.state === "ok") continue;
       j.state = "busy"; j.why = ""; spkDraw();
-      try { await fsCall(`${db}/documents:commit`, { writes: j.kind === "count" ? Array.from({ length: j.n }, () => countDoc(db, j)) : [spkDoc(db, j).write] }); j.state = "ok"; }
+      try { await fsCall(`${db}/documents:commit`, { writes: j.kind === "route" ? [spkDoc(db, j).write] : Array.from({ length: j.n }, (_, k) => countDoc(db, j, k)) }); j.state = "ok"; }
       catch (e) { j.state = "err"; j.why = e.message; }
       spkDraw();
     }
@@ -624,7 +648,7 @@
     const viaPanel = routes.some((j) => j.viaPanel), plainType = routes.some((j) => !ROUTE_TYPES.includes(headType(j.head)) && !/akti[vf]asi/i.test(j.head));
     const ctl = [];
     if (viaPanel) ctl.push(field("Team", sel([["", L ? "Choose a team…" : "Loading…"], ...(L?.teams || []).map((t) => [t.id, t.namaTim || t.id])], spk.team, (v) => { spk.team = v; remember(); again(); })));
-    ctl.push(field("Project", sel([["", L ? "Choose a project…" : "Loading…"], ...(L?.projects || []).map((t) => [t.id, t.name || t.id])], spk.project, (v) => { spk.project = v; remember(); again(); })));
+    ctl.push(field("Project", sel([["", L ? "Choose a project…" : "Loading…"], ["-", "Bukan proyek (outside any project)"], ...(L?.projects || []).map((t) => [t.id, t.name || t.id])], spk.project, (v) => { spk.project = v; remember(); again(); })));
     if (plainType) ctl.push(field("Route type", sel(ROUTE_TYPES.map((t) => [t, t]), spk.type, (v) => { spk.type = v; remember(); again(); })));
     const dateIn = mk("input"); dateIn.type = "date"; dateIn.value = spk.date; dateIn.onchange = () => { spk.date = dateIn.value; spk.armed = false; }; ctl.push(field("Date", dateIn));
     if (routes.length) {
@@ -639,15 +663,15 @@
     const list = mk("div", "list"); p.append(list);
     function listDraw() {
       list.replaceChildren();
-      if (!J.length) { if (spk.text.trim()) list.append(mk("p", "hint", "No routes or \u201cname 10 spk\u201d lines found in this text yet.")); return; }
+      if (!J.length) { if (spk.text.trim()) list.append(mk("p", "hint", "No routes, \u201cname 10 spk\u201d or pole-range lines found in this text yet.")); return; }
       J.forEach((j, i) => {
         const row = mk("div", `rt ${j.state || ""}`), tn = L?.teams.find((t) => t.id === j.team)?.namaTim || "";
-        row.append(mk("span", "n", { ok: "✓", err: "✕", busy: "…" }[j.state] ?? String(i + 1)), mk("span", "t", j.kind === "count" ? `${j.title} × ${j.n}` : title(j)));
+        row.append(mk("span", "n", { ok: "✓", err: "✕", busy: "…" }[j.state] ?? String(i + 1)), mk("span", "t", j.kind === "route" ? title(j) : j.kind === "poles" ? `${j.title} (${j.n})` : `${j.title} × ${j.n}`));
         const bits = [j.type, j.emp && j.emp !== tn ? j.emp : ""];
         if (j.bad) bits.push(j.bad);
         if (j.kind === "route") bits.push(j.a?.ok === false ? j.a.why : j.a?.planned ? `${j.a.code}: new (Calon Aset)` : "", j.b?.ok === false ? j.b.why : j.b?.planned ? `${j.b.code}: new (Calon Aset)` : "");
         if (j.why) bits.push(j.why);
-        if (L && editing && j.who && (!j.opts.length && j.kind === "count" || j.opts.length > 1 || spk.picks[j.who])) {
+        if (L && editing && j.who && (!j.opts.length && j.kind !== "route" || j.opts.length > 1 || spk.picks[j.who])) {
           // nobody or several fit: pick the team here, once per name (every team when the name wasn't found)
           const opts = j.opts.length ? j.opts.map((o) => [o.team, o.emp ? `${o.teamName} (${o.emp})` : o.teamName]) : L.teams.map((t) => [t.id, t.namaTim || t.id]);
           const s = sel([["", j.opts.length ? `${j.opts.length} teams fit ${j.who}: choose one…` : `No technician called ${j.who}: choose a team…`], ...opts], j.team, (v) => { spk.picks[j.who] = v; again(); });
@@ -660,11 +684,12 @@
     }
     listDraw();
     if (spk.note) p.append(mk("p", "note", spk.note));
-    const foot = mk("div", "ft"), many = (j) => j.kind === "count" ? j.n : 1, total = J.reduce((n, j) => n + many(j), 0);
+    const foot = mk("div", "ft"), many = (j) => j.kind === "route" ? 1 : j.n, total = J.reduce((n, j) => n + many(j), 0);
     if (editing) {
       const assets = routes.some((j) => j.a?.ok === false || j.b?.ok === false), bad = J.find((j) => j.bad), noTeam = J.find((j) => !j.team);
       const missing = !J.length ? "Paste a message" : !L ? "Loading teams…" : assets ? "Fix the names marked above" : bad ? "Fix the line marked above"
-        : noTeam ? (noTeam.viaPanel ? "Choose a team" : `Choose a team for ${noTeam.who}`) : !spk.project ? "Choose a project" : !spk.date ? "Choose a date" : routes.length && !spk.idx ? "Assets still loading" : "";
+        : noTeam ? (noTeam.viaPanel ? "Choose a team" : `Choose a team for ${noTeam.who}`) : !spk.project ? "Choose a project"
+        : spk.project === "-" && J.some((j) => j.type === "Audit Tiang Existing") ? "Audit Tiang Existing needs a project" : !spk.date ? "Choose a date" : routes.length && !spk.idx ? "Assets still loading" : "";
       const teams = new Set(J.map((j) => j.team)).size;
       const go = btn(missing || (spk.armed ? `Press again: create ${total} SPK${total > 1 ? "s" : ""} for ${teams} team${teams > 1 ? "s" : ""}` : `Create ${total} SPK${total > 1 ? "s" : ""}`), () => {
         if (!spk.armed) { spk.armed = true; spkDraw(); setTimeout(() => { if (spk.armed && spk.phase === "input") { spk.armed = false; spkDraw(); } }, 6000); return; }
@@ -694,7 +719,7 @@
     const L = spk.lists, proj = L?.projects.find((t) => t.id === spk.project)?.name || "", seen = new Map();
     for (const j of spk.jobs || []) {
       j.type = jobType(j); j.bad = "";
-      if (j.kind === "count") { j.title = countTitle(j); if (ROUTE_TYPES.includes(j.type)) j.bad = `${j.type} needs a DARI → KE route, not a count`; }
+      if (j.kind !== "route") { j.title = countTitle(j); j.bad = countBad(j); }
       if (!L) { j.opts = []; j.team = ""; continue; }
       if (!seen.has(j.who)) seen.set(j.who, j.who ? teamsFor(j.who, L.emps, L.teams, proj) : []);
       j.opts = seen.get(j.who);
