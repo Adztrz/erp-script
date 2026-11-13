@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.70
+// @version      2.71
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -974,10 +974,21 @@
     if (b.disabled) { const why = /Tombol Setujui terbuka[^.—]*/.exec(d.textContent)?.[0]; dlgBtn(/^Tutup$/)?.click(); return `${why ? "checks left unticked" : "Setujui stays locked"}: open it yourself`; }
     if (rv.stopAuto) { dlgBtn(/^Tutup$/)?.click(); return "stopped"; }
     const t1 = performance.now(); b.click();
-    if (!await until(() => dlg() !== d, 20000)) return "!The ERP didn't finish saving: look at the open window";
+    // the ERP can take well over a minute when it's busy: wait while its Setujui still spins (or is held disabled);
+    // a window left open with nothing saving any more for 5 s means it stopped on an error
+    const busy = () => { const x = ok(); return !x || x.disabled || !!x.querySelector(".animate-spin, svg[class*='spin']"); };
+    let idleSince = 0;
+    const closed = await until(() => {
+      if (dlg() !== d) return true;
+      const sec = Math.round((performance.now() - t1) / 1000);
+      if (sec >= 8) autoHud(`${rv.hudBase} · the ERP is still saving (${sec} s)…`);
+      if (busy()) idleSince = 0; else idleSince ||= performance.now();
+      return idleSince && performance.now() - idleSince > 5000;
+    }, 300000);
+    if (dlg() === d) return closed ? "!The ERP stopped without saving: look at the open window" : "!The ERP was still saving after 5 minutes: look at the open window";
     const t2 = performance.now();
     if (dlg()) return "!The ERP asked something: answer it, then start again";
-    const ok2 = await until(() => decided(id), 10000), t3 = performance.now();
+    const ok2 = await until(() => decided(id), 60000), t3 = performance.now();
     // where the time went: the ERP's save (its server's verdict and its who-may-decide check, read off the browser's
     // own request timings) against the queue's own waits (opening and filling the window, seeing the report leave Menunggu)
     const calls = performance.getEntriesByType("resource").filter((e) => e.startTime >= t1 && e.startTime < t2);
@@ -994,7 +1005,8 @@
     for (const [n, id] of ids.entries()) {
       if (rv.stopAuto) break;
       const last = rv.times.at(-1);
-      autoHud(`Approving ${n + 1} of ${ids.length} · ${ok} approved${skipped ? `, ${skipped} skipped` : ""}${last ? ` · last one: ${timing(last)}` : ""} · Esc stops`);
+      rv.hudBase = `Approving ${n + 1} of ${ids.length} · ${ok} approved${skipped ? `, ${skipped} skipped` : ""}`;
+      autoHud(`${rv.hudBase}${last ? ` · last one: ${timing(last)}` : ""} · Esc stops`);
       const r = await autoOne(id);
       rv.res[id] = r;
       if (r === "ok") { ok++; rv.sel.delete(id); rv.all = rv.all.filter((x) => x.id !== id); }
