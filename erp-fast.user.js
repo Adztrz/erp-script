@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.65
+// @version      2.66
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -924,7 +924,7 @@
   function twice(k, b, why) {
     if (!b) return say(`No ${k === "a" ? "Setujui" : "Tolak"} button on this report.`);
     if (b.disabled) return say(why());
-    if (rv.armed?.k !== k || Date.now() - rv.armed.at > 2500) { rv.armed = { k, at: Date.now() }; return say(`Press ${k.toUpperCase()} again to ${k === "a" ? "approve" : "reject"}.`); }
+    if (rv.armed?.k !== k || Date.now() - rv.armed.at > 4000) { rv.armed = { k, at: Date.now() }; return say(`Press ${k.toUpperCase()} again to ${k === "a" ? "approve" : "reject"}.`); }
     rv.armed = null; rv.waiting = { id: queue()[rv.i].id, at: Date.now() }; say("Saving…"); b.click();
   }
   document.addEventListener("keydown", (e) => {
@@ -937,7 +937,7 @@
     if (k === "a") twice("a", dlgBtn(/^Setujui/, /tanpa/i), () => /Tombol Setujui terbuka[^.]*/.exec(d.textContent)?.[0] || "Setujui isn't open yet: tick the checks (C or 1–9).");
     else if (k === "r") twice("r", dlgBtn(/^Tolak/), () => d.querySelector('[aria-label="Kode tolak"]') ? "Pick a reject code (Shift+1–9) or write a note (T) first." : "Write the reason in the note first: T, type, Enter.");
     else if (k === "t") { const f = [...d.querySelectorAll("textarea, input[type=text], input:not([type])")].find((x) => /catatan|alasan/i.test(x.placeholder)) || [...d.querySelectorAll("textarea, input[type=text]")].pop(); f ? f.focus() : say("No note field on this report."); }
-    else if (k === "escape") { const t = dlgBtn(/^Tutup$/); if (t) t.click(); else done = false; } // the ERP's window ignores Esc
+    else if (k === "escape") { const t = dlgBtn(/^Tutup$/); if (t) { t.click(); rv.waiting = null; reviewStop(false); } else done = false; } // the ERP's window ignores Esc
     else if (k === "c") { const b = dlgBtn(/^Centang Semua$/); b ? b.click() : say("No Centang Semua on this report: tick with 1–9."); }
     else if (digit && !e.shiftKey) { const c = d.querySelectorAll('[role="checkbox"]')[digit[1] - 1]; c ? c.click() : say(`There's no check ${digit[1]}.`); }
     else if (digit && e.shiftKey) { const c = d.querySelectorAll('[aria-label="Kode tolak"] button')[digit[1] - 1]; c ? c.click() : say(`There's no reject code ${digit[1]}.`); }
@@ -946,20 +946,21 @@
     else done = false;
     if (done) { e.preventDefault(); e.stopPropagation(); }
   }, true);
-  // follows the ERP's window: once a decision is saved (the report leaves Menunggu) the next one opens; a window closed
-  // by hand pauses the queue
+  // follows the ERP's window: when it closes, the report it showed is watched for a few seconds; once it has left
+  // Menunggu (decided by key or by clicking Setujui / Tolak) the next one opens, otherwise (closed with Tutup) the queue pauses
   setInterval(() => {
     if (!rv?.run || rv.opening) return;
-    if (rv.waiting) {
-      const { id, at } = rv.waiting, tr = [...document.querySelectorAll("main table tbody > tr")].find((r) => rowKey(r) === id);
-      const r = pageState().reps?.find((x) => x.id === id), decided = (r && r.status !== "Menunggu Verifikasi") || (!tr && !dlg());
-      if (decided && !dlg()) {
-        rv.waiting = null; rv.all = rv.all.filter((x) => x.id !== id);
-        if (rv.auto) reviewGo(rv.i); else { rv.msg = "Saved."; reviewStop(false); }
-      } else if (!dlg() && Date.now() - at > 20000) { rv.waiting = null; rv.msg = "The decision wasn't confirmed: check that report before going on."; reviewStop(false); }
-      return;
+    if (!rv.waiting && !dlg()) rv.waiting = { id: queue()[rv.i]?.id, at: Date.now(), byHand: true };
+    if (!rv.waiting) return;
+    const { id, at, byHand } = rv.waiting, tr = [...document.querySelectorAll("main table tbody > tr")].find((r) => rowKey(r) === id);
+    const r = pageState().reps?.find((x) => x.id === id), decided = (r && r.status !== "Menunggu Verifikasi") || (!tr && !dlg());
+    if (dlg()) { if (byHand) rv.waiting = null; return; } // still open (or reopened): keep waiting for a key decision only
+    if (decided) {
+      rv.waiting = null; rv.all = rv.all.filter((x) => x.id !== id);
+      if (rv.auto) reviewGo(rv.i); else { rv.msg = "Saved."; reviewStop(false); }
+    } else if (Date.now() - at > (byHand ? 6000 : 20000)) {
+      rv.waiting = null; rv.msg = byHand ? "" : "The decision wasn't confirmed: check that report before going on."; reviewStop(false);
     }
-    if (!dlg()) reviewStop(false);
   }, 400);
 
   // ---------- fast search: LDN Radius → Pelanggan, and Finance → Invoices ----------

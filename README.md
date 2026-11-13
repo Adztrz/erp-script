@@ -106,7 +106,7 @@ Goes through the waiting reports one after another from the keyboard. On Technic
 | `N` / `P` | next / previous report |
 | `Esc` | close the window and pause; **Continue** picks up where you were |
 
-After a decision is saved the next report opens (switch that off in the panel). A strip at the top shows where you are, who sent the report and its Validasi, and why Setujui or Tolak isn't open yet.
+After a decision is saved, by key or by clicking Setujui / Tolak yourself, the next report opens (switch that off in the panel); closing the window with Tutup pauses. A strip at the top shows where you are, who sent the report and its Validasi, and why Setujui or Tolak isn't open yet.
 
 Nothing is decided without your keys, and nothing goes around the ERP: who may decide, all checks ticked before Setujui, and the photos being the ones you saw are still checked by the ERP as when you click. Before starting, the queue sets aside reports you may not decide and those whose photos are still on the technician's phone (the ERP's "Masih di HP"), and puts the rest in an order that keeps alike work together: Lengkap first, then by type, technician and time reported.
 
