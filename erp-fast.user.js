@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.68
+// @version      2.69
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -947,6 +947,8 @@
     const tr = [...document.querySelectorAll("main table tbody > tr")].find((r) => rowKey(r) === id), r = pageState().reps?.find((x) => x.id === id);
     return (r && r.status !== "Menunggu Verifikasi") || (!tr && !dlg());
   };
+  const sec = (ms) => `${(ms / 1000).toFixed(1)} s`;
+  const timing = (t) => `ERP save ${sec(t.save)} (its server ${sec(t.server)}, who-may-decide check ${sec(t.check)}) · queue ${sec(t.queue)}`;
   function autoHud(text) {
     let h = document.getElementById("erp-review-hud");
     if (!h) { h = document.createElement("div"); h.id = "erp-review-hud"; h.setAttribute("role", "status"); document.body.append(h); }
@@ -957,6 +959,7 @@
     if (dlg()) { dlgBtn(/^Tutup$/)?.click(); await until(() => !dlg(), 3000); }
     const tr = [...document.querySelectorAll("main table tbody > tr")].find((r) => rowKey(r) === id);
     if (!tr || !/^Menunggu/.test(tr.cells[0]?.textContent.trim() || "")) return "already decided";
+    const t0 = performance.now();
     [...tr.querySelectorAll("button")].pop()?.click();
     if (!await until(() => dlg(), 8000)) return "!The report didn't open";
     await sleep(900); // the window fills in its checks and photos
@@ -969,19 +972,28 @@
     if (!b) return "no Setujui button: open it yourself";
     if (b.disabled) { const why = /Tombol Setujui terbuka[^.—]*/.exec(d.textContent)?.[0]; dlgBtn(/^Tutup$/)?.click(); return `${why ? "checks left unticked" : "Setujui stays locked"}: open it yourself`; }
     if (rv.stopAuto) { dlgBtn(/^Tutup$/)?.click(); return "stopped"; }
-    b.click();
+    const t1 = performance.now(); b.click();
     if (!await until(() => dlg() !== d, 20000)) return "!The ERP didn't finish saving: look at the open window";
+    const t2 = performance.now();
     if (dlg()) return "!The ERP asked something: answer it, then start again";
-    return await until(() => decided(id), 10000) ? "ok" : "!The approval wasn't confirmed: check this report";
+    const ok2 = await until(() => decided(id), 10000), t3 = performance.now();
+    // where the time went: the ERP's save (its server's verdict and its who-may-decide check, read off the browser's
+    // own request timings) against the queue's own waits (opening and filling the window, seeing the report leave Menunggu)
+    const calls = performance.getEntriesByType("resource").filter((e) => e.startTime >= t1 && e.startTime < t2);
+    const took = (re) => calls.filter((e) => re.test(e.name)).reduce((n, e) => n + e.duration, 0);
+    rv.times.push({ save: t2 - t1, server: took(/\/approvals\/titik-putus/), check: took(/\/approvals\/hak-putus/), queue: (t1 - t0) + (t3 - t2) });
+    return ok2 ? "ok" : "!The approval wasn't confirmed: check this report";
   }
   async function autoRun() {
     const ids = queue().filter((x) => rv.sel.has(x.id)).map((x) => x.id);
     rv.autoOn = true; rv.stopAuto = false; rv.msg = ""; reviewDraw();
     const p = document.getElementById("erp-review"); if (p) p.style.display = "none";
-    let ok = 0, skipped = 0, why = "";
+    let ok = 0, skipped = 0, why = ""; rv.times = [];
+    try { performance.setResourceTimingBufferSize(Math.max(5000, performance.getEntriesByType("resource").length + 2000)); } catch {} // room for the timings below
     for (const [n, id] of ids.entries()) {
       if (rv.stopAuto) break;
-      autoHud(`Approving ${n + 1} of ${ids.length} · ${ok} approved${skipped ? `, ${skipped} skipped` : ""} · Esc stops`);
+      const last = rv.times.at(-1);
+      autoHud(`Approving ${n + 1} of ${ids.length} · ${ok} approved${skipped ? `, ${skipped} skipped` : ""}${last ? ` · last one: ${timing(last)}` : ""} · Esc stops`);
       const r = await autoOne(id);
       rv.res[id] = r;
       if (r === "ok") { ok++; rv.sel.delete(id); rv.all = rv.all.filter((x) => x.id !== id); }
@@ -990,6 +1002,7 @@
     }
     rv.autoOn = false;
     rv.msg = `${ok} approved${skipped ? `, ${skipped} skipped (marked in the list)` : ""}.${why ? ` Stopped: ${why}.` : rv.stopAuto ? " Stopped." : ""}`;
+    if (rv.times.length) { const avg = (k) => rv.times.reduce((n, t) => n + t[k], 0) / rv.times.length; rv.msg += ` Each took ${timing({ save: avg("save"), server: avg("server"), check: avg("check"), queue: avg("queue") })} on average.`; }
     document.getElementById("erp-review-hud")?.remove(); reviewDraw();
   }
   function hud() {
