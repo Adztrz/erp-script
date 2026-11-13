@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.58
+// @version      2.59
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -3444,12 +3444,20 @@
     loadKa();
     const kaOf = (desa) => !kas || !desa ? "" : kas.filter((k) => k.desa.has(String(desa).trim().toLowerCase())).map((k) => k.name).join(" / ");
     // the snippet to paste: modem SN, name (+ village + STARLITE), username, technician, location, KA
-    function note(c) {
+    function fields(c) {
       const loc = [c.desa && `Desa ${c.desa}`, c.kec && `Kec. ${c.kec}`].filter(Boolean).join(", ");
       const name = String(c.name || c.base || "").trim().toUpperCase().replace(/\s+/g, " ");
       const full = !name || /STARLITE$/.test(name) || !c.desa ? name : `${name} ${String(c.desa).toUpperCase()} STARLITE`;
-      return [`SN Modem: ${c.sn || "-"}`, `Nama: ${full || "-"}`, `Username: ${c.user}`, `Teknisi: ${c.tech || "-"}`, `Lokasi: ${loc || "-"}`, `KA: ${c.ka || "-"}`, c.maps].filter(Boolean).join("\n");
+      return [["SN Modem", c.sn || "-"], ["Nama", full || "-"], ["Username", c.user], ["Teknisi", c.tech || "-"], ["Lokasi", loc || "-"], ["KA", c.ka || "-"], ["Maps", c.maps]].filter((f) => f[1]);
     }
+    const note = (c) => fields(c).map(([k, v]) => k === "Maps" ? v : `${k}: ${v}`).join("\n");
+    // copy text and say so on the button for a moment
+    // (falls back to the old copy command when the clipboard API is refused)
+    const oldCopy = (text) => { const t = el("textarea"); t.value = text; t.style.cssText = "position:fixed;opacity:0"; document.body.append(t); t.select(); const ok = document.execCommand("copy"); t.remove(); if (!ok) throw 0; };
+    const copyTo = (b, text) => (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject()).catch(() => oldCopy(text)).then(() => {
+      b.classList.remove("fail"); b.classList.add("did"); if (b.classList.contains("all")) b.textContent = "Copied";
+      setTimeout(() => { b.classList.remove("did"); if (b.classList.contains("all")) b.textContent = "Copy all"; }, 1200);
+    }).catch(() => { b.classList.add("fail"); if (b.classList.contains("all")) b.textContent = "Couldn't copy: select the text"; });
     function drawChecks() {
       const list = checks().filter((c) => !c.closed);
       if (!list.length) { box?.remove(); box = null; return; }
@@ -3467,10 +3475,14 @@
         for (const [k, t] of lines) { const r = el("p", "kv"); r.append(el("b", null, k), t); bd.append(r); }
         if (c.err) bd.append(el("p", "warn", c.err));
         bd.append(el("p", "sub", c.done ? `Checked ${hm(c.last)}` : `Checking every 20 s since ${hm(c.start)}${c.last ? ` · last ${hm(c.last)}` : ""}`));
-        const snip = el("pre", "snip", note(c)); snip.tabIndex = 0; snip.title = "Click to select";
-        snip.onclick = () => { const r = document.createRange(); r.selectNodeContents(snip); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); };
-        const cp = el("button", null, "Copy"); cp.type = "button";
-        cp.onclick = () => navigator.clipboard?.writeText(note(c)).then(() => { cp.textContent = "Copied"; setTimeout(() => (cp.textContent = "Copy"), 1500); }).catch(() => { cp.textContent = "Couldn't copy: select the text"; });
+        // each line copies just its value; Copy all still gives the whole snippet
+        const snip = el("div", "snip");
+        for (const [k, v] of fields(c)) {
+          const r = el("button", "ln"); r.type = "button"; r.title = `Copy ${k}`;
+          r.append(el("span", "k", k), el("span", "v", v)); r.onclick = () => copyTo(r, v);
+          snip.append(r);
+        }
+        const cp = el("button", "all", "Copy all"); cp.type = "button"; cp.onclick = () => copyTo(cp, note(c));
         bd.append(snip, cp); it.append(hd, bd); return it;
       }));
     }
@@ -3503,7 +3515,17 @@
       .erp-akt-after .kv { margin: 0; font-size: 12px; } .erp-akt-after .kv b { display: inline-block; width: 52px; font-weight: 500; color: var(--muted); }
       .erp-akt-after .bd > button { justify-self: start; }
       .erp-akt-after .snip { margin: 2px 0 0; padding: 8px 10px; border-radius: 6px; background: #1a1d1e; box-shadow: inset 0 0 0 1px #363738; color: #efefed;
-        font: 12px/1.5 "JetBrains Mono", ui-monospace, monospace; white-space: pre-wrap; word-break: break-all; user-select: all; cursor: text; }
+        font: 12px/1.5 "JetBrains Mono", ui-monospace, monospace; display: grid; padding: 4px; }
+      .erp-akt-after .snip .ln { all: unset; box-sizing: border-box; display: grid; grid-template-columns: 64px 1fr auto; gap: 8px; padding: 4px 6px; border-radius: 4px; cursor: copy; }
+      .erp-akt-after .snip .ln:hover, .erp-akt-after .snip .ln:focus-visible { background: #262727; }
+      .erp-akt-after .snip .ln:focus-visible { box-shadow: inset 0 0 0 1px #8a8b8a; }
+      .erp-akt-after .snip .k { color: #8a8b8a; } .erp-akt-after .snip .v { color: #efefed; word-break: break-all; }
+      .erp-akt-after .snip .ln::after { content: "copy"; color: #8a8b8a; opacity: 0; transition: opacity .15s; }
+      .erp-akt-after .snip .ln:hover::after, .erp-akt-after .snip .ln:focus-visible::after { opacity: 1; }
+      .erp-akt-after .snip .ln.did::after { content: "copied"; color: #55bc82; opacity: 1; }
+      .erp-akt-after .snip .ln.fail::after { content: "couldn't copy"; color: #ff8a7a; opacity: 1; }
+      .erp-akt-after .snip .ln, .erp-akt-after .snip .v { user-select: text; }
+      .erp-akt-after .all.did { color: #55bc82; }
       .erp-akt { --bone: #e9e1dc; --paper: #efefed; --body: #b3b0af; --muted: #8a8b8a; --hair: #262727; --edge: #363738; --green: #55bc82; --red: #f12614; --amber: #e0b04f;
         margin: 4px 0 8px; border-radius: 8px; background: #090b0c; box-shadow: inset 0 0 0 1px var(--edge); color: var(--body); font: 400 13px/1.45 Inter, ui-sans-serif, system-ui, sans-serif; }
       .erp-akt .hd { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px 14px; border-bottom: 1px solid var(--hair); }
