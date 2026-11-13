@@ -106,6 +106,18 @@ Each FDT → FAT pair becomes a route (several FDT blocks in one message work, a
 
 Each SPK is the record Planning's manual form saves for a team, checked field by field against SPKs made by hand: status Baru, the team, the project, no tasks or equipment, progress 0/1, the route (with the cable length pre-filled from the straight line, as the form does). They're saved through Firestore's REST API with your own sign-in, as new documents only, then the ERP's own SPK sync (the one Misi and the SPK monitor call) is run once so they show in Daftar SPK straight away. No WhatsApp or push notice is sent; use Kirim ke WA Grup on Daftar SPK if the team should hear about them. Team, project and type are remembered.
 
+### Bulk FAT (a number of SPKs per technician)
+
+Paste a heading and one line per technician with how many SPKs they get:
+
+```
+Aktivasi FAT
+Budi santoso 10 spk
+Agus setiawan 15 spk
+```
+
+Each name is matched to an employee (spelling slips are forgiven, but a name spelt exactly as typed wins over one that only sounds close) and then to that employee's team. When several teams fit, the one named after the project's area wins, then the one where the person is a technician; if it's still unclear, or nobody fits, the row shows a team picker. Pick the project and date; the title is the heading in capitals and the type follows it (Aktivasi ODP/FAT, or Aktivasi FDT when the heading says FDT). Press **Create** twice. Each SPK is the record the manual form saves for a team: target manual, no tasks, progress 0/1. Each technician's SPKs are saved in one go, so a technician gets all of them or none, and **Retry failed** only redoes the ones that failed.
+
 ## Install
 
 1. Install [Tampermonkey](https://www.tampermonkey.net/).

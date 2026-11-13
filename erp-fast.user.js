@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.59
-// @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
+// @version      2.60
+// @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
 // @grant        none
@@ -290,6 +290,7 @@
     #erp-bulk-spk .rt .n { font: 12px "JetBrains Mono", ui-monospace, monospace; color: var(--muted); padding-top: 1px; }
     #erp-bulk-spk .rt .t { color: var(--paper); font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
     #erp-bulk-spk .rt .s { grid-column: 2; font-size: 12px; color: var(--muted); }
+    #erp-bulk-spk .rt select.s { margin-top: 4px; height: 28px; color: var(--paper); }
     #erp-bulk-spk .rt.ok .n, #erp-bulk-spk .rt.form .n { color: var(--green); } #erp-bulk-spk .rt.err .n, #erp-bulk-spk .rt.err .s { color: var(--red); }
     #erp-bulk-spk .ft { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
     #erp-bulk-spk .steps { flex-basis: 100%; margin: 0; padding-left: 18px; font-size: 13px; color: var(--body); }
@@ -408,6 +409,39 @@
     return routes;
   }
 
+  // Bulk FAT: "Aktivasi FAT" then "Budi santoso 10 spk" lines → { head, people: [{ who, n }] }, or null when no line counts SPKs
+  function parseCounts(text) {
+    const people = [], head = [];
+    for (const raw of String(text).split(/\r?\n/)) {
+      const t = raw.trim().replace(/^(?:[*\-•·>]+|\d+[.)])\s+/, "");
+      if (!t) continue;
+      const m = /^(.+?)\s*[:=\-–]?\s*(\d+)\s*spk\b\.?$/i.exec(t);
+      if (m && +m[2] > 0) people.push({ who: m[1].trim(), n: Math.min(+m[2], 100) });
+      else if (!people.length) head.push(t);
+    }
+    return people.length ? { head: head.join(" ").replace(/\s+/g, " ").trim(), people } : null;
+  }
+  // the form's manual SPK types an activation list can be; the heading picks one ("…FDT…" → Aktivasi FDT)
+  const COUNT_TYPES = ["Aktivasi ODP/FAT", "Aktivasi FDT", "Instalasi Joinbox", "Instalasi Tiang", "Instalasi OLT"];
+  const countType = (head) => /\bfdt\b/i.test(head) ? "Aktivasi FDT" : /joinbox|\bjb\b/i.test(head) ? "Instalasi Joinbox" : /tiang/i.test(head) ? "Instalasi Tiang" : "Aktivasi ODP/FAT";
+  // a typed name → the teams of the employees it fits: each typed word starts a word of the name, or sounds close to one
+  // (SETIYAWAN = SETIAWAN); several fits are narrowed to teams named after the project's area, then to technicians
+  function teamsFor(who, emps, teams, projectName) {
+    const typed = fold(who).split(" ").filter(Boolean);
+    const spelt = (x, w) => x === w || (w.length >= 3 && x.startsWith(w)), close = (x, w) => sound(x) === sound(w) || (w.length >= 5 && near(sound(w), sound(x), w.length >= 8 ? 2 : 1));
+    const fits = (name, how) => { const words = fold(name).split(" "); return typed.every((w) => words.some((x) => how(x, w))); };
+    const live = emps.filter((e) => !/non ?aktif|keluar|resign/i.test(e.status || ""));
+    // a name spelt as typed beats one that only sounds close (HARIYANTO, not HERIYANTO)
+    const exact = live.filter((e) => fits(e.name, spelt)), people = exact.length ? exact : live.filter((e) => fits(e.name, (x, w) => spelt(x, w) || close(x, w)));
+    const hits = [];
+    for (const e of people) for (const t of teams) if ((t.anggotaIds || []).includes(e.id) || t.leaderId === e.id) hits.push({ team: t.id, teamName: t.namaTim || t.id, emp: e.name, role: e.role || "" });
+    if (hits.length < 2) return hits;
+    const area = new Set(fold(projectName).split(" ").filter((w) => w.length >= 4));
+    const local = hits.filter((h) => fold(h.teamName).split(" ").some((w) => area.has(w)));
+    const pool = local.length ? local : hits, tech = pool.filter((h) => /teknisi/i.test(h.role));
+    return tech.length ? tech : pool;
+  }
+
   // Planning's own asset list (kept by the cache above), every district
   async function assetIndex() {
     const box = await caches.open(CACHE);
@@ -477,7 +511,9 @@
     const [teams, projects] = await Promise.all([fsList(db, "technicianTeams"),
       fsList(db, "projects", { fieldFilter: { field: { fieldPath: "status" }, op: "IN", value: { arrayValue: { values: [{ stringValue: "Direncakan" }, { stringValue: "Berjalan" }] } } } })]);
     const byName = (a, b) => String(a.namaTim ?? a.name ?? "").localeCompare(String(b.namaTim ?? b.name ?? ""), "id");
-    return { db, teams: teams.sort(byName), projects: projects.sort(byName) };
+    // employees come from the ERP's read copy (the database doesn't list them to a browser)
+    const emps = await realFetch("/api/pg-read/employees?fields=name,role,status&limit=5000", { headers: { authorization: await fsToken() } }).then((r) => r.json()).then((j) => j.data || []).catch(() => []);
+    return { db, teams: teams.sort(byName), projects: projects.sort(byName), emps };
   }
   const S = (v) => v == null ? { nullValue: null } : { stringValue: String(v) }, I = (n) => n == null ? { nullValue: null } : { integerValue: String(Math.round(n)) };
   const D = (n) => n == null ? { nullValue: null } : { doubleValue: n }, B = (b) => ({ booleanValue: !!b });
@@ -498,6 +534,43 @@
       updateTransforms: [{ fieldPath: "createdAt", setToServerValue: "REQUEST_TIME" }, { fieldPath: "updatedAt", setToServerValue: "REQUEST_TIME" }],
       currentDocument: { exists: false } } };
   }
+  // the same record the manual form saves for a team with no route: target manual, no tasks, progress 0/1
+  function countDoc(db, p) {
+    const [y, m, d] = spk.date.split("-").map(Number), day = new Date(y, m - 1, d), now = new Date();
+    const when = day.toDateString() === now.toDateString() ? now : day;
+    const id = Array.from(crypto.getRandomValues(new Uint8Array(20)), (n) => "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"[n % 62]).join("");
+    const team = spk.lists.teams.find((t) => t.id === p.team);
+    return { update: { name: `${db}/documents/workOrders/${id}`, fields: {
+        name: S(spk.ctitle.trim()), status: S("Baru"), workOrderType: S(spk.ctype), scheduledDate: { timestampValue: when.toISOString() },
+        assignedTeamId: S(p.team), assignmentType: S("team"), assignedEmployeeIds: { arrayValue: {} }, assignedEmployeeNames: { arrayValue: {} },
+        tasks: { arrayValue: {} }, installationTasks: { arrayValue: {} }, progress: { mapValue: { fields: { total: I(1), completed: I(0) } } },
+        target: { mapValue: { fields: { type: S("manual") } } }, projectId: S(spk.project), ...(team && !(team.anggotaIds || []).length ? { teamEmptyAtCreate: B(true) } : {}) } },
+      updateTransforms: [{ fieldPath: "createdAt", setToServerValue: "REQUEST_TIME" }, { fieldPath: "updatedAt", setToServerValue: "REQUEST_TIME" }],
+      currentDocument: { exists: false } };
+  }
+  // each technician's SPKs go in one commit: all of them are made, or none
+  async function countCreate() {
+    spk.phase = "creating"; spk.stop = false; spk.note = ""; spkDraw();
+    const db = spk.lists.db;
+    for (const p of spk.counts.people) {
+      if (spk.stop) break;
+      if (p.state === "ok") continue;
+      p.state = "busy"; p.why = ""; spkDraw();
+      try { await fsCall(`${db}/documents:commit`, { writes: Array.from({ length: p.n }, () => countDoc(db, p)) }); p.state = "ok"; }
+      catch (e) { p.state = "err"; p.why = e.message; }
+      spkDraw();
+    }
+    if (spk.counts.people.some((p) => p.state === "ok")) await mirror();
+    spk.phase = "done"; spkDraw();
+  }
+  async function mirror() {
+    spk.note = "Adding them to Daftar SPK…"; spkDraw();
+    try {
+      const auth = await fsToken(), res = await realFetch("/api/spk/mirror", { method: "POST", headers: auth ? { authorization: auth } : {} });
+      const j = await res.json().catch(() => null);
+      spk.note = res.ok && j?.ok !== false ? "" : "They're saved, but didn't reach Daftar SPK yet: opening Technical → Misi adds them.";
+    } catch { spk.note = "They're saved, but didn't reach Daftar SPK yet: opening Technical → Misi adds them."; }
+  }
   async function spkCreate() {
     spk.phase = "creating"; spk.stop = false; spk.note = ""; spkDraw();
     const db = spk.lists.db;
@@ -511,14 +584,7 @@
     }
     // Daftar SPK reads a copy of the SPKs that the ERP refreshes when its own pages call this sync (Misi, SPK
     // monitor); without it new SPKs stay out of the list until someone opens one of those
-    if (spk.routes.some((r) => r.state === "ok")) {
-      spk.note = "Adding them to Daftar SPK…"; spkDraw();
-      try {
-        const auth = await fsToken(), res = await realFetch("/api/spk/mirror", { method: "POST", headers: auth ? { authorization: auth } : {} });
-        const j = await res.json().catch(() => null);
-        spk.note = res.ok && j?.ok !== false ? "" : "They're saved, but didn't reach Daftar SPK yet: opening Technical → Misi adds them.";
-      } catch { spk.note = "They're saved, but didn't reach Daftar SPK yet: opening Technical → Misi adds them."; }
-    }
+    if (spk.routes.some((r) => r.state === "ok")) await mirror();
     spk.phase = "done"; spkDraw();
   }
 
@@ -532,7 +598,7 @@
     const p = document.createElement("div"); p.id = "erp-bulk-spk"; p.setAttribute("role", "dialog"); p.setAttribute("aria-label", "Bulk SPK");
     document.body.append(p); spkDraw(); draw();
     p.querySelector("textarea")?.focus();
-    if (!spk.lists) spkLists().then((l) => { spk.lists = l; spkDraw(); }, (e) => { spk.note = `Couldn't read teams and projects: ${e.message}`; spkDraw(); });
+    if (!spk.lists) spkLists().then((l) => { spk.lists = l; countTeams(); spkDraw(); }, (e) => { spk.note = `Couldn't read teams and projects: ${e.message}`; spkDraw(); });
   }
   const remember = () => { try { localStorage.setItem(SPK_PICK, JSON.stringify({ team: spk.team, project: spk.project, type: spk.type })); } catch {} };
   function spkDraw() {
@@ -544,13 +610,14 @@
     p.replaceChildren();
     const head = mk("div", "hd"); head.append(mk("span", "tag", "Bulk SPK"), btn("✕", bulkSpkToggle, "x")); head.lastChild.setAttribute("aria-label", "Close"); p.append(head);
     const editing = spk.phase === "input";
-    const ta = mk("textarea"); ta.rows = 6; ta.placeholder = "Paste the message, e.g.\nFDT DAYU\nke :\n* FAT DAYU 1\n* FAT DAYU 2"; ta.value = spk.text; ta.disabled = !editing;
+    const ta = mk("textarea"); ta.rows = 6; ta.placeholder = "Paste the message, e.g.\nFDT DAYU\nke :\n* FAT DAYU 1\n* FAT DAYU 2\n\nor, for activation SPKs per technician:\nAktivasi FAT\nBudi santoso 10 spk"; ta.value = spk.text; ta.disabled = !editing;
     ta.oninput = async () => {
       spk.text = ta.value; spk.armed = false; await spkPlan();
       const at = ta.selectionStart; spkDraw(); // redraw, then put the caret back where it was
       const again = document.querySelector("#erp-bulk-spk textarea"); again?.focus(); again?.setSelectionRange(at, at);
     };
     p.append(ta);
+    if (spk.counts) return countDraw(p, { mk, btn, field, sel, editing });
     const L = spk.lists;
     const teamSel = field("Team", sel([["", L ? "Choose a team…" : "Loading…"], ...(L?.teams || []).map((t) => [t.id, t.namaTim || t.id])], spk.team, (v) => { spk.team = v; spk.armed = false; remember(); spkDraw(); }));
     const projSel = field("Project", sel([["", L ? "Choose a project…" : "Loading…"], ...(L?.projects || []).map((t) => [t.id, t.name || t.id])], spk.project, (v) => { spk.project = v; spk.armed = false; remember(); spkDraw(); }));
@@ -594,13 +661,73 @@
       foot.append(mk("span", "hint", `${ok} SPK${ok === 1 ? "" : "s"} made${err ? `, ${err} failed` : ""}${spk.stop ? " (stopped)" : ""}.`));
       if (err) foot.append(btn("Retry failed", () => spkCreate()));
       const open = mk("a", "lnk", "Open Daftar SPK"); open.href = "/work-orders"; foot.append(open);
-      foot.append(btn("New list", () => { spk = { ...spk, text: "", routes: [], phase: "input", note: "", stop: false }; spkDraw(); }));
+      foot.append(btn("New list", () => { spk = { ...spk, text: "", routes: [], counts: null, phase: "input", note: "", stop: false }; spkDraw(); }));
+    }
+    p.append(foot);
+  }
+  // Bulk FAT: a set number of SPKs for each technician's team
+  function countDraw(p, { mk, btn, field, sel, editing }) {
+    const L = spk.lists, C = spk.counts, total = C.people.reduce((n, x) => n + x.n, 0);
+    const projSel = field("Project", sel([["", L ? "Choose a project…" : "Loading…"], ...(L?.projects || []).map((t) => [t.id, t.name || t.id])], spk.project, (v) => { spk.project = v; spk.armed = false; remember(); countTeams(); spkDraw(); }));
+    const typeSel = field("Type", sel(COUNT_TYPES.map((t) => [t, t]), spk.ctype, (v) => { spk.ctype = v; spk.armed = false; }));
+    const dateIn = mk("input"); dateIn.type = "date"; dateIn.value = spk.date; dateIn.onchange = () => { spk.date = dateIn.value; spk.armed = false; }; field("Date", dateIn);
+    const ti = mk("input"); ti.value = spk.ctitle; ti.oninput = () => { spk.ctitle = ti.value; spk.armed = false; }; field("Title", ti);
+    for (const c of [projSel, typeSel, dateIn, ti]) c.disabled = !editing;
+    const proj = L?.projects.find((t) => t.id === spk.project);
+    if (proj && /internet rakyat/i.test(`${proj.name} ${proj.program || ""}`)) p.append(mk("p", "note", "This looks like an Internet Rakyat project: those SPKs are normally issued from Pemecah SPK per desa."));
+    const list = mk("div", "list"); p.append(list);
+    C.people.forEach((x, i) => {
+      const row = mk("div", `rt ${x.state || ""}`), name = x.opts?.find((o) => o.team === x.team);
+      row.append(mk("span", "n", { ok: "✓", err: "✕", busy: "…" }[x.state] ?? String(i + 1)), mk("span", "t", `${name?.emp || x.who} · ${x.n} SPK`));
+      if (!L) row.append(mk("span", "s", "Loading teams…"));
+      else if (editing && (!x.opts.length || x.opts.length > 1 || x.picked)) {
+        // nobody or several fit: pick the team here (every team when the name wasn't found)
+        const opts = x.opts.length ? x.opts.map((o) => [o.team, `${o.teamName} (${o.emp})`]) : L.teams.map((t) => [t.id, t.namaTim || t.id]);
+        const s = sel([["", x.opts.length ? `${x.opts.length} teams fit: choose one…` : `No technician called ${x.who}: choose a team…`], ...opts], x.team, (v) => { x.team = v; x.picked = true; spk.armed = false; spkDraw(); });
+        s.className = "s"; s.setAttribute("aria-label", `Team for ${x.who}`); row.append(s);
+      } else row.append(mk("span", "s", [name?.teamName || L.teams.find((t) => t.id === x.team)?.namaTim || "", x.why || ""].filter(Boolean).join(" · ")));
+      list.append(row);
+    });
+    if (spk.note) p.append(mk("p", "note", spk.note));
+    const foot = mk("div", "ft"), unset = C.people.find((x) => !x.team);
+    if (editing) {
+      const missing = !L ? "Loading teams…" : !spk.project ? "Choose a project" : unset ? `Choose a team for ${unset.who}` : !spk.date ? "Choose a date" : !spk.ctitle.trim() ? "Write a title" : "";
+      const teams = new Set(C.people.map((x) => x.team)).size;
+      const go = btn(missing || (spk.armed ? `Press again: create ${total} SPKs for ${teams} team${teams > 1 ? "s" : ""}` : `Create ${total} SPK${total > 1 ? "s" : ""}`), () => {
+        if (!spk.armed) { spk.armed = true; spkDraw(); setTimeout(() => { if (spk.armed && spk.phase === "input") { spk.armed = false; spkDraw(); } }, 6000); return; }
+        spk.armed = false; countCreate();
+      }, "primary");
+      go.disabled = !!missing; foot.append(go);
+    } else if (spk.phase === "creating") {
+      const made = C.people.filter((x) => x.state === "ok").reduce((n, x) => n + x.n, 0);
+      foot.append(mk("span", "hint", `Making SPKs… ${made} of ${total}`), btn("Stop", () => { spk.stop = true; }));
+    } else {
+      const ok = C.people.filter((x) => x.state === "ok").reduce((n, x) => n + x.n, 0), err = C.people.filter((x) => x.state === "err").length;
+      foot.append(mk("span", "hint", `${ok} SPK${ok === 1 ? "" : "s"} made${err ? `, ${err} technician${err > 1 ? "s" : ""} failed` : ""}${spk.stop ? " (stopped)" : ""}.`));
+      if (err) foot.append(btn("Retry failed", () => countCreate()));
+      const open = mk("a", "lnk", "Open Daftar SPK"); open.href = "/work-orders"; foot.append(open);
+      foot.append(btn("New list", () => { spk = { ...spk, text: "", routes: [], counts: null, phase: "input", note: "", stop: false }; spkDraw(); }));
     }
     p.append(foot);
   }
   async function spkPlan() {
     if (!spk.idx) spk.idx = await assetIndex().catch(() => null);
     spk.routes = parseRoutes(spk.text).map((r) => ({ ...r, a: placeAsset(spk.idx, r.from), b: placeAsset(spk.idx, r.to) }));
+    const was = spk.counts, c = parseCounts(spk.text);
+    if (c) {
+      if (!was || was.head !== c.head) { spk.ctitle = c.head.toUpperCase() || spk.ctitle || "AKTIVASI FAT"; spk.ctype = countType(c.head); }
+      c.people.forEach((p) => { const old = was?.people.find((o) => o.who === p.who); if (old?.picked) { p.team = old.team; p.picked = true; } });
+    }
+    spk.counts = c; countTeams();
+  }
+  // fill in each technician's team (a team picked by hand stays)
+  function countTeams() {
+    const L = spk.lists; if (!spk.counts || !L) return;
+    const proj = L.projects.find((t) => t.id === spk.project)?.name || "";
+    for (const p of spk.counts.people) {
+      p.opts = teamsFor(p.who, L.emps, L.teams, proj);
+      if (!p.picked) p.team = p.opts.length === 1 ? p.opts[0].team : "";
+    }
   }
 
   // ---------- fast search: LDN Radius → Pelanggan, and Finance → Invoices ----------
