@@ -93,7 +93,7 @@ The half-circle button at the top of the Dock turns the whole ERP black and bone
 
 ## Bulk SPK (Planning)
 
-Makes SPKs from a pasted message, with no form to fill. On Planning press **Bulk SPK** in the bar and paste the message. It understands both kinds of SPK, and one message can mix them:
+Makes SPKs from a pasted message, with no form to fill. On Planning press **Bulk SPK** in the bar and paste the message. **How to write it** under the box has an example of each kind, in a box of its own that scrolls; it's open while the box is empty. It understands both kinds of SPK, and one message can mix them:
 
 ```
 Tarik & aktivasi FAT

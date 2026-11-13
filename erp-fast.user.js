@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.62
+// @version      2.63
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -284,6 +284,12 @@
     #erp-bulk-spk textarea:disabled, #erp-bulk-spk input:disabled { opacity: .55; }
     #erp-bulk-spk .row { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: center; font-size: 13px; color: var(--muted); }
     #erp-bulk-spk .hint { margin: 0; font-size: 12px; color: var(--muted); }
+    #erp-bulk-spk .guide summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+    #erp-bulk-spk .guide summary:hover { color: var(--paper); }
+    #erp-bulk-spk .guide .ex { max-height: 150px; overflow: auto; overscroll-behavior: contain; margin-top: 6px; padding: 8px 10px; border-radius: 6px;
+      background: var(--canvas); box-shadow: inset 0 0 0 1px var(--hair); display: grid; gap: 4px; }
+    #erp-bulk-spk .guide b { font-size: 12px; font-weight: 500; color: var(--paper); } #erp-bulk-spk .guide b:not(:first-child) { margin-top: 6px; }
+    #erp-bulk-spk .guide pre { margin: 0; font: 12px/1.5 "JetBrains Mono", ui-monospace, monospace; color: var(--body); white-space: pre-wrap; }
     #erp-bulk-spk .note { margin: 0; padding: 8px 10px; border-radius: 6px; font-size: 13px; color: var(--paper); box-shadow: inset 0 0 0 1px rgba(224,178,82,.4); background: rgba(224,178,82,.07); }
     #erp-bulk-spk .list { display: grid; gap: 2px; }
     #erp-bulk-spk .rt { display: grid; grid-template-columns: 28px 1fr; gap: 0 8px; padding: 6px 8px; border-radius: 6px; background: var(--canvas); }
@@ -636,13 +642,27 @@
     const head = mk("div", "hd"); head.append(mk("span", "tag", "Bulk SPK"), btn("✕", bulkSpkToggle, "x")); head.lastChild.setAttribute("aria-label", "Close"); p.append(head);
     const editing = spk.phase === "input";
     const ta = mk("textarea"); ta.rows = 7; ta.value = spk.text; ta.disabled = !editing;
-    ta.placeholder = "Paste the message, e.g.\nTarik & aktivasi FAT\nBudi santoso\nFDT DAYU ke :\n* FAT DAYU 1\n* FAT DAYU 2\n\nAktivasi FAT\nAgus setiawan 10 spk";
+    ta.placeholder = "Paste the message…";
     ta.oninput = async () => {
       spk.text = ta.value; spk.armed = false; await spkPlan();
       const at = ta.selectionStart; spkDraw(); // redraw, then put the caret back where it was
       const t2 = document.querySelector("#erp-bulk-spk textarea"); t2?.focus(); t2?.setSelectionRange(at, at);
     };
     p.append(ta);
+    // how to write each kind, in its own scrolling box (open while the box above is empty)
+    const guide = mk("details", "guide"); guide.open = spk.guide ?? !spk.text.trim();
+    const sum = mk("summary", null, "How to write it"); sum.onclick = () => { spk.guide = !guide.open; }; // opened or closed by hand stays so
+    guide.append(sum);
+    const ex = mk("div", "ex");
+    for (const [h, body] of [
+      ["Routes: one SPK per DARI → KE", "Tarik & aktivasi FAT\nBudi santoso\nFDT DAYU ke :\n* FAT DAYU 1\n* FAT DAYU 2"],
+      ["A number of SPKs per technician", "Aktivasi FAT\nAgus setiawan 10 spk\nJoko susilo 15 spk"],
+      ["Pengecekan Port ODP (1/n…)", "Cek port\nAgus setiawan 10 spk"],
+      ["One SPK per pole", "Instalasi tiang\nJoko susilo\nSudimoro 5-24"],
+      ["Other types", "Survey lokasi · Maintenance · Audit tiang · Instalasi OLT · Instalasi joinbox · Lain-lain, each with \u201cname 10 spk\u201d lines. Migrasi HTB, Visit isolir and CCTV stay in the form."]]) {
+      ex.append(mk("b", null, h), mk("pre", null, body));
+    }
+    guide.append(ex); p.append(guide);
     const L = spk.lists, J = spk.jobs || [], routes = J.filter((j) => j.kind === "route");
     // the panel's team only serves routes with no technician above them; its type only routes with no type heading
     const viaPanel = routes.some((j) => j.viaPanel), plainType = routes.some((j) => !ROUTE_TYPES.includes(headType(j.head)) && !/akti[vf]asi/i.test(j.head));
