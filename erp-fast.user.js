@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.63
+// @version      2.64
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time). Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -290,6 +290,14 @@
       background: var(--canvas); box-shadow: inset 0 0 0 1px var(--hair); display: grid; gap: 4px; }
     #erp-bulk-spk .guide b { font-size: 12px; font-weight: 500; color: var(--paper); } #erp-bulk-spk .guide b:not(:first-child) { margin-top: 6px; }
     #erp-bulk-spk .guide pre { margin: 0; font: 12px/1.5 "JetBrains Mono", ui-monospace, monospace; color: var(--body); white-space: pre-wrap; }
+    #erp-bulk-spk .seg { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; padding: 2px; border-radius: 8px; background: var(--canvas); }
+    #erp-bulk-spk .seg button { height: 28px; box-shadow: none; color: var(--muted); } #erp-bulk-spk .seg button.on { background: var(--raised); color: var(--paper); }
+    #erp-bulk-spk .man { display: grid; gap: 6px; }
+    #erp-bulk-spk .mr { display: grid; grid-template-columns: minmax(0, 1fr) 64px 32px; gap: 6px; align-items: center; padding: 6px; border-radius: 8px; background: var(--canvas); }
+    #erp-bulk-spk .mr select[aria-label="Type"] { grid-column: 1 / -1; } #erp-bulk-spk .mr select, #erp-bulk-spk .mr input { background: var(--raised); }
+    #erp-bulk-spk .mr input { height: 32px; padding: 0 8px; text-align: right; font-variant-numeric: tabular-nums; }
+    #erp-bulk-spk .mr .s { grid-column: 1 / -1; font-size: 12px; color: var(--muted); } #erp-bulk-spk .mr .bad { color: var(--red); }
+    #erp-bulk-spk button.add { justify-self: start; }
     #erp-bulk-spk .note { margin: 0; padding: 8px 10px; border-radius: 6px; font-size: 13px; color: var(--paper); box-shadow: inset 0 0 0 1px rgba(224,178,82,.4); background: rgba(224,178,82,.07); }
     #erp-bulk-spk .list { display: grid; gap: 2px; }
     #erp-bulk-spk .rt { display: grid; grid-template-columns: 28px 1fr; gap: 0 8px; padding: 6px 8px; border-radius: 6px; background: var(--canvas); }
@@ -403,6 +411,10 @@
   // types the form makes from picked customers or a camera's purpose: bulk leaves them to the form
   const FORM_ONLY = { "Migrasi HTB ke FTTH": "picks the customers to migrate", "Visit Pelanggan Isolir atau Dismantle": "picks the customers to visit",
     "Pemasangan CCTV HiView": "is 1 SPK per camera, with what the camera is for" };
+  // what manual mode offers: the types a plain count makes
+  const MANUAL_TYPES = ALL_TYPES.filter((t) => !ROUTE_TYPES.includes(t) && !FORM_ONLY[t]);
+  // manual mode: rows of type, team and how many, made into the same count jobs a message gives
+  const manualJobs = () => { spk.jobs = spk.rows.map((r) => ({ kind: "count", manual: true, head: "", who: "", type: r.type, team: r.team, n: Math.floor(+r.n) || 0 })); };
   // the type a heading names ("Tarik & aktivasi FAT", "Aktivasi FDT", "Cek port"…), or null when the line isn't a heading
   function headType(line) {
     const t = String(line).toLowerCase(), f = fold(line);
@@ -432,7 +444,10 @@
       const poles = headType(head) === "Instalasi Tiang" && /^(?:tanam\s+tiang\s+)?(?:wilayah\s+)?(.+?)\s+(?:no\.?\s*)?(\d+)\s*(?:-|–|s\.?\s*\/?\s*d\.?|sampai)\s*(\d+)$/i.exec(line);
       if (poles && +poles[3] >= +poles[2]) { from = null; jobs.push({ kind: "poles", who, head, area: poles[1].trim(), first: +poles[2], n: +poles[3] - +poles[2] + 1 }); return; }
       const cnt = /^(.+?)\s*[:=\-–]?\s*(\d+)\s*spk\b\.?$/i.exec(line);
-      if (cnt && +cnt[2] > 0 && !typeOf(cnt[1])) { from = null; jobs.push({ kind: "count", who: cnt[1].trim(), head, n: +cnt[2] }); return; }
+      // under a heading, "Name 10" needs no "spk" ("Tim 2" alone stays a team name)
+      const bare = head && /^(.+?)\s*[:=\-–]?\s*(\d+)\s*x?\.?$/i.exec(line);
+      const n = cnt || (bare && !/^(?:tim|team|no\.?)$/i.test(bare[1].trim()) && !headType(bare[1]) ? bare : null);
+      if (n && +n[2] > 0 && !typeOf(n[1])) { from = null; jobs.push({ kind: "count", who: n[1].trim(), head, n: +n[2] }); return; }
       const pair = line.split(/\s+(?:ke|->|→|=>)\s*:?\s+/i);
       if (pair.length === 2 && typeOf(pair[0]) && typeOf(pair[1])) { from = pair[0].trim(); jobs.push({ kind: "route", who, head, from, to: pair[1].trim() }); return; }
       const endsKe = /\s+ke\s*:?$/i.test(line); line = line.replace(/\s+ke\s*:?$/i, "").trim();
@@ -622,15 +637,16 @@
     if (bulkSpkOpen()) { document.getElementById("erp-bulk-spk").remove(); draw(); return; }
     if (!spk) {
       let pick = {}; try { pick = JSON.parse(localStorage.getItem(SPK_PICK) || "{}"); } catch {}
-      const t = new Date(); spk = { text: "", jobs: [], picks: {}, phase: "input", team: pick.team || "", project: pick.project || "", type: pick.type || ROUTE_TYPES[0],
+      const t = new Date(); spk = { text: "", jobs: [], picks: {}, phase: "input", team: pick.team || "", project: pick.project || "", type: pick.type || ROUTE_TYPES[0], mode: pick.mode || "paste", rows: [{ type: "Aktivasi ODP/FAT", team: "", n: 10 }],
         date: new Date(t - t.getTimezoneOffset() * 60000).toISOString().slice(0, 10) };
     }
     const p = document.createElement("div"); p.id = "erp-bulk-spk"; p.setAttribute("role", "dialog"); p.setAttribute("aria-label", "Bulk SPK");
     document.body.append(p); spkDraw(); draw();
     p.querySelector("textarea")?.focus();
+    if (spk.mode === "manual") { manualJobs(); jobsResolve(); spkDraw(); }
     if (!spk.lists) spkLists().then((l) => { spk.lists = l; jobsResolve(); spkDraw(); }, (e) => { spk.note = `Couldn't read teams and projects: ${e.message}`; spkDraw(); });
   }
-  const remember = () => { try { localStorage.setItem(SPK_PICK, JSON.stringify({ team: spk.team, project: spk.project, type: spk.type })); } catch {} };
+  const remember = () => { try { localStorage.setItem(SPK_PICK, JSON.stringify({ team: spk.team, project: spk.project, type: spk.type, mode: spk.mode })); } catch {} };
   function spkDraw() {
     const p = document.getElementById("erp-bulk-spk"); if (!p || !spk) return;
     const mk = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
@@ -640,7 +656,32 @@
     const again = () => { spk.armed = false; jobsResolve(); spkDraw(); };
     p.replaceChildren();
     const head = mk("div", "hd"); head.append(mk("span", "tag", "Bulk SPK"), btn("✕", bulkSpkToggle, "x")); head.lastChild.setAttribute("aria-label", "Close"); p.append(head);
-    const editing = spk.phase === "input";
+    const editing = spk.phase === "input", manual = spk.mode === "manual";
+    // paste a message, or fill rows of type / team / how many by hand
+    const modes = mk("div", "seg"); modes.setAttribute("role", "group"); modes.setAttribute("aria-label", "How to enter SPKs");
+    for (const [m, t] of [["paste", "Paste message"], ["manual", "Manual"]]) {
+      const b = btn(t, async () => { if (spk.mode === m) return; spk.mode = m; spk.armed = false; remember(); if (m === "manual") { manualJobs(); jobsResolve(); } else await spkPlan(); spkDraw(); }, spk.mode === m ? "on" : "");
+      b.setAttribute("aria-pressed", String(spk.mode === m)); b.disabled = !editing; modes.append(b);
+    }
+    p.append(modes);
+    if (manual) {
+      const box = mk("div", "man"), L0 = spk.lists;
+      spk.rows.forEach((r, i) => {
+        const row = mk("div", "mr"), j = spk.jobs[i];
+        const ty = sel(MANUAL_TYPES.map((t) => [t, t]), r.type, (v) => { r.type = v; manualJobs(); again(); }); ty.setAttribute("aria-label", "Type");
+        const tm = sel([["", L0 ? "Team…" : "Loading…"], ...(L0?.teams || []).map((t) => [t.id, t.namaTim || t.id])], r.team, (v) => { r.team = v; manualJobs(); again(); }); tm.setAttribute("aria-label", "Team");
+        const n = mk("input"); n.inputMode = "numeric"; n.value = r.n; n.dataset.f = `n${i}`; n.setAttribute("aria-label", "How many SPKs");
+        n.oninput = () => { r.n = n.value.replace(/\D/g, ""); const at = n.selectionStart; manualJobs(); again(); const n2 = document.querySelector(`#erp-bulk-spk [data-f="n${i}"]`); n2?.focus(); n2?.setSelectionRange(at, at); };
+        const x = btn("✕", () => { spk.rows.splice(i, 1); manualJobs(); again(); }, "x"); x.setAttribute("aria-label", "Remove row");
+        for (const c of [ty, tm, n, x]) c.disabled = !editing;
+        row.append(ty, tm, n, x);
+        if (j?.bad) row.append(mk("span", "s bad", j.bad));
+        else if (j && r.team) { const t = L0?.teams.find((t) => t.id === r.team); if (t && !(t.anggotaIds || []).length) row.append(mk("span", "s", `${t.namaTim} has no members on file`)); }
+        box.append(row);
+      });
+      const add = btn("+ Add row", () => { const last = spk.rows.at(-1); spk.rows.push({ type: last?.type || "Aktivasi ODP/FAT", team: "", n: last?.n || 10 }); manualJobs(); again(); }, "add");
+      add.disabled = !editing; box.append(add); p.append(box);
+    }
     const ta = mk("textarea"); ta.rows = 7; ta.value = spk.text; ta.disabled = !editing;
     ta.placeholder = "Paste the message…";
     ta.oninput = async () => {
@@ -648,7 +689,7 @@
       const at = ta.selectionStart; spkDraw(); // redraw, then put the caret back where it was
       const t2 = document.querySelector("#erp-bulk-spk textarea"); t2?.focus(); t2?.setSelectionRange(at, at);
     };
-    p.append(ta);
+    if (!manual) p.append(ta);
     // how to write each kind, in its own scrolling box (open while the box above is empty)
     const guide = mk("details", "guide"); guide.open = spk.guide ?? !spk.text.trim();
     const sum = mk("summary", null, "How to write it"); sum.onclick = () => { spk.guide = !guide.open; }; // opened or closed by hand stays so
@@ -656,13 +697,13 @@
     const ex = mk("div", "ex");
     for (const [h, body] of [
       ["Routes: one SPK per DARI → KE", "Tarik & aktivasi FAT\nBudi santoso\nFDT DAYU ke :\n* FAT DAYU 1\n* FAT DAYU 2"],
-      ["A number of SPKs per technician", "Aktivasi FAT\nAgus setiawan 10 spk\nJoko susilo 15 spk"],
+      ["A number of SPKs per technician", "Aktivasi FAT\nAgus setiawan 10\nJoko susilo 15 spk"],
       ["Pengecekan Port ODP (1/n…)", "Cek port\nAgus setiawan 10 spk"],
       ["One SPK per pole", "Instalasi tiang\nJoko susilo\nSudimoro 5-24"],
       ["Other types", "Survey lokasi · Maintenance · Audit tiang · Instalasi OLT · Instalasi joinbox · Lain-lain, each with \u201cname 10 spk\u201d lines. Migrasi HTB, Visit isolir and CCTV stay in the form."]]) {
       ex.append(mk("b", null, h), mk("pre", null, body));
     }
-    guide.append(ex); p.append(guide);
+    guide.append(ex); if (!manual) p.append(guide);
     const L = spk.lists, J = spk.jobs || [], routes = J.filter((j) => j.kind === "route");
     // the panel's team only serves routes with no technician above them; its type only routes with no type heading
     const viaPanel = routes.some((j) => j.viaPanel), plainType = routes.some((j) => !ROUTE_TYPES.includes(headType(j.head)) && !/akti[vf]asi/i.test(j.head));
@@ -683,7 +724,7 @@
     const list = mk("div", "list"); p.append(list);
     function listDraw() {
       list.replaceChildren();
-      if (!J.length) { if (spk.text.trim()) list.append(mk("p", "hint", "No routes, \u201cname 10 spk\u201d or pole-range lines found in this text yet.")); return; }
+      if (!J.length) { if (spk.text.trim()) list.append(mk("p", "hint", "No routes, \u201cname 10\u201d or pole-range lines found in this text yet. Is there a type heading (\u201cAktivasi FAT\u201d) above the names? Or use Manual.")); return; }
       J.forEach((j, i) => {
         const row = mk("div", `rt ${j.state || ""}`), tn = L?.teams.find((t) => t.id === j.team)?.namaTim || "";
         row.append(mk("span", "n", { ok: "✓", err: "✕", busy: "…" }[j.state] ?? String(i + 1)), mk("span", "t", j.kind === "route" ? title(j) : j.kind === "poles" ? `${j.title} (${j.n})` : `${j.title} × ${j.n}`));
@@ -702,13 +743,13 @@
         list.append(row);
       });
     }
-    listDraw();
+    if (!manual || !editing) listDraw();
     if (spk.note) p.append(mk("p", "note", spk.note));
     const foot = mk("div", "ft"), many = (j) => j.kind === "route" ? 1 : j.n, total = J.reduce((n, j) => n + many(j), 0);
     if (editing) {
       const assets = routes.some((j) => j.a?.ok === false || j.b?.ok === false), bad = J.find((j) => j.bad), noTeam = J.find((j) => !j.team);
-      const missing = !J.length ? "Paste a message" : !L ? "Loading teams…" : assets ? "Fix the names marked above" : bad ? "Fix the line marked above"
-        : noTeam ? (noTeam.viaPanel ? "Choose a team" : `Choose a team for ${noTeam.who}`) : !spk.project ? "Choose a project"
+      const missing = !J.length ? (manual ? "Add a row" : "Paste a message") : !L ? "Loading teams…" : assets ? "Fix the names marked above" : bad ? "Fix the line marked above"
+        : noTeam ? (noTeam.manual ? "Choose a team on each row" : noTeam.viaPanel ? "Choose a team" : `Choose a team for ${noTeam.who}`) : !spk.project ? "Choose a project"
         : spk.project === "-" && J.some((j) => j.type === "Audit Tiang Existing") ? "Audit Tiang Existing needs a project" : !spk.date ? "Choose a date" : routes.length && !spk.idx ? "Assets still loading" : "";
       const teams = new Set(J.map((j) => j.team)).size;
       const go = btn(missing || (spk.armed ? `Press again: create ${total} SPK${total > 1 ? "s" : ""} for ${teams} team${teams > 1 ? "s" : ""}` : `Create ${total} SPK${total > 1 ? "s" : ""}`), () => {
@@ -723,7 +764,7 @@
       foot.append(mk("span", "hint", `${ok} SPK${ok === 1 ? "" : "s"} made${err ? `, ${err} line${err > 1 ? "s" : ""} failed` : ""}${spk.stop ? " (stopped)" : ""}.`));
       if (err) foot.append(btn("Retry failed", () => spkCreate()));
       const open = mk("a", "lnk", "Open Daftar SPK"); open.href = "/work-orders"; foot.append(open);
-      foot.append(btn("New list", () => { spk = { ...spk, text: "", jobs: [], phase: "input", note: "", stop: false }; spkDraw(); }));
+      foot.append(btn("New list", () => { spk = { ...spk, text: "", jobs: [], phase: "input", note: "", stop: false }; if (spk.mode === "manual") { manualJobs(); jobsResolve(); } spkDraw(); }));
     }
     p.append(foot);
   }
@@ -738,6 +779,7 @@
   function jobsResolve() {
     const L = spk.lists, proj = L?.projects.find((t) => t.id === spk.project)?.name || "", seen = new Map();
     for (const j of spk.jobs || []) {
+      if (j.manual) { j.title = countTitle(j); j.bad = j.n > 0 ? countBad(j) : "How many?"; j.opts = []; j.emp = ""; continue; }
       j.type = jobType(j); j.bad = "";
       if (j.kind !== "route") { j.title = countTitle(j); j.bad = countBad(j); }
       if (!L) { j.opts = []; j.team = ""; continue; }
