@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.77
+// @version      2.78
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -648,14 +648,14 @@
   }
 
   function bulkSpkToggle() {
-    if (bulkSpkOpen()) { document.getElementById("erp-bulk-spk").remove(); draw(); return; }
+    if (bulkSpkOpen()) { document.getElementById("erp-bulk-spk").remove(); draw(); dispatchEvent(new Event("erp-fast-panel")); return; }
     if (!spk) {
       let pick = {}; try { pick = JSON.parse(localStorage.getItem(SPK_PICK) || "{}"); } catch {}
       const t = new Date(); spk = { text: "", jobs: [], picks: {}, phase: "input", team: pick.team || "", project: pick.project || "", type: pick.type || ROUTE_TYPES[0], mode: pick.mode || "paste", rows: [{ type: "Aktivasi ODP/FAT", team: "", n: 10 }],
         date: new Date(t - t.getTimezoneOffset() * 60000).toISOString().slice(0, 10) };
     }
     const p = document.createElement("div"); p.id = "erp-bulk-spk"; p.setAttribute("role", "dialog"); p.setAttribute("aria-label", "Bulk SPK");
-    document.body.append(p); spkDraw(); draw();
+    document.body.append(p); spkDraw(); draw(); dispatchEvent(new Event("erp-fast-panel"));
     p.querySelector("textarea")?.focus();
     if (spk.mode === "manual") { manualJobs(); jobsResolve(); spkDraw(); }
     if (!spk.lists) spkLists().then((l) => { spk.lists = l; jobsResolve(); spkDraw(); }, (e) => { spk.note = `Couldn't read teams and projects: ${e.message}`; spkDraw(); });
@@ -886,12 +886,12 @@
     rv = rv || { i: 0, type: "", auto: true };
     const b = reviewBuild(); Object.assign(rv, { all: b.items, aside: b.aside, known: b.known, run: false, msg: "" });
     const p = document.createElement("div"); p.id = "erp-review"; p.setAttribute("role", "dialog"); p.setAttribute("aria-label", "Review queue");
-    document.body.append(p); reviewDraw(); draw();
+    document.body.append(p); reviewDraw(); draw(); dispatchEvent(new Event("erp-fast-panel"));
   }
   function reviewStop(close) {
     if (rv) { rv.run = false; rv.waiting = null; }
     document.getElementById("erp-review-hud")?.remove();
-    if (close) { document.getElementById("erp-review")?.remove(); draw(); } else reviewDraw();
+    if (close) { document.getElementById("erp-review")?.remove(); draw(); dispatchEvent(new Event("erp-fast-panel")); } else reviewDraw();
   }
   const queue = () => rv.all.filter((x) => !rv.type || x.type === rv.type);
   const reviewDraw = () => keepScroll("erp-review", [".list"], reviewDrawNow);
@@ -1966,8 +1966,20 @@
       const r = other?.getBoundingClientRect();
       const right = r ? Math.max(12, innerWidth - r.right + (r.width - 48) / 2) : 24, bottom = r ? innerHeight - r.top + 12 : 24;
       fab.style.right = `${right}px`; fab.style.bottom = `${bottom}px`;
-      if (panel) { panel.style.right = `${right}px`; panel.style.bottom = `${bottom + 60}px`; }
+      if (panel) {
+        // above the button when there's room for most of it; in a short window, beside the button from near the bottom
+        // instead, so the search row never goes off the top. Its height always ends 12 px under the window's top.
+        const want = panel.classList.contains("wide") ? 780 : 640, phone = innerWidth <= 760;
+        let pb = bottom + 60, pr = right;
+        if (!phone && innerHeight - pb - 12 < Math.min(want, 480)) { pb = 12; pr = right + 60; }
+        panel.style.right = `${pr}px`; panel.style.bottom = `${pb}px`;
+        panel.style.maxHeight = phone ? "" : `${Math.min(want, innerHeight - pb - 12)}px`;
+      }
+      // Bulk SPK and the Review queue open beside the button, not under it; on a narrow screen the button steps aside
+      for (const id of ["erp-bulk-spk", "erp-review"]) { const t = document.getElementById(id); if (t) t.style.right = innerWidth >= 640 ? `${right + 60}px` : ""; }
+      fab.style.visibility = !panel && innerWidth < 640 && (document.getElementById("erp-bulk-spk") || document.getElementById("erp-review")) ? "hidden" : "";
     }
+    addEventListener("erp-fast-panel", () => place()); addEventListener("resize", () => place()); // a tool panel opened or closed, or the window changed
     function mount() {
       if (fab?.isConnected) return;
       if (!document.getElementById("erp-dock-css")) { const s = el("style"); s.id = "erp-dock-css"; s.textContent = css; document.head.append(s); }
@@ -1991,7 +2003,7 @@
     document.addEventListener("animationend", (e) => { if (/^erp-ht-(open|open-full|wipe)$/.test(e.animationName) && e.target.closest?.(".erp-dock")) e.target.classList.add("ht-done"); }, true);
     function close() {
       const p = panel; if (!p) return;
-      panel = null; fab?.setAttribute("aria-expanded", "false"); dropFull();
+      panel = null; fab?.setAttribute("aria-expanded", "false"); dropFull(); place();
       if (calm()) p.remove(); else { p.classList.add("out"); setTimeout(() => p.remove(), 230); }
     }
     const remember = (r) => { const list = ls.get(RECENT, []).filter((u) => u !== r.username); list.unshift(r.username); ls.set(RECENT, list.slice(0, 8)); };
@@ -3260,7 +3272,7 @@
       const body = panel?.querySelector(".scroll"); if (!body) return;
       dropFull();
       items = []; const parts = [];
-      panel.classList.toggle("wide", view.mode === "bulk");
+      if (panel.classList.toggle("wide", view.mode === "bulk") !== panel.classList.contains("was-wide")) { panel.classList.toggle("was-wide"); place(); }
       if (view.mode === "bulk") { parts.push(bulkView()); body.replaceChildren(...parts); items = []; return bulkDraw(); }
       if (view.card) parts.push(cardView(view.card));
       else if (view.modem) { const w = el("div", "card"), back = el("button", "back", "← Back"); back.type = "button"; back.onclick = () => { view.modem = null; drawBody(); };
