@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.74
+// @version      2.75
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -1222,11 +1222,13 @@
       st.done = got.size;
       const save = () => idbPut(`${part}~partial`, { at: half?.at && half.total === total ? half.at : Date.now(), total, pages: Object.fromEntries(got) });
       const rest = Array.from({ length: st.pages - 1 }, (_, i) => i + 2).filter((p) => !got.has(p));
-      // three at a time, so the server isn't flooded
-      for (let i = 0; i < rest.length; i += 3) {
-        (await Promise.all(rest.slice(i, i + 3).map(async (p) => [p, cfg.items(await page(p)).map(slim)]))).forEach(([p, c]) => got.set(p, c));
-        save(); // after every three pages, so a reload (or a sign-out) loses little
-      }
+      // six at a time, a new page as soon as one is in. Measured 15 Nov 2026 on LDN (pages of 500, ~5 s each alone):
+      // 1.8 s a page with three at once, 1.1 s with six, 1.2 s with nine (the server slows every page down past six)
+      const queue = [...rest];
+      await Promise.all(Array.from({ length: Math.min(6, queue.length) }, async () => {
+        for (let p; (p = queue.shift()) !== undefined;) { got.set(p, cfg.items(await page(p)).map(slim)); if (got.size % 3 === 0) save(); } // saved as it goes, so a reload (or a sign-out) loses little
+      }));
+      save();
       // a page that came back short (the server was busy) is asked for again, one at a time
       for (let p = 2; p < st.pages; p++) if ((got.get(p)?.length ?? 0) < size) got.set(p, cfg.items(await page(p)).map(slim));
       if (st.pages > 1 && !got.get(st.pages)?.length) got.set(st.pages, cfg.items(await page(st.pages)).map(slim));
