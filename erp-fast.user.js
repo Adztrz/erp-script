@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.78
+// @version      2.79
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -1929,7 +1929,10 @@
       .erp-dock .dform select, .erp-dock .dform input { height: 32px; padding: 0 8px; border: 0; border-radius: 6px; background: var(--raised); color: var(--paper); font: inherit; font-size: 13px; min-width: 0; }
       .erp-dock .dform select:focus-visible, .erp-dock .dform input:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
       .erp-dock .btn.arm { background: #e0b252; color: var(--canvas); }
-      .erp-dock .hnow { margin: 0 0 8px; color: var(--paper); font-size: 13px; }
+      .erp-dock .hist .verdict { margin: 0 0 10px; padding: 8px 10px; border-radius: 6px; background: var(--raised); color: var(--paper); font-size: 13px; box-shadow: inset 3px 0 0 var(--muted); }
+      .erp-dock .hist .verdict.net, .erp-dock .hist .verdict.cut { box-shadow: inset 3px 0 0 var(--red); } .erp-dock .hist .verdict.iso { box-shadow: inset 3px 0 0 var(--red); }
+      .erp-dock .hist .verdict.warn { box-shadow: inset 3px 0 0 #e0b252; } .erp-dock .hist .verdict.ok { box-shadow: inset 3px 0 0 var(--green); } .erp-dock .hist .verdict.off { box-shadow: inset 3px 0 0 var(--paper); }
+      .erp-dock .hist .facts { margin: 0 0 8px; }
       .erp-dock .tl { display: grid; } .erp-dock .tl .ev { display: grid; grid-template-columns: 96px 1fr; gap: 0 10px; padding: 6px 0; border-top: 1px solid var(--hair); font-size: 13px; }
       .erp-dock .tl .ev time { grid-row: span 2; font: 12px "JetBrains Mono", ui-monospace, monospace; color: var(--muted); } .erp-dock .tl .et { color: var(--paper); overflow-wrap: anywhere; } .erp-dock .tl .es { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
       .erp-dock .tl .ev.tix .et::before, .erp-dock .tl .ev.iso .et::before, .erp-dock .tl .ev.pay .et::before, .erp-dock .tl .ev.net .et::before, .erp-dock .tl .ev.inv .et::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 6px; border-radius: 50%; vertical-align: 1px; background: var(--muted); }
@@ -2426,10 +2429,33 @@
     function liveSessions() {
       if (live && Date.now() - live.at < 2 * 60000) return Promise.resolve(live);
       return (liveLoading ||= api("/api/admin/ldn-radius/panel?view=online").then((j) => {
-        const by = new Map(); for (const x of j.sessions || []) by.set(String(x.username).toLowerCase(), { ip: x.nasipaddress, up: Number(x.uptimeSec) || 0, addr: x.framedipaddress, ro: x.router, type: x.userType });
+        const by = new Map(); for (const x of j.sessions || []) by.set(String(x.username).toLowerCase(), { ip: x.nasipaddress, up: Number(x.uptimeSec) || 0, addr: x.framedipaddress, ro: x.router, type: x.userType,
+          start: Date.parse(x.acctstarttime) || 0, upd: Date.parse(x.acctupdatetime) || 0, mac: x.mac || "" });
         return (live = { at: Date.now(), by });
       }).finally(() => { liveLoading = null; }));
     }
+    // ---- Drop log ----
+    // The ERP keeps no history of when a customer's line went down (RADIUS only counts sessions, the OLT lists say online
+    // or offline). So every 15 minutes one ERP tab reads the live session list (6 MB, ~1 s) and keeps, per customer, the
+    // start of every session seen in the last 7 days (each new one is a reconnect, at its exact time) and the last time
+    // they were seen online; someone online in one reading and gone in the next went down between the two.
+    const DROP_AT = "erpDock.dropAt", DROP_EVERY = 15 * 60000, DROP_KEEP = 7 * 86400000;
+    let drops = null;
+    async function dropTick(force) {
+      if (!force && Date.now() - Number(ls.get(DROP_AT, 0)) < DROP_EVERY) return;
+      ls.set(DROP_AT, Date.now()); // the other tabs wait
+      try {
+        live = null; const lv = await liveSessions(), t = Date.now(), d = (await idbGet("drops")) || { first: t, u: {}, off: {} }, seen = new Set();
+        for (const [u, x] of lv.by) { seen.add(u); const r = d.u[u] ||= { s: [] };
+          if (x.start && !r.s.includes(x.start)) r.s.push(x.start);
+          r.s = r.s.filter((v) => v > t - DROP_KEEP).slice(-40); Object.assign(r, { last: t, ip: x.addr, mac: x.mac, nas: x.ip, ro: x.ro }); delete d.off[u]; }
+        for (const [u, r] of Object.entries(d.u)) {
+          if (!seen.has(u) && !d.off[u]) d.off[u] = { from: r.last, seen: t };
+          if (r.last < t - DROP_KEEP) { delete d.u[u]; delete d.off[u]; } }
+        d.at = t; idbPut("drops", d); drops = d;
+      } catch { /* the next reading tries again */ }
+    }
+    const dropsOf = async () => (drops && Date.now() - drops.at < DROP_EVERY) ? drops : (drops = (await idbGet("drops")) || drops);
     // the ERP's own row for a feed router: the same name when it's a real one, else the biggest look-alike
     // (RO ARJOSARI and the old ARJOSARI are different routers; RO-NGADIROJO-E2E is NGADIROJO)
     function areaOf(name) {
@@ -3086,67 +3112,83 @@
       draw(); return box;
     }
 
-    // ---- History: why might this customer call ----
-    // One timeline from the ERP's own records: complaints (tickets, with their SPK), invoices, payments and isolir from
-    // billing, how often the line reconnects (sessions since first seen), and the router's dips in the last 24 hours;
-    // above it, a line that says what's going on now.
+    // ---- Down? The evidence for one customer ----
+    // When the line went down (the Dock's drop log and the modem's last TR-069 report), who else is down with them (the
+    // modems on the same PON port, the neighbours within 300 m, the router), the modem's signal and the session's IP/MAC,
+    // open complaints and arrears in one line; then a verdict, and a summary to paste into a ticket or a chat.
     const hist = new Map();
-    function historyBox(r) {
+    function forensicBox(r) {
       const box = el("div", "near hist rise"); box.style.setProperty("--i", "2");
       const fmt = (t) => new Date(t).toLocaleString("id-ID", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
-      const tsOf = (v) => (v?.seconds ? v.seconds * 1000 : v ? Date.parse(v) : 0);
+      const dur = (ms) => { const m = Math.round(ms / 60000); return m < 60 ? `${m} min` : m < 2880 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${Math.round(m / 1440)} days`; };
+      const u = lower(r.username);
+      if (!onts) ontIndex().then(() => box.isConnected && draw(box.d)).catch(() => {});
+      if (!acs) acsIndex().then(() => box.isConnected && draw(box.d)).catch(() => {});
       async function load() {
-        const q = r.customerDocId ? `customerId=${encodeURIComponent(r.customerDocId)}` : `username=${encodeURIComponent(r.username)}`;
-        const [tl, tix, use, due] = await Promise.all([api(`/api/admin/billing/customer-timeline?${q}`).catch(() => null),
-          r.customerDocId ? api(`/api/pg-read/tickets?where=customerId%3A${encodeURIComponent(r.customerDocId)}&limit=20&orderBy=createdAt%3Adesc&fields=issue,status,ticketId,createdAt,workOrderId,category,priority`).catch(() => null) : null,
-          api(`/api/admin/ldn-radius/panel?view=usage&username=${encodeURIComponent(r.username)}`).catch(() => null),
-          api(`/api/customers/status-tagihan?username=${encodeURIComponent(r.username)}`).catch(() => null)]);
-        // each complaint's SPK, read straight from the database when this page can reach it
-        const db = fsDb(), spk = {};
-        if (db) await Promise.all((tix?.data || []).filter((t) => t.workOrderId).slice(0, 5).map(async (t) => {
-          try { const d = await fsCall(`${db}/documents/workOrders/${encodeURIComponent(t.workOrderId)}`); const f = fromFs({ mapValue: { fields: d.fields || {} } }); spk[t.workOrderId] = { name: f.name, status: f.status, team: f.teamNameSnapshot }; } catch {}
-        }));
-        return { tl, tix: tix?.data || [], use: use?.usage || null, due, spk };
+        const [tix, due, dl, tl] = await Promise.all([
+          r.customerDocId ? api(`/api/pg-read/tickets?where=customerId%3A${encodeURIComponent(r.customerDocId)}&limit=10&orderBy=createdAt%3Adesc&fields=issue,status,ticketId,createdAt`).catch(() => null) : null,
+          api(`/api/customers/status-tagihan?username=${encodeURIComponent(r.username)}`).catch(() => null), dropsOf(),
+          r.isolir ? api(`/api/admin/billing/customer-timeline?${r.customerDocId ? `customerId=${encodeURIComponent(r.customerDocId)}` : `username=${encodeURIComponent(r.username)}`}`).catch(() => null) : null]);
+        return { tix: (tix?.data || []).filter((t) => t.status !== "Terselesaikan"), due, dl, isoAt: (tl?.events || []).filter((e) => /isolir/i.test(e.type)).map((e) => Date.parse(e.at)).sort((x, y) => y - x)[0] || null };
       }
       function draw(d) {
-        const e = el("div", "eyebrow"); e.style.margin = "0 0 8px"; e.append("History"); const out = [e];
-        // now, in one line
-        const o = modemOf(r).ont, rad = radar?.list.find((x) => fold(x.name) === fold(r.router || ""));
-        const now = [r.isolir ? "Isolir" : r.online ? "Online now" : "Offline now",
-          o ? `modem ${o.st || "?"}${o.rx != null ? ` · ${o.rx} dBm${o.rx < -28 ? " (critical)" : o.rx < -26 ? " (weak)" : ""}` : ""}` : "",
-          rad && (rad.level === "down" || rad.level === "drop") ? `router ${rad.name} is ${rad.level === "down" ? "down" : "dropping"} since ${hhmm(rad.since)}` : ""];
-        if (d) {
-          const open = d.tix.filter((t) => t.status !== "Terselesaikan").length;
-          if (open) now.push(`${open} open complaint${open > 1 ? "s" : ""}`);
-          if (d.due?.ok) now.push(d.due.jumlahTagihan ? `${d.due.jumlahTagihan} overdue, Rp ${Number(d.due.totalTunggakan || 0).toLocaleString("id-ID")}` : "no arrears");
-          if (d.use?.sessions && d.use.firstSeen) { const days = Math.max(1, (Date.now() - Date.parse(d.use.firstSeen)) / 86400000), per = d.use.sessions / days;
-            now.push(per >= 3 ? `reconnects ${per.toFixed(1)}× a day (unstable)` : `${d.use.sessions} sessions since ${new Date(d.use.firstSeen).toLocaleDateString("id-ID", { day: "numeric", month: "short" })}`); }
+        box.d = d;
+        const e = el("div", "eyebrow"); e.style.margin = "0 0 8px"; e.append("Down?"); const out = [e];
+        const { ont: o, dev } = modemOf(r), rec = d?.dl?.u[u], gone = d?.dl?.off[u], sess = live && Date.now() - live.at < 5 * 60000 ? live.by.get(u) : null;
+        const online = sess ? true : rec && d.dl.at && !gone && rec.last === d.dl.at ? true : !!r.online;
+        // who else: the PON port, the neighbours, the router
+        const port = o && onts ? onts.rows.filter((x) => x.pid === o.pid && x.pon === o.pon) : [];
+        const portOff = port.filter((x) => !/online|working/i.test(x.st || "")).length;
+        const nb = (nearby(r, 300)?.list || []).filter((x) => !x.r.isolir), nbOff = nb.filter((x) => !(live?.by.has(lower(x.r.username)) ?? x.r.online)).length;
+        const rad = radar?.list.find((x) => fold(x.name) === fold(r.router || "")), radBad = rad && (rad.level === "down" || rad.level === "drop");
+        const day = Date.now() - 86400000, recon = (rec?.s || []).filter((t) => t > day).length, recon7 = (rec?.s || []).length;
+        const rx = o?.rx, rxBad = rx != null && rx < -28, rxWeak = rx != null && rx < -26;
+        // when
+        const facts = [];
+        if (r.isolir) facts.push(["State", `Isolir${d?.isoAt ? ` since ${fmt(d.isoAt)}` : ""}`]);
+        else if (online) { const st = sess?.start || rec?.s.at(-1); facts.push(["State", st ? `Online since ${fmt(st)} (${dur(Date.now() - st)})` : "Online"]); }
+        else {
+          const tr = dev?.inform ? Date.parse(dev.inform) : 0;
+          const when = gone ? (tr && tr >= gone.from - 60000 && tr <= gone.seen ? `Down since about ${fmt(tr)} (the modem's last report)` : `Down between ${fmt(gone.from)} and ${fmt(gone.seen)}`)
+            : tr ? `Down since about ${fmt(tr)} (the modem's last report)` : d?.dl?.first ? `Down since before ${fmt(d.dl.first)}, when the Dock started its drop log` : "Down (the drop log starts with the next reading)";
+          facts.push(["State", when]);
         }
-        out.push(el("p", "hnow", now.filter(Boolean).join(" · ")));
-        if (!d) { out.push(el("p", "note ld", "Reading complaints, billing and sessions…")); box.replaceChildren(...out); return; }
-        const ev = [];
-        for (const t of d.tix) { const s = d.spk[t.workOrderId];
-          ev.push({ at: tsOf(t.createdAt), k: "tix", t: `Complaint ${t.ticketId || ""}: ${t.issue || t.category || "–"}`, s: [t.status, t.priority, s ? `SPK ${s.status || "?"}${s.team ? ` · ${s.team}` : ""}` : t.workOrderId ? "has an SPK" : ""].filter(Boolean).join(" · ") }); }
-        // a paid invoice shows once, as its payment
-        for (const x of d.tl?.events || []) if (!(x.type === "invoice_created" && /status: lunas/i.test(x.detail || ""))) ev.push({ at: Date.parse(x.at), k: /isolir/i.test(x.type) ? "iso" : /paid/.test(x.type) ? "pay" : "inv", t: x.title, s: x.detail });
-        if (rad) { // the router's dips in the last 24 h (below 70% of its usual)
-          let from = null; for (const [t, v] of rad.series) { const low = rad.usual && v < rad.usual * 0.7;
-            if (low && from == null) from = t; else if (!low && from != null) { ev.push({ at: from, k: "net", t: `Router ${rad.name} dipped`, s: `${hhmm(from)}–${hhmm(t)}` }); from = null; } }
-          if (from != null) ev.push({ at: from, k: "net", t: `Router ${rad.name} dipped`, s: `since ${hhmm(from)}` });
+        if (recon7 > 1) facts.push(["Reconnects", `${recon} in 24 h, ${recon7 - 1} in 7 days${recon >= 4 ? " · unstable" : ""} · ${(rec.s.slice(-6).reverse().map((t) => fmt(t))).join(", ")}`]);
+        if (o) facts.push(["Modem", `${o.olt} · PON ${o.pon} · ${o.st || "?"}${rx != null ? ` · ${rx} dBm${rxBad ? " (critical)" : rxWeak ? " (weak)" : ""}` : ""}${o.seen ? ` · read ${fmt(Date.parse(o.seen))}` : ""}`]);
+        if (dev) facts.push(["TR-069", `last report ${fmt(Date.parse(dev.inform))}`]);
+        if (port.length) facts.push(["Same port", `${portOff} of ${port.length} modems offline`]);
+        if (nb.length) facts.push(["Within 300 m", `${nbOff} of ${nb.length} customers offline`]);
+        if (rad) facts.push(["Router", `${rad.name}: ${radBad ? `${rad.level === "down" ? "down" : "dropping"} since ${hhmm(rad.since)}` : "at its usual level"}`]);
+        const ss = sess || rec; if (ss && (ss.addr || ss.ip)) facts.push(["Session", [ss.addr || ss.ip, ss.mac, ss.nas || sess?.ip].filter(Boolean).join(" · ")]);
+        if (d?.tix.length) facts.push(["Complaints", `${d.tix.length} open · ${d.tix[0].ticketId || ""} ${d.tix[0].issue || ""}`.trim()]);
+        if (d?.due?.ok && d.due.jumlahTagihan) facts.push(["Arrears", `${d.due.jumlahTagihan} overdue · Rp ${Number(d.due.totalTunggakan || 0).toLocaleString("id-ID")}`]);
+        // the verdict
+        const v = r.isolir ? ["iso", "Isolir: cut off for the bill, not a network fault."]
+          : radBad ? ["net", `Router ${rad.name} is ${rad.level === "down" ? "down" : "dropping"}: area-wide, not just this customer.`]
+          : !online && port.length >= 4 && portOff >= 3 && portOff / port.length >= 0.5 ? ["net", "The whole PON port is down: a line fault before the FAT (see Outage radar → Cause & dispatch)."]
+          : !online && nb.length >= 3 && nbOff / nb.length >= 0.5 ? ["net", "Neighbours are down too: the FAT or the line in this area."]
+          : !online && rxBad ? ["cut", "Only this customer, and the signal was critical: their drop cable or connector."]
+          : !online ? ["off", `Only this customer${rx != null ? `, signal was fine (${rx} dBm)` : ""}: the modem's power or the modem itself. Ask if it's on.`]
+          : recon >= 4 ? ["warn", `Online but unstable: ${recon} reconnects in 24 h. ${rxWeak ? "Weak signal: clean or redo the connector." : "Power or the modem."}`]
+          : ["ok", `Online and steady${rxWeak ? `, but the signal is weak (${rx} dBm)` : ""}: if they complain, it's inside the house (WiFi, devices) or the plan's speed.`];
+        out.push(el("p", `verdict ${v[0]}`, v[1]));
+        const dl = el("dl", "facts"); for (const [k, x] of facts) dl.append(el("dt", null, k), el("dd", null, x)); out.push(dl);
+        if (!d) out.push(el("p", "note ld", "Reading the drop log, complaints and bill…"));
+        else {
+          const text = [`*CEK PELANGGAN* · ${r.nama || r.username} (${r.username})`, ...facts.map(([k, x]) => `${k}: ${x}`), `Dugaan: ${v[1]}`, `Dicek ${wib()} WIB`].join("\n");
+          const acts = el("div", "actions"), c = el("button", "btn", "Copy summary"); c.type = "button"; c.onclick = () => copy(text, c); acts.append(c);
+          const now = el("button", "btn", "Check now"); now.type = "button"; now.onclick = async () => { now.disabled = true; now.textContent = "Reading the sessions…"; live = null; await liveSessions().catch(() => {}); hist.delete(r.username); start(); }; acts.append(now);
+          out.push(acts);
+          if (!d.dl) out.push(el("p", "note", "The drop log starts with the next reading (every 15 minutes while an ERP tab is open), so times show from then on."));
         }
-        if (d.use?.firstSeen) ev.push({ at: Date.parse(d.use.firstSeen), k: "net", t: "First session on LDN", s: "" });
-        ev.sort((a, b) => b.at - a.at);
-        const list = el("div", "tl");
-        for (const x of ev.slice(0, view.histAll ? 60 : 8)) { const i = el("div", `ev ${x.k}`); i.append(el("time", null, x.at ? fmt(x.at) : "–"), el("span", "et", x.t)); if (x.s) i.append(el("span", "es", x.s)); list.append(i); }
-        if (!ev.length) out.push(el("p", "note", "Nothing on record: no complaints, invoices or sessions found."));
-        else out.push(list);
-        if (ev.length > 8) { const more = el("button", "btn", view.histAll ? "Fewer" : `All ${ev.length}`); more.type = "button"; more.onclick = () => { view.histAll = !view.histAll; draw(d); }; out.push(more); }
         box.replaceChildren(...out);
       }
-      const kept = hist.get(r.username);
-      if (kept && Date.now() - kept.at < 5 * 60000) draw(kept.d);
-      else { draw(null); load().then((d) => { hist.set(r.username, { at: Date.now(), d }); if (box.isConnected) draw(d); }).catch(() => { box.replaceChildren(el("p", "note", "History didn't load: the ERP didn't answer.")); }); }
-      return box;
+      function start() {
+        const kept = hist.get(r.username);
+        if (kept && Date.now() - kept.at < 2 * 60000) return draw(kept.d);
+        draw(null); load().then((d) => { hist.set(r.username, { at: Date.now(), d }); if (box.isConnected) draw(d); }).catch(() => box.replaceChildren(el("p", "note", "The ERP didn't answer.")));
+      }
+      start(); return box;
     }
 
     function reportBox({ title, down, total, since, custs, age }) {
@@ -3343,7 +3385,7 @@
       act("Open in LDN", () => openIn.ldn(r), true); act("Invoices", () => openIn.invoices(r)); act("Map Terpadu", () => openIn.map(r)); act("Master", () => openIn.master(r));
       const loc = where(r); if (loc) { const a = el("a", "btn", "Google Maps"); a.href = `https://www.google.com/maps?q=${loc.lat},${loc.lng}`; a.target = "_blank"; a.rel = "noreferrer"; acts.append(a); }
       const bill = payBox(r); billDraw(bills.get(r.username));
-      wrap.append(back, who, facts, tech, acts, historyBox(r), bill, modemBox(`u:${r.username}`, r), nearView(r));
+      wrap.append(back, who, facts, tech, acts, forensicBox(r), bill, modemBox(`u:${r.username}`, r), nearView(r));
       return wrap;
     }
     function nearView(r) {
@@ -3823,6 +3865,7 @@
     if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", () => setTimeout(tick, 600)); else setTimeout(tick, 600);
     setInterval(() => { if (document.visibilityState === "visible") { mount(); place(); learn(); } }, 5000);
     setTimeout(() => radarTick(), 8000); setInterval(() => radarTick(), 60000);
+    setTimeout(() => dropTick(), 20000); setInterval(() => dropTick(), 60000);
   })();
 
   // ---------- one idle clock for all ERP tabs ----------
