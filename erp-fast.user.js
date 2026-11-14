@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.75
+// @version      2.76
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -1464,7 +1464,7 @@
     .erp-fs ul { list-style: none; margin: 0; padding: 4px; overflow: auto; }
     .erp-fs li { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; gap: 4px 12px; align-items: center; padding: 8px 10px; border-radius: 6px; cursor: pointer; }
     .erp-fs .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
-    .erp-fs .dot.on { background: var(--green); } .erp-fs .dot.iso, .erp-fs .dot.bad { background: var(--red); } .erp-fs .dot.off { background: #8a8b8a; } /* isolir red, offline grey */
+    .erp-fs .dot.on { background: var(--green); } .erp-fs .dot.iso, .erp-fs .dot.bad { background: var(--red); } .erp-fs .dot.off { background: #efefed; } /* isolir red, offline white */
     .erp-fs .nm { color: var(--paper); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .erp-fs .nm mark { background: none; color: var(--bone); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: rgba(233,225,220,.4); }
     .erp-fs .us { font: 12px/1.4 "JetBrains Mono", ui-monospace, Menlo, monospace; color: var(--body); }
@@ -1736,7 +1736,7 @@
       .erp-dock .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); justify-self: center; }
       .erp-dock .dot.on { background: var(--green); box-shadow: 0 0 0 3px rgba(85,188,130,.15); }
       .erp-dock .dot.iso, .erp-dock .dot.bad { background: var(--red); box-shadow: 0 0 0 3px rgba(241,38,20,.15); }
-      .erp-dock .dot.off { background: #8a8b8a; } /* online green, isolir red, offline grey */
+      .erp-dock .dot.off { background: #efefed; } /* online green, isolir red, offline white, as on the maps */
       .erp-dock .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; padding: 0 6px; }
       .erp-dock .tile { display: grid; justify-items: start; gap: 8px; padding: 12px; border: 0; border-radius: 8px; background: var(--canvas); box-shadow: inset 0 0 0 1px var(--hair);
         color: var(--paper); font: inherit; font-size: 13px; font-weight: 500; text-align: left; cursor: pointer; transition: box-shadow .2s, transform .15s var(--out); }
@@ -1803,9 +1803,11 @@
       .erp-dock .map .ring.half { box-shadow: none; border: 1px dashed rgba(233,225,220,.45); }
       .erp-dock .mdot { position: absolute; width: 11px; height: 11px; margin: -5.5px 0 0 -5.5px; padding: 0; border: 1.5px solid rgba(7,9,11,.9); border-radius: 50%; background: var(--green); cursor: pointer;
         transition: transform .12s var(--out), box-shadow .12s; animation: erp-dock-pop .35s var(--out) backwards; animation-delay: var(--d, 0ms); }
-      .erp-dock .mdot.off { background: #a3a4a3; } .erp-dock .mdot.on { background: var(--green); } .erp-dock .mdot.iso { background: rgba(7,9,11,.6); border-color: #8a8b8a; }
-      .erp-dock .mdot.los { background: var(--red); } .erp-dock .mdot.pwr { background: #6b6c6b; } .erp-dock .mdot.weak { background: #e0b252; }
-      .erp-dock .mdot.los, .erp-dock .mdot.pwr, .erp-dock .mdot.off, .erp-dock .mdot.weak { width: 13px; height: 13px; margin: -6.5px 0 0 -6.5px; border: 2px solid rgba(255,255,255,.9); }
+      /* isolir red, offline white (the ring says why: red for a cut fibre, dashed for no power), online green */
+      .erp-dock .mdot.on { background: var(--green); } .erp-dock .mdot.iso { background: var(--red); border-color: rgba(255,255,255,.9); } .erp-dock .mdot.weak { background: #e0b252; }
+      .erp-dock .mdot.los, .erp-dock .mdot.pwr, .erp-dock .mdot.off, .erp-dock .mdot.weak, .erp-dock .mdot.iso { width: 13px; height: 13px; margin: -6.5px 0 0 -6.5px; border: 2px solid rgba(255,255,255,.9); }
+      .erp-dock .mdot.off, .erp-dock .mdot.los, .erp-dock .mdot.pwr { background: #efefed; border-color: rgba(7,9,11,.9); }
+      .erp-dock .mdot.los { border: 2.5px solid var(--red); } .erp-dock .mdot.pwr { border: 2px dashed #8a8b8a; }
       .erp-dock .map .asset { position: absolute; width: 8px; height: 8px; margin: -4px 0 0 -4px; background: var(--blue); box-shadow: 0 0 0 1.5px #07090b; pointer-events: none; }
       .erp-dock .map .asset i, .erp-dock .map .fault i { position: absolute; left: 11px; top: -4px; font: 500 10px/1 Inter, system-ui, sans-serif; font-style: normal; color: rgba(170,200,255,.95); white-space: nowrap; text-shadow: 0 1px 2px #000, 0 0 3px #000; }
       .erp-dock .map .fault { position: absolute; width: 32px; height: 32px; margin: -16px 0 0 -16px; border-radius: 50%; border: 2.5px dashed var(--red); pointer-events: none; animation: erp-fault 2s var(--soft) infinite; }
@@ -1825,8 +1827,8 @@
       .erp-dock .map .foot { position: absolute; z-index: 3; left: 8px; right: 8px; bottom: 16px; padding: 5px 8px; border-radius: 6px; background: rgba(9,11,12,.88); pointer-events: none; font-size: 11px; color: var(--bone); }
       .erp-dock .map .scale { display: flex; align-items: center; gap: 6px; } .erp-dock .map .scale i { height: 6px; border: 1.5px solid var(--bone); border-top: 0; }
       .erp-dock .map .legend { display: flex; flex-wrap: wrap; gap: 2px 8px; margin-top: 3px; } .erp-dock .map .legend span { display: inline-flex; align-items: center; gap: 4px; }
-      .erp-dock .map .legend .k { width: 8px; height: 8px; border-radius: 50%; } .erp-dock .map .legend .k.los { background: var(--red); } .erp-dock .map .legend .k.pwr { background: #6b6c6b; } .erp-dock .map .legend .k.off { background: #a3a4a3; }
-      .erp-dock .map .legend .k.weak { background: #e0b252; } .erp-dock .map .legend .k.on { background: var(--green); } .erp-dock .map .legend .k.iso { box-shadow: inset 0 0 0 1.5px #8a8b8a; }
+      .erp-dock .map .legend .k { width: 8px; height: 8px; border-radius: 50%; } .erp-dock .map .legend .k.off, .erp-dock .map .legend .k.los, .erp-dock .map .legend .k.pwr { background: #efefed; } .erp-dock .map .legend .k.los { box-shadow: 0 0 0 1.5px var(--red); } .erp-dock .map .legend .k.pwr { outline: 1px dashed #8a8b8a; outline-offset: 1px; }
+      .erp-dock .map .legend .k.weak { background: #e0b252; } .erp-dock .map .legend .k.on { background: var(--green); } .erp-dock .map .legend .k.iso { background: var(--red); }
       .erp-dock .map .legend .k.box { border-radius: 0; background: var(--blue); } .erp-dock .map .legend .k.fault { border: 1.5px dashed var(--red); width: 9px; height: 9px; }
       .erp-dock .map .sharesheet { position: absolute; z-index: 5; left: 50%; bottom: 76px; transform: translateX(-50%); display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; justify-content: center; width: max-content; max-width: calc(100% - 24px);
         padding: 8px 10px; border-radius: 8px; background: var(--card); color: var(--paper); font-size: 12px; box-shadow: inset 0 0 0 1px var(--edge), 0 8px 20px rgba(0,0,0,.5); cursor: default; }
@@ -3175,7 +3177,7 @@
       return { kind, carto, T };
     }
     // the same map for a group of customers (a PON port, a router's offline customers): fitted to where they are,
-    // offline grey over online green; a dot shows the name and opens the customer
+    // isolir red, offline white, online green; a dot shows the name and opens the customer
     function areaMap(pts, label, about = {}) {
       const box = el("div", "map"); box.setAttribute("role", "group"); box.setAttribute("aria-label", label);
       box.redraw = () => drawAreaMap(box, pts, about); setTimeout(box.redraw, 0); return box;
@@ -3350,7 +3352,8 @@
     // Words on the map are Indonesian like the outage report, since the picture goes to the technicians.
     // A customer's condition: the customer list says online or not; the OLT's modem list says why it's down (LOS is a
     // cut or bent fibre, dying gasp is the power) and how strong the signal is (critical below −28 dBm, the ERP's line).
-    const KIND = { los: ["Putus (LOS)", "#f12614"], pwr: ["Mati listrik", "#6b6c6b"], off: ["Offline", "#a3a4a3"], weak: ["Redaman tinggi", "#e0b252"], iso: ["Isolir", "#8a8b8a"], on: ["Online", "#55bc82"] };
+    // isolir red, offline white, online green; for an offline modem the colour here is its ring (why it's down)
+    const KIND = { los: ["Putus (LOS)", "#f12614"], pwr: ["Mati listrik", "#8a8b8a"], off: ["Offline", "#efefed"], weak: ["Redaman tinggi", "#e0b252"], iso: ["Isolir", "#f12614"], on: ["Online", "#55bc82"] };
     const RANK = { on: 0, iso: 1, weak: 2, off: 3, pwr: 3, los: 4 }, DOWN = new Set(["los", "pwr", "off"]);
     const LEVEL = { high: ["BERAT", "#f12614"], mid: ["SEDANG", "#e0b252"], low: ["RINGAN", "#a3a4a3"], ok: ["NORMAL", "#55bc82"] };
     function health(c, on = !!c.online) {
@@ -3482,7 +3485,8 @@
       const font = (wt, px) => { g.font = `${wt} ${px}px Inter, ui-sans-serif, system-ui, sans-serif`; };
       const pill = (x, y, ww, hh, r, fill) => { g.beginPath(); g.roundRect(x, y, ww, hh, r); g.fillStyle = fill; g.fill(); };
       const dot = (x, y, kind, r = 6) => { g.beginPath(); g.arc(x, y, r, 0, 7);
-        if (kind === "iso") { g.fillStyle = "rgba(7,9,11,.6)"; g.fill(); g.lineWidth = 2; g.strokeStyle = KIND.iso[1]; g.stroke(); return; }
+        if (DOWN.has(kind)) { g.fillStyle = "#efefed"; g.fill(); g.lineWidth = kind === "los" ? 2.5 : 2; g.strokeStyle = kind === "off" ? "rgba(7,9,11,.9)" : KIND[kind][1];
+          if (kind === "pwr") g.setLineDash([2, 2]); g.stroke(); g.setLineDash([]); return; }
         g.fillStyle = KIND[kind][1]; g.fill(); g.lineWidth = 2; g.strokeStyle = "rgba(255,255,255,.9)"; g.stroke(); };
       for (const [x, y, R] of s.rings) { g.beginPath(); g.arc(x, y, R, 0, 7); g.lineWidth = 1.5; g.strokeStyle = "rgba(233,225,220,.6)"; g.stroke(); }
       for (const a of s.assets) { g.fillStyle = "#3e7edf"; g.strokeStyle = "#07090b"; g.lineWidth = 1.5; g.fillRect(a.xy[0] - 4, a.xy[1] - 4, 8, 8); g.strokeRect(a.xy[0] - 4, a.xy[1] - 4, 8, 8);
