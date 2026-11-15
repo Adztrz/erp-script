@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.90
+// @version      2.91
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -2698,7 +2698,7 @@
       if (!s) { win?.close(); m.msg = { bad: true, text: `Remote: not online now (no PPPoE session), so the modem can't be reached.${ont || dev ? " Reboot still works through TR-069 or the OLT." : ""}` }; return redraw(); }
       const copied = login ? " Login password copied." : "";
       if (login) navigator.clipboard?.writeText(login.p).catch(() => {});
-      if (!w.id || !w.erpFound) { win?.close(); m.msg = { bad: true, text: `Remote: the ERP's Remote ONU can't find this session${w.erpRo && w.erpRo !== s.ro ? ` (it has the customer on ${w.erpRo}, the session is on ${s.ro}: correct the RO in the ERP)` : ""}, so the 5-minute access can't be opened.` }; return redraw(); }
+      if (!w.id || !w.erpFound) { win?.close(); m.msg = { bad: true, text: `Remote: the ERP's Remote ONU can't find this session${w.erpRo && w.erpRo !== s.ro ? ` (it has the customer on ${w.erpRo}, the session is on ${s.ro}: correct the RO in the ERP)` : ""}, so the 5-minute access can't be opened.${realRo(s) && w.erpRo && fold(w.erpRo) !== fold(realRo(s)) ? " Fix RO under Web page, then press Remote again." : ""}` }; return redraw(); }
       try {
         w.tunnel = null; await openTunnel(m, w, win);
         if (ls.get(KEEP_OPEN, false)) { w.keep = true; keepTick(m, w); }
@@ -2848,8 +2848,24 @@
       if (!s) { box.append(el("p", "note", "Not online now (no PPPoE session in RADIUS), so the modem can't be reached.")); return box; }
       const facts = el("dl", "facts"), ip = el("dd", "mono", s.addr); const c = el("button", "copy", "Copy"); c.type = "button"; c.onclick = () => copy(s.addr, c); ip.append(c);
       facts.append(el("dt", null, "Modem IP"), ip, el("dt", null, "On"), el("dd", null, `${s.ro} · online ${dur(s.up)}`)); box.append(facts);
-      if (w.erpRo && nameNorm(w.erpRo).split(/[\s-]/)[0] !== nameNorm(s.ro).split(/[\s-]/)[0])
-        box.append(el("p", "note warn", `The ERP has this customer on ${w.erpRo}, but the session is on ${s.ro}: the ERP's own Remote ONU and its 5-minute access can't find it. Correct the customer's RO in the ERP to fix that.`));
+      // the RO the session is really on, as the ERP names it: the NAS with the session's NAS address and the same name
+      const real = realRo(s);
+      if (w.erpRo && real && fold(w.erpRo) !== fold(real)) {
+        box.append(el("p", "note warn", `The ERP has this customer on ${w.erpRo}, but the session is on ${real}: the ERP's Remote ONU and its 5-minute access look on ${w.erpRo} and can't find it.`));
+        const fx = armButton(w.fix ||= { armed: 0 }, `Fix RO: set to ${real}`, `Click again: set the ERP record to ${real}`, async () => {
+          w.fix.armed = 0; w.fixing = true; redraw();
+          try {
+            const j = await api("/api/admin/ldn-radius/bulk-set-router", { usernames: [username], router: real });
+            if (!j?.success && !j?.mapUpdated) throw new Error(j?.error || (j?.errors || []).join("; ") || "not set");
+            if (m.r) m.r.router = real;
+            m.msg = { good: true, text: `RO set to ${real} (LDN ${j.mapUpdated ?? "?"}, ERP master ${j.fsUpdated ?? "?"}). Only the record changed; the connection stays as it is.` };
+            await openWeb(m, username, redraw);
+          } catch (err) { m.msg = { bad: true, text: `RO not changed: ${err.message}` }; }
+          w.fixing = false; redraw(); }, redraw, `${m.key}fixro`);
+        fx.classList.remove("wide"); if (w.fixing) { fx.disabled = true; fx.textContent = "Setting…"; }
+        box.append(fx, el("p", "note", "Uses the ERP's own Set Router (LDN → Pelanggan): it changes the record (Router column and ERP master), not the PPPoE connection."));
+      } else if (w.erpRo && !real && fold(nameNorm(w.erpRo)) !== fold(nameNorm(s.ro || "")))
+        box.append(el("p", "note warn", `The ERP has this customer on ${w.erpRo}, but the session is on ${s.ro}; which ERP router that is isn't certain, so fix it in LDN → Pelanggan → Set Router.`));
       // test and 5-minute access, through the ERP when it found the session
       const acts = el("div", "actions");
       if (w.id && w.erpFound) {
@@ -2891,9 +2907,20 @@
       return box;
     }
     const dur = (sec) => { const d = Math.floor(sec / 86400), h = Math.floor((sec % 86400) / 3600), mi = Math.floor((sec % 3600) / 60); return d ? `${d} d ${h} h` : h ? `${h} h ${mi} min` : `${mi} min`; };
+    // the ERP's router list (LDN → Router (NAS)): name and address. A session's RO is the NAS with the session's NAS
+    // address, if its main name agrees too (ARJOSARI and RO ARJOSARI are different routers; the address tells them apart)
+    let nasList = null;
+    const nasIndex = () => (nasList ? Promise.resolve(nasList) : api("/api/admin/ldn-radius/nas").then((j) => (nasList = j.nas || [])).catch(() => []));
+    function realRo(s) {
+      if (!s?.ip || !nasList) return null;
+      const word = (x) => fold(nameNorm(x)).split(/[\s-]/)[0]; // "PUNUNG" is RO PUNUNG NEW, "RO-NGADIROJO-E2E" is NGADIROJO
+      const n = nasList.find((x) => x.nasname === s.ip && (!s.ro || word(x.shortname) === word(s.ro)));
+      return n ? String(n.shortname).trim() : null;
+    }
     async function openWeb(m, username, redraw) {
       const w = (m.web = { busy: true, st: { armed: 0 } }); redraw();
       const u = lower(username);
+      await nasIndex(); // tiny list, kept after the first time
       const [lv, erp] = await Promise.all([
         (live && Date.now() - live.at < 30000 ? Promise.resolve(live) : (live = null, liveSessions())).catch((e) => { w.err = `RADIUS sessions not read: ${e.message}`; return null; }),
         api(`/api/noc/remote-onu?q=${encodeURIComponent(username)}`).then(async (j) => { const c = (j.hasil || []).find((x) => lower(x.username) === u); if (!c) return null;
