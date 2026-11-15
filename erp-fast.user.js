@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.82
+// @version      2.83
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -3434,13 +3434,13 @@
     // stand out, or the satellite view Peta Terpadu uses (Google hybrid) for finding the house. This customer in the
     // middle, rings at half and full radius, every neighbour a dot; a dot and its row in the list light up together,
     // a dot opens that customer, and customers on the same PON port are outlined.
-    const BASEMAP = "erpDock.basemap", CARTO_KEY = "erpDock.cartoKey"; // your own CARTO key, kept only in this browser (the script is public)
+    const BASEMAP = "erpDock.basemap", CARTO_KEY = "erpDock.cartoKey", CARTO_OFF = "erpDock.cartoOff"; // your own CARTO key, kept only in this browser (the script is public)
     const TILES = {
       dark: { url: (x, y, z) => `https://tile.openstreetmap.org/${z}/${x}/${y}.png`, max: 19, attr: "© OpenStreetMap" }, // CARTO now wants a key
       sat: { url: (x, y, z) => `https://mt${(x + y) % 4}.google.com/vt/lyrs=y&hl=id&x=${x}&y=${y}&z=${z}`, max: 20, attr: "Google" },
     };
     function tileSource() {
-      const kind = ls.get(BASEMAP, "dark") === "sat" ? "sat" : "dark", key = ls.get(CARTO_KEY, ""), carto = kind === "dark" && !!key;
+      const kind = ls.get(BASEMAP, "dark") === "sat" ? "sat" : "dark", key = ls.get(CARTO_KEY, ""), carto = kind === "dark" && !!key && !ls.get(CARTO_OFF, false); // the key stays when you switch to OSM
       const T = carto ? { url: (x, y, z) => `https://basemaps.cartocdn.com/rastertiles/dark_all/${z}/${x}/${y}.png?key=${encodeURIComponent(key)}`, max: 20, attr: "© OpenStreetMap © CARTO" } : TILES[kind];
       return { kind, carto, T };
     }
@@ -3487,7 +3487,7 @@
       box.scene = scene;
       mapLayers(box, [tiles, ...briefUnder(scene), ...dots, ...briefOver(scene), tip, zoom, el("span", "attr", T.attr)]);
       if (bar) box.querySelector(".brief").append(bar);
-      swapTiles(box, tiles, { z, kind, left, top, id: `area:${box.getAttribute("aria-label")}` });
+      swapTiles(box, tiles, { z, kind: carto ? "carto" : kind, left, top, id: `area:${box.getAttribute("aria-label")}` });
     }
     function tileMap(box, r, n, radius, rows) {
       const w = box.clientWidth, h = box.clientHeight; if (!w) return;
@@ -3538,7 +3538,7 @@
         me: [hx, hy, r.nama || r.username], about: { what: `Radius ${radius < 1000 ? `${radius} m` : "1 km"} dari ${r.nama || r.username}`, near: r } });
       box.scene = scene;
       mapLayers(box, [tiles, ring(0.5, "half"), ring(1, ""), ...briefUnder(scene), ...dots, me, ...briefOver(scene), tip, zoom, el("span", "attr", T.attr)]);
-      swapTiles(box, tiles, { z, kind, left, top, id: `near:${r.username}` });
+      swapTiles(box, tiles, { z, kind: carto ? "carto" : kind, left, top, id: `near:${r.username}` });
     }
     // Drag a map to pan it: the picture follows the pointer, and every ~100 px (and on release) the tiles are drawn
     // again around the new centre, kept as a share of the world so zooming keeps the place. A press that moves less
@@ -3936,11 +3936,16 @@
     // paste your CARTO key once; it stays in this browser's storage and goes only to CARTO's tile server
     function cartoKeyRow(redraw) {
       const row = el("div", "keyrow"), key = ls.get(CARTO_KEY, "");
-      if (key) { const rm = el("button", "copy", "Remove"); rm.type = "button"; rm.onclick = () => { ls.set(CARTO_KEY, ""); redraw(); }; row.append("Dark map from CARTO with your key", rm); return row; }
+      if (key) { // CARTO or the darkened OSM map, without losing the key; Remove forgets it
+        const seg = el("div", "seg"), off = ls.get(CARTO_OFF, false);
+        for (const [label, v] of [["CARTO", false], ["OSM", true]]) { const b = el("button", null, label); b.type = "button"; b.setAttribute("aria-pressed", String(off === v));
+          b.onclick = () => { ls.set(CARTO_OFF, v); ls.set(BASEMAP, "dark"); redraw(); }; seg.append(b); }
+        const rm = el("button", "copy", "Remove key"); rm.type = "button"; rm.onclick = () => { ls.set(CARTO_KEY, ""); ls.set(CARTO_OFF, false); redraw(); };
+        row.append("Dark map", seg, rm); return row; }
       if (!view.keyOpen) { const b = el("button", "copy", "Use a CARTO key"); b.type = "button"; b.onclick = () => { view.keyOpen = true; redraw(); }; row.append(b); return row; }
       const inp = el("input", "field"); inp.type = "password"; inp.placeholder = "CARTO API key"; inp.autocomplete = "off"; inp.setAttribute("aria-label", "CARTO API key"); inp.dataset.k = "cartokey";
       const save = el("button", "btn", "Save"); save.type = "button";
-      save.onclick = () => { const v = inp.value.trim(); if (!v) return; ls.set(CARTO_KEY, v); ls.set(BASEMAP, "dark"); view.keyOpen = false; redraw(); };
+      save.onclick = () => { const v = inp.value.trim(); if (!v) return; ls.set(CARTO_KEY, v); ls.set(CARTO_OFF, false); ls.set(BASEMAP, "dark"); view.keyOpen = false; redraw(); };
       inp.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); save.click(); } };
       row.append(inp, save); setTimeout(() => inp.focus(), 0); return row;
     }
