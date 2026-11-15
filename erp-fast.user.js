@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.84
+// @version      2.85
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -3699,15 +3699,16 @@
     function mark(z, replay) { // t: down since; u: unstable. Neither while replaying (they describe now)
       z.t = !replay && DOWN.has(z.k) ? downAt(z.c) : 0; z.u = !replay && (z.k === "on" || z.k === "weak") && unstable(z.c); return z;
     }
-    // Replay: the drop log's readings wound back from now to time T; who was offline then
+    // Replay: who was offline at time T. Someone down now was already down then if they were last seen online before T;
+    // then the readings since T are wound back for those who went down and came back in between
     function offAt(T) {
-      const off = new Set(Object.keys(drops?.off || {}));
+      const off = new Set(Object.entries(drops?.off || {}).filter(([, o]) => o.from <= T).map(([u]) => u));
       for (const [t, gone, back] of [...(drops?.ev || [])].reverse()) { if (t <= T) break; for (const u of gone) off.delete(u); for (const u of back) off.add(u); }
       return off;
     }
     function replayBar(box) {
-      const ev = drops?.ev || []; if (ev.length < 2) return null;
-      const step = 15 * 60000, t0 = Math.max(ev[0][0], Date.now() - 86400000), n = Math.max(1, Math.round((Date.now() - t0) / step));
+      const first = drops?.first || 0; if (!first || Date.now() - first < 15 * 60000) return null; // the log needs a past to replay
+      const step = 15 * 60000, t0 = Math.max(first, Date.now() - 86400000), n = Math.max(1, Math.round((Date.now() - t0) / step));
       const bar = el("div", "replay"), lab = el("span"), rng = el("input"); rng.type = "range"; rng.min = "0"; rng.max = String(n); rng.step = "1";
       rng.setAttribute("aria-label", "Replay the last 24 hours");
       const at = (v) => (+v >= n ? 0 : t0 + +v * step), say = (v) => { const T = at(v); lab.textContent = T ? `Putar ulang · ${hhmm(T)}` : "Putar ulang · sekarang"; };

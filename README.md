@@ -87,7 +87,7 @@ Every Dock map (Nearby, a router's offline customers, a PON port) reads as a bri
 - **Nearest FAT/ODP:** every down customer gets a thin line to the nearest box (within 250 m), and a box with 2 or more down shows down/all of its customers on the map ("4/6", red when half or more). A guess by distance, not the port on file.
 - **Villages and teams:** where 3 or more customers live, the village is named with the field team that covers it (HRD's technician area map).
 - **Unstable:** a dashed amber ring on online customers with 4 or more reconnects in 24 hours.
-- **Replay:** on a router or PON map, a slider under the strip winds the map back over the last 24 hours in 15-minute steps, from the drop log's readings. It appears once the log has two readings, and covers only hours an ERP tab was open.
+- **Replay:** on a router or PON map, a slider under the strip winds the map back over the last 24 hours in 15-minute steps, from the drop log's readings. It appears once the log is 15 minutes old: who's down now is placed by when they were last seen online, and those who went down and came back are added from each reading since 2.81. It covers only hours an ERP tab was open.
 - **Click an empty spot** to copy its Google Maps link.
 - The shared picture and note carry all of it: the note adds each village's team and a "Per FAT/ODP terdekat" line.
 - **Network boxes** (FAT, ODP, FDT, ODC) from Planning's asset list, once Planning has been opened in this browser. With two or more customers down, the FAT/ODP closest to all of them is ringed as **Cek di sini**. That's where to look first, not proof.
