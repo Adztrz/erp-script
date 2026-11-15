@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.94
+// @version      2.95
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -2706,7 +2706,8 @@
         if (win && !win.closed) win.location.replace(o.url); else window.open(o.url, "_blank", "noopener");
         m.msg = { good: true, text: `Remote: opened ${o.url} on ${o.ro} without the ERP, for your IP (${o.me}) only; the router removes it in 30 minutes.${copied}` };
       } catch (err) {
-        if (err.code === "noro") { m.web.needSetup = realRo(s) || s.ro; return false; } // not set up for this RO: the ERP's way, and offer the setup
+        if (err.code === "noro") { // not set up for this RO yet: offer the setup instead of the ERP's access (WireGuard-only, 2 a 10 min)
+          m.web.needSetup = realRo(s) || s.ro; win?.close(); m.msg = { text: `Remote: the router bridge doesn't know ${m.web.needSetup} yet. Press "Set up ${m.web.needSetup}" under Web page, then Remote again.` }; modemDraw(m); return true; }
         win?.close(); m.msg = { bad: true, text: `Remote (router bridge): ${err.message}` };
       }
       modemDraw(m); return true;
@@ -2902,9 +2903,9 @@
         p.append("Open (router bridge): ", a, ` · until ${hhmm(w.own.until)} · `, cl); box.append(p);
       }
       if (w.needSetup) {
-        const su = el("button", "copy", `Set up ${w.needSetup} in the router bridge`); su.type = "button"; su.dataset.k = `${m.key}bsetup`;
+        const su = el("button", "btn primary", `Set up ${w.needSetup}`); su.type = "button"; su.dataset.k = `${m.key}bsetup`;
         su.onclick = async () => { await bridge("setup", { ro: realRo(s) || w.needSetup }, 600000).catch(() => null); w.needSetup = null; redraw(); };
-        const p = el("p", "note"); p.append("Remote went through the ERP because the router bridge doesn't know this RO yet. ", su); box.append(p);
+        const p = el("p", "note"); p.append(`The router bridge doesn't know ${w.needSetup} yet: set it up once (its public address, API port and a RouterOS login), then press Remote again.`); box.append(p, su);
       }
       // test and 5-minute access, through the ERP when it found the session
       const acts = el("div", "actions");
