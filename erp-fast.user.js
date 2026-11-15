@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.93
+// @version      2.94
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -2726,7 +2726,9 @@
       try {
         w.tunnel = null; await openTunnel(m, w, win);
         if (ls.get(KEEP_OPEN, false)) { w.keep = true; keepTick(m, w); }
-        m.msg = { good: true, text: `Remote: opened through the ERP's 5-minute access${w.keep ? ", kept open while this tab is" : ""}.${copied}` };
+        // the ERP's "from anywhere" address is often inside the NOC WireGuard (10.99.98.x), so it opens only on a PC on it
+        const inner = /^https?:\/\/(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(w.tunnel?.url || "");
+        m.msg = { good: !inner, text: `Remote: opened through the ERP's 5-minute access${w.keep ? ", kept open while this tab is" : ""}.${inner ? ` Its address (${w.tunnel.url}) is inside the NOC WireGuard, so it only loads on a PC connected to it; elsewhere it times out. The router bridge opens on the RO's public address instead.` : ""}${copied}` };
       } catch (err) { win?.close(); m.msg = { bad: true, text: `Remote: access not opened (${err.message}).` }; }
       redraw();
     }
