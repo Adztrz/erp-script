@@ -101,6 +101,10 @@ Every Dock map (Nearby, a router's offline customers, a PON port) reads as a bri
 - **Ctrl + mouse wheel** zooms in and out around the pointer (without zooming the page); drag to pan, ◎ to recentre.
 - **Sat** switches between the street map and satellite. Google's satellite tiles can't go into the picture, so a satellite share has a plain dark background.
 
+## Fish
+
+A strip above the Dock's footer shows two ASCII fish swimming across and round again, drawn as characters on a faint grid (an original take on the ASCII-fish style). It runs only while the Dock is open and the tab is visible, at about 24 frames a second, and stands still under reduced motion.
+
 ## Router bridge (Remote without the ERP)
 
 `erp-router-bridge.user.js` is a second, optional userscript. With it, **Remote** opens a customer's modem page without the ERP's Remote ONU, so a wrong RO in the ERP doesn't matter: the Dock finds the session's real RO from RADIUS, and the bridge opens a temporary port on that RO itself through RouterOS 7's REST API.

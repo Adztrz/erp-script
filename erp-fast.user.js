@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.96
+// @version      2.97
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -1882,6 +1882,7 @@
         mask: linear-gradient(90deg, rgba(0,0,0,.18) calc(var(--ht-p) - 70%), #000 calc(var(--ht-p) - 35%), rgba(0,0,0,.18) var(--ht-p)); animation: erp-ht-scan 1.2s cubic-bezier(.45, 0, .55, 1) infinite; }
       @keyframes erp-ht-scan { from { --ht-p: 0%; } to { --ht-p: 170%; } }
 
+      .erp-dock canvas.fish { display: block; width: 100%; height: 80px; flex: none; border-top: 1px solid var(--hair); background: #000810; pointer-events: none; }
       .erp-dock .foot { padding: 8px 14px; border-top: 1px solid var(--hair); font-size: 12px; color: var(--muted); display: flex; gap: 10px; flex-wrap: wrap; }
       /* Bulk Lunas */
       .erp-dock.wide { width: min(580px, calc(100vw - 32px)); max-height: min(780px, calc(100vh - 120px)); }
@@ -3500,10 +3501,60 @@
       const body = el("div", "scroll"), foot = el("div", "foot");
       foot.append(el("span", null, customers ? `${customers.length.toLocaleString("id-ID")} customers · ${ago(custAt)}` : "Customer list: open LDN → Pelanggan once"), el("span", null, invoices ? `Invoices ${MONTHS_ID[Number(invKey.split("-")[2]) - 1]} kept` : "Invoices: open Invoices once"));
       const was = document.activeElement, keep = was === document.body || !was || panel.contains(was); // focus was in the Dock: the new box takes it
-      panel.replaceChildren(top, body, foot);
+      panel.replaceChildren(top, body, fishStrip(), foot);
       drawBody();
       if (keep && bulk?.el?.contains(was) && was.isConnected) was.focus();
       else if (keep) { input.focus(); input.setSelectionRange(input.value.length, input.value.length); }
+    }
+    // ---- a strip of ASCII fish above the footer ----
+    // Two fish drawn as characters on a faint grid, swimming across and round again for good: each cell's character
+    // and tint come from how much fish covers it (body, wagging tail, fins), with a little flicker and a few drifting
+    // specks. One canvas kept across redraws, ~24 frames a second, only while the Dock is open and the tab visible;
+    // still under reduced motion.
+    let fishEl = null, fishRaf = 0;
+    function fishStrip() {
+      if (!fishEl) { fishEl = el("canvas", "fish"); fishEl.setAttribute("aria-hidden", "true"); }
+      cancelAnimationFrame(fishRaf); fishRaf = requestAnimationFrame(fishTick); setTimeout(() => fishTick(performance.now()), 0); // a first frame even while a frame never comes
+      return fishEl;
+    }
+    const FISH_RAMP = " .'`:;!tos%SX#8@", FISH_TINT = ["#90a8c0", "#90a8c0", "#90a8c0", "#a8c0d8", "#a8c0d8", "#a8a8c0", "#a8a8c0", "#7890a8", "#7890a8", "#c8d0e0",
+      "#90a8c0", "#a8c0d8", "#c070a0", "#b0b060", "#6080b0"]; // the video's palette: blue-grey, with a few muted pink, olive and blue
+    const FISH = [ // speed in cells a second, size in rows, how far apart, vertical place (share of the strip)
+      { v: 6, len: 30, h: 4.2, off: 0, y: 0.42, ph: 0 },
+      { v: 4.2, len: 22, h: 3, off: 0.55, y: 0.66, ph: 2.1 },
+    ];
+    let fishLast = 0;
+    function fishTick(now) {
+      const c = fishEl; if (!c || !c.isConnected) return;
+      if (document.hidden || (now - fishLast < 41 && fishLast)) { fishRaf = requestAnimationFrame(fishTick); return; }
+      fishLast = now;
+      const dpr = devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight; if (!w || !h) { fishRaf = requestAnimationFrame(fishTick); return; }
+      if (c.width !== Math.round(w * dpr)) { c.width = Math.round(w * dpr); c.height = Math.round(h * dpr); }
+      const g = c.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
+      const cw = 6, ch = 8, cols = Math.ceil(w / cw), rows = Math.floor(h / ch), t = calm() ? 7 : now / 1000, tick = Math.floor(t * 7);
+      g.font = '600 6.5px "JetBrains Mono", ui-monospace, monospace'; g.textAlign = "center"; g.textBaseline = "middle";
+      const hash = (a, b) => { let x = Math.imul(a * 374761393 + b * 668265263 + tick * 2246822519, 0x27d4eb2d); x ^= x >>> 15; return (x >>> 0) / 4294967296; };
+      for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
+        let d = 0;
+        for (const f of FISH) {
+          const span = cols + f.len * 2, head = ((t * f.v + f.off * span) % span) - f.len; // the head's column, round and round
+          const u = (head - i) / f.len; if (u < -0.05 || u > 1.45) continue; // 0 head … 1 base of the tail … 1.45 tail tip
+          const sway = Math.sin(t * 5 + f.ph - u * 3) * 0.55 * u * u, cy = rows * f.y + Math.sin(t * 0.9 + f.ph) * 0.5 + sway, dy = Math.abs(j - cy);
+          const b = Math.max(0, u); // body: round head, fullest at a third, narrow at the tail's base; then the tail fanning out
+          let half = u <= 1 ? f.h * Math.sin(Math.PI * Math.min(1, b ** 0.62)) * (0.25 + 0.75 * Math.min(1, b * 6)) : f.h * 0.18 + (u - 1) * f.h * 2.4;
+          if (u > 1.08 && dy < (u - 1) * f.h * 1.1) half = Math.min(half, dy - 0.01 + (u - 1.08) * 0.4); // the tail's fork
+          if (u > 0.28 && u < 0.62 && j < cy) half += f.h * 0.75 * Math.sin(((u - 0.28) / 0.34) * Math.PI); // the back fin
+          if (u > 0.4 && u < 0.58 && j > cy) half += f.h * 0.45 * Math.sin(((u - 0.4) / 0.18) * Math.PI); // a fin below
+          const eye = u > 0.08 && u < 0.14 && j < cy && dy > f.h * 0.15 && dy < f.h * 0.55;
+          d = Math.max(d, eye ? 0 : Math.min(1, (half - dy) / 1.1 + 0.3) * (u > 1 ? 0.7 : 1));
+        }
+        const x = i * cw, y = j * ch, r = hash(i, j);
+        if (d <= 0.05 && r > 0.004) { g.fillStyle = "#040a1c"; g.fillRect(x + 1, y + 1, cw - 2, ch - 2); continue; } // the faint grid, and a rare speck
+        const k = Math.min(FISH_RAMP.length - 1, Math.max(1, Math.round((d > 0.05 ? d : 0.15) * (FISH_RAMP.length - 1) * (0.75 + r * 0.4))));
+        g.fillStyle = "#0e1828"; g.fillRect(x + 0.5, y + 0.5, cw - 1, ch - 1);
+        g.fillStyle = FISH_TINT[Math.floor(hash(j, i) * FISH_TINT.length)]; g.globalAlpha = d > 0.05 ? 0.6 + d * 0.4 : 0.45; g.fillText(FISH_RAMP[k], x + cw / 2, y + ch / 2 + 0.5); g.globalAlpha = 1;
+      }
+      if (!calm()) fishRaf = requestAnimationFrame(fishTick);
     }
     function drawBody() {
       const body = panel?.querySelector(".scroll"); if (!body) return;
