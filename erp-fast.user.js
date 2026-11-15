@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.79
+// @version      2.80
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -1826,6 +1826,9 @@
       .erp-dock .map .zoom button.bm { font-size: 10px; font-weight: 600; }
       .erp-dock .map .foot { position: absolute; z-index: 3; left: 8px; right: 8px; bottom: 16px; padding: 5px 8px; border-radius: 6px; background: rgba(9,11,12,.88); pointer-events: none; font-size: 11px; color: var(--bone); }
       .erp-dock .map .scale { display: flex; align-items: center; gap: 6px; } .erp-dock .map .scale i { height: 6px; border: 1.5px solid var(--bone); border-top: 0; }
+      /* north arrow beside the scale: the map never rotates, so up is always north (U = utara) */
+      .erp-dock .map .north { margin-left: auto; display: inline-flex; flex-direction: column; align-items: center; gap: 1px; font-size: 10px; font-weight: 700; line-height: 1; color: var(--bone); }
+      .erp-dock .map .north::before { content: ""; border: 5px solid transparent; border-top: 0; border-bottom: 8px solid var(--bone); }
       .erp-dock .map .legend { display: flex; flex-wrap: wrap; gap: 2px 8px; margin-top: 3px; } .erp-dock .map .legend span { display: inline-flex; align-items: center; gap: 4px; }
       .erp-dock .map .legend .k { width: 8px; height: 8px; border-radius: 50%; } .erp-dock .map .legend .k.off, .erp-dock .map .legend .k.los, .erp-dock .map .legend .k.pwr { background: #efefed; } .erp-dock .map .legend .k.los { box-shadow: 0 0 0 1.5px var(--red); } .erp-dock .map .legend .k.pwr { outline: 1px dashed #8a8b8a; outline-offset: 1px; }
       .erp-dock .map .legend .k.weak { background: #e0b252; } .erp-dock .map .legend .k.on { background: var(--green); } .erp-dock .map .legend .k.iso { background: var(--red); }
@@ -3696,7 +3699,8 @@
       if (s.fault) strip.append(el("div", "bf", `Cek di sini: ${s.fault.code} (rata-rata ${s.fault.avg} m dari yang mati)`));
       out.push(strip);
       const leg = el("div", "legend"); for (const [k, label] of s.legend) { const i = el("span"); i.append(el("i", `k ${k}`), label); leg.append(i); }
-      const sc = el("div", "scale"); sc.append(el("i"), s.scale.label); sc.firstChild.style.width = `${Math.round(s.scale.px)}px`;
+      const sc = el("div", "scale"), north = el("span", "north", "U"); north.title = "Utara: atas peta selalu utara"; north.setAttribute("aria-label", "North is up");
+      sc.append(el("i"), s.scale.label, north); sc.firstChild.style.width = `${Math.round(s.scale.px)}px`;
       const foot = el("div", "foot"); foot.append(sc, leg); out.push(foot);
       return out;
     }
@@ -3752,6 +3756,9 @@
       for (const [k, l] of s.legend) { const iw = g.measureText(l).width + 13; if (x && x + iw > w - 40) { lines.push([]); x = 0; } lines.at(-1).push([k, l, x]); x += iw + 10; }
       const fh = 30 + lines.length * 16; pill(8, h - fh - 6, w - 16, fh, 6, "rgba(9,11,12,.88)");
       const sy = h - fh + 12; g.fillStyle = "#e9e1dc"; g.fillRect(16, sy, s.scale.px, 1.5); g.fillRect(16, sy - 5, 1.5, 6); g.fillRect(16 + s.scale.px - 1.5, sy - 5, 1.5, 6); g.fillText(s.scale.label, 22 + s.scale.px, sy + 4);
+      // north arrow at the scale's right end (U = utara)
+      const nx = w - 24; g.beginPath(); g.moveTo(nx, sy - 12); g.lineTo(nx - 5, sy - 4); g.lineTo(nx + 5, sy - 4); g.closePath(); g.fill();
+      font(700, 10); g.textAlign = "center"; g.fillText("U", nx, sy + 7); g.textAlign = "start"; font(500, 11);
       lines.forEach((row, i) => { const ly = sy + 22 + i * 16; for (const [k, l, lx] of row) { const x0 = 16 + lx;
         if (k === "box") { g.fillStyle = "#3e7edf"; g.fillRect(x0, ly - 8, 8, 8); }
         else if (k === "fault") { g.beginPath(); g.arc(x0 + 4, ly - 4, 5, 0, 7); g.setLineDash([2, 2]); g.lineWidth = 1.5; g.strokeStyle = "#f12614"; g.stroke(); g.setLineDash([]); }

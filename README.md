@@ -80,8 +80,8 @@ So a page never drifts far behind the server:
 Every Dock map (Nearby, a router's offline customers, a PON port) reads as a brief:
 
 - **Strip on top:** severity (BERAT / SEDANG / RINGAN / NORMAL), how many customers are down out of how many, the router, port or radius, the villages, and since when.
-- **What each dot means:** Putus (LOS, red), Mati listrik (dying gasp, dark grey), Offline (grey), Redaman tinggi (online but below −28 dBm, amber), Isolir (hollow), Online (green). LOS, power and signal come from the OLTs' modem lists; the legend shows only what's on the map.
-- **Names on the problem customers** where there's room, rings labelled in metres, a scale bar, and the selected customer named.
+- **What each dot means:** Putus (LOS, white with a red ring), Mati listrik (dying gasp, white with a dashed grey ring), Offline (white), Redaman tinggi (online but below −28 dBm, amber), Isolir (red), Online (green). LOS, power and signal come from the OLTs' modem lists; the legend shows only what's on the map.
+- **Names on the problem customers** where there's room, rings labelled in metres, a scale bar with a north arrow (U; the map never rotates, so up is always north), and the selected customer named.
 - **Network boxes** (FAT, ODP, FDT, ODC) from Planning's asset list, once Planning has been opened in this browser. With two or more customers down, the FAT/ODP closest to all of them is ringed as **Cek di sini**. That's where to look first, not proof.
 - With customers down, the router and PON maps zoom in on them.
 - **⇪ Share** copies a picture of the map with the strip, legend and scale built in, ready to paste into a chat. **Copy note** adds the text: severity, villages, the box to check with a Google Maps link, and each problem customer with phone and location. **Save PNG** saves the picture where copying isn't allowed.
