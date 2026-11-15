@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.97
+// @version      2.98
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -1882,7 +1882,7 @@
         mask: linear-gradient(90deg, rgba(0,0,0,.18) calc(var(--ht-p) - 70%), #000 calc(var(--ht-p) - 35%), rgba(0,0,0,.18) var(--ht-p)); animation: erp-ht-scan 1.2s cubic-bezier(.45, 0, .55, 1) infinite; }
       @keyframes erp-ht-scan { from { --ht-p: 0%; } to { --ht-p: 170%; } }
 
-      .erp-dock canvas.fish { display: block; width: 100%; height: 80px; flex: none; border-top: 1px solid var(--hair); background: #000810; pointer-events: none; }
+      .erp-dock canvas.fish { display: block; width: 100%; height: 80px; flex: none; border-top: 1px solid var(--hair); background: var(--card); pointer-events: none; }
       .erp-dock .foot { padding: 8px 14px; border-top: 1px solid var(--hair); font-size: 12px; color: var(--muted); display: flex; gap: 10px; flex-wrap: wrap; }
       /* Bulk Lunas */
       .erp-dock.wide { width: min(580px, calc(100vw - 32px)); max-height: min(780px, calc(100vh - 120px)); }
@@ -3517,8 +3517,8 @@
       cancelAnimationFrame(fishRaf); fishRaf = requestAnimationFrame(fishTick); setTimeout(() => fishTick(performance.now()), 0); // a first frame even while a frame never comes
       return fishEl;
     }
-    const FISH_RAMP = " .'`:;!tos%SX#8@", FISH_TINT = ["#90a8c0", "#90a8c0", "#90a8c0", "#a8c0d8", "#a8c0d8", "#a8a8c0", "#a8a8c0", "#7890a8", "#7890a8", "#c8d0e0",
-      "#90a8c0", "#a8c0d8", "#c070a0", "#b0b060", "#6080b0"]; // the video's palette: blue-grey, with a few muted pink, olive and blue
+    const FISH_RAMP = " .'`:;!tos%SX#8@", FISH_TINT = ["#e9e1dc", "#e9e1dc", "#e9e1dc", "#efefed", "#b3b0af", "#b3b0af", "#b3b0af", "#8a8b8a", "#8a8b8a",
+      "#e9e1dc", "#b3b0af", "#55bc82", "#55bc82", "#e0b252"]; // the Dock's own: bone and greys, a little of its green and amber
     const FISH = [ // speed in cells a second, size in rows, how far apart, vertical place (share of the strip)
       { v: 6, len: 30, h: 4.2, off: 0, y: 0.42, ph: 0 },
       { v: 4.2, len: 22, h: 3, off: 0.55, y: 0.66, ph: 2.1 },
@@ -3549,9 +3549,9 @@
           d = Math.max(d, eye ? 0 : Math.min(1, (half - dy) / 1.1 + 0.3) * (u > 1 ? 0.7 : 1));
         }
         const x = i * cw, y = j * ch, r = hash(i, j);
-        if (d <= 0.05 && r > 0.004) { g.fillStyle = "#040a1c"; g.fillRect(x + 1, y + 1, cw - 2, ch - 2); continue; } // the faint grid, and a rare speck
+        if (d <= 0.05 && r > 0.004) { g.fillStyle = "#0e1011"; g.fillRect(x + 1, y + 1, cw - 2, ch - 2); continue; } // the faint grid, and a rare speck
         const k = Math.min(FISH_RAMP.length - 1, Math.max(1, Math.round((d > 0.05 ? d : 0.15) * (FISH_RAMP.length - 1) * (0.75 + r * 0.4))));
-        g.fillStyle = "#0e1828"; g.fillRect(x + 0.5, y + 0.5, cw - 1, ch - 1);
+        g.fillStyle = "#1a1d1e"; g.fillRect(x + 0.5, y + 0.5, cw - 1, ch - 1);
         g.fillStyle = FISH_TINT[Math.floor(hash(j, i) * FISH_TINT.length)]; g.globalAlpha = d > 0.05 ? 0.6 + d * 0.4 : 0.45; g.fillText(FISH_RAMP[k], x + cw / 2, y + ch / 2 + 0.5); g.globalAlpha = 1;
       }
       if (!calm()) fishRaf = requestAnimationFrame(fishTick);
