@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.95
+// @version      2.96
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -2697,8 +2697,11 @@
       const c = bridgeCalls.get(d.id); if (!c) return; bridgeCalls.delete(d.id); if (d.ok) c.ok(d.data); else { const err = new Error(d.error); err.code = d.code; c.no(err); } });
     const bridge = (op, args = {}, ms = 45000) => new Promise((ok, no) => { const id = `b${++bridgeN}`; bridgeCalls.set(id, { ok, no });
       window.postMessage({ erpBridge: "req", id, op, ...args }, "*"); setTimeout(() => { if (bridgeCalls.delete(id)) no(Object.assign(new Error("router bridge not installed"), { code: "none" })); }, ms); });
+    let bridgeInfo = null; // { ros: [{ name, nas }] } once the bridge answered; null when it isn't installed
+    const bridgeKnows = (ro, nas) => !!bridgeInfo?.ros.some((c) => (nas && c.nas === nas) || fold(nameNorm(c.name)).split(/[\s-]/)[0] === fold(nameNorm(ro || "")).split(/[\s-]/)[0]);
+    const bridgeStatus = () => bridge("status", {}, 700).then((x) => (bridgeInfo = x)).catch(() => (bridgeInfo = null));
     async function remoteOwn(m, r, s, win, copied) { // true when the bridge handled it (opened, or failed with a reason)
-      if (!(await bridge("status", {}, 700).catch(() => null))) return false;
+      if (!(await bridgeStatus())) return false;
       m.msg = { text: "Remote: opening a port on the RO through the router bridge…" }; modemDraw(m);
       try {
         const o = await bridge("open", { ro: s.ro, nas: s.ip, modemIp: s.addr, minutes: 30, tag: r.username });
@@ -2902,10 +2905,11 @@
         cl.onclick = async () => { cl.disabled = true; try { await bridge("close", { handle: w.own.handle }); w.own = null; m.msg = { good: true, text: "Closed on the router." }; } catch (err) { m.msg = { bad: true, text: `Not closed: ${err.message} (the router removes it by itself at the end).` }; } redraw(); };
         p.append("Open (router bridge): ", a, ` · until ${hhmm(w.own.until)} · `, cl); box.append(p);
       }
-      if (w.needSetup) {
-        const su = el("button", "btn primary", `Set up ${w.needSetup}`); su.type = "button"; su.dataset.k = `${m.key}bsetup`;
-        su.onclick = async () => { await bridge("setup", { ro: realRo(s) || w.needSetup }, 600000).catch(() => null); w.needSetup = null; redraw(); };
-        const p = el("p", "note"); p.append(`The router bridge doesn't know ${w.needSetup} yet: set it up once (its public address, API port and a RouterOS login), then press Remote again.`); box.append(p, su);
+      const want = realRo(s) || s.ro;
+      if (bridgeInfo && want && !bridgeKnows(want, s.ip)) {
+        const su = el("button", "btn primary", `Set up ${want}`); su.type = "button"; su.dataset.k = `${m.key}bsetup`;
+        su.onclick = async () => { await bridge("setup", { ro: want }, 600000).catch(() => null); await bridgeStatus(); w.needSetup = null; redraw(); }; // cancelled halfway: still not known, so the button stays
+        const p = el("p", "note"); p.append(`The router bridge doesn't know ${want} yet: set it up once (its public address, API port, NAS address and a RouterOS login), then press Remote.`); box.append(p, su);
       }
       // test and 5-minute access, through the ERP when it found the session
       const acts = el("div", "actions");
@@ -2961,7 +2965,7 @@
     async function openWeb(m, username, redraw) {
       const w = (m.web = { busy: true, st: { armed: 0 } }); redraw();
       const u = lower(username);
-      await nasIndex(); // tiny list, kept after the first time
+      await Promise.all([nasIndex(), bridgeStatus()]); // tiny lists, kept after the first time
       const [lv, erp] = await Promise.all([
         (live && Date.now() - live.at < 30000 ? Promise.resolve(live) : (live = null, liveSessions())).catch((e) => { w.err = `RADIUS sessions not read: ${e.message}`; return null; }),
         api(`/api/noc/remote-onu?q=${encodeURIComponent(username)}`).then(async (j) => { const c = (j.hasil || []).find((x) => lower(x.username) === u); if (!c) return null;
