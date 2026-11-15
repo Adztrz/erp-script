@@ -101,6 +101,19 @@ Every Dock map (Nearby, a router's offline customers, a PON port) reads as a bri
 - **Ctrl + mouse wheel** zooms in and out around the pointer (without zooming the page); drag to pan, ◎ to recentre.
 - **Sat** switches between the street map and satellite. Google's satellite tiles can't go into the picture, so a satellite share has a plain dark background.
 
+## Router bridge (Remote without the ERP)
+
+`erp-router-bridge.user.js` is a second, optional userscript. With it, **Remote** opens a customer's modem page without the ERP's Remote ONU, so a wrong RO in the ERP doesn't matter: the Dock finds the session's real RO from RADIUS, and the bridge opens a temporary port on that RO itself through RouterOS 7's REST API.
+
+- **Only for you:** the port forward accepts only your own public IP (the address the router sees on the bridge's API login), to the modem's port 80, and adds a matching forward accept only when the router has no general accept for port forwards.
+- **Closes by itself:** a one-shot scheduler on the router removes the port after 30 minutes, even if your PC is off. **Close now** in the Modem box removes it earlier. Everything it adds is commented `erpdock-remote <username> <id>`.
+- **Logins stay out of the page:** router logins are kept in Tampermonkey's storage for the bridge, which the ERP page and the Dock can't read. The Dock can only ask the bridge to open or close; the bridge builds the router commands, and only forwards to private (customer) addresses.
+- **Set up an RO:** Tampermonkey menu → *Router bridge: set up or edit an RO*, or the button the Modem box shows the first time an RO isn't set up. You give the RO's name as the ERP writes it, its public address and API port, its NAS address (LDN → Router (NAS)), and a RouterOS user. Best is a user just for this, in a group with only the rights it needs (`read`, `write`, `rest-api`) and allowed only from your addresses.
+- **https needs a valid certificate:** Tampermonkey can't accept a self-signed one. With plain `http` the router login crosses the internet unencrypted, so prefer https with a real certificate, or restrict the API service to your addresses.
+- Changing router config this way is a NOC decision: set it up only with that approval.
+
+Install it like the main script: open the raw file URL, `https://raw.githubusercontent.com/Adztrz/erp-script/main/erp-router-bridge.user.js`, and Tampermonkey offers to install it. The first time it contacts a router, Tampermonkey asks you to allow that address.
+
 ## Monochrome theme
 
 The half-circle button at the top of the Dock turns the whole ERP black and bone, like Faust: near-black pages, graphite cards, bone for primary buttons, links and focus. Panels with hard-coded blue, violet or cyan (BOQ box, route cards, badges) turn to warm greys of the same lightness. Red, green and amber stay, so errors and status still read. It's applied before the page draws (no flash), remembered in this browser, and the button turns it off again.

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.92
+// @version      2.93
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -2688,6 +2688,29 @@
       const all = ls.get(LOGINS, {}), k = modelKey(model); if (!k) return null;
       return all[k] ? { ...all[k], key: k } : all[k.split(" ")[0]] ? { ...all[k.split(" ")[0]], key: k.split(" ")[0] } : null;
     }
+    // ---- the router bridge (erp-router-bridge.user.js, a second userscript) ----
+    // With it installed and the session's RO set up there, Remote opens the modem without the ERP: a port on the RO
+    // itself, only for your own IP, which the router removes after 30 minutes. The bridge keeps the router logins in
+    // Tampermonkey's storage and builds the router commands itself; the Dock can only ask it to open or close.
+    const bridgeCalls = new Map(); let bridgeN = 0;
+    window.addEventListener("message", (e) => { const d = e.data; if (e.source !== window || d?.erpBridge !== "res") return;
+      const c = bridgeCalls.get(d.id); if (!c) return; bridgeCalls.delete(d.id); if (d.ok) c.ok(d.data); else { const err = new Error(d.error); err.code = d.code; c.no(err); } });
+    const bridge = (op, args = {}, ms = 45000) => new Promise((ok, no) => { const id = `b${++bridgeN}`; bridgeCalls.set(id, { ok, no });
+      window.postMessage({ erpBridge: "req", id, op, ...args }, "*"); setTimeout(() => { if (bridgeCalls.delete(id)) no(Object.assign(new Error("router bridge not installed"), { code: "none" })); }, ms); });
+    async function remoteOwn(m, r, s, win, copied) { // true when the bridge handled it (opened, or failed with a reason)
+      if (!(await bridge("status", {}, 700).catch(() => null))) return false;
+      m.msg = { text: "Remote: opening a port on the RO through the router bridge…" }; modemDraw(m);
+      try {
+        const o = await bridge("open", { ro: s.ro, nas: s.ip, modemIp: s.addr, minutes: 30, tag: r.username });
+        m.web.own = o; m.web.tunnel = null;
+        if (win && !win.closed) win.location.replace(o.url); else window.open(o.url, "_blank", "noopener");
+        m.msg = { good: true, text: `Remote: opened ${o.url} on ${o.ro} without the ERP, for your IP (${o.me}) only; the router removes it in 30 minutes.${copied}` };
+      } catch (err) {
+        if (err.code === "noro") { m.web.needSetup = realRo(s) || s.ro; return false; } // not set up for this RO: the ERP's way, and offer the setup
+        win?.close(); m.msg = { bad: true, text: `Remote (router bridge): ${err.message}` };
+      }
+      modemDraw(m); return true;
+    }
     async function remoteGo(r) {
       const key = `u:${r.username}`, m = mods.get(key); if (!m) return;
       let win = null; try { win = window.open("about:blank", "_blank"); if (win) win.opener = null; } catch { /* blocked: the access opens in a new tab instead */ }
@@ -2698,6 +2721,7 @@
       if (!s) { win?.close(); m.msg = { bad: true, text: `Remote: not online now (no PPPoE session), so the modem can't be reached.${ont || dev ? " Reboot still works through TR-069 or the OLT." : ""}` }; return redraw(); }
       const copied = login ? " Login password copied." : "";
       if (login) navigator.clipboard?.writeText(login.p).catch(() => {});
+      if (s.ip && await remoteOwn(m, r, s, win, copied)) return;
       if (!w.id || !w.erpFound) { win?.close(); m.msg = { bad: true, text: `Remote: the ERP's Remote ONU can't find this session${w.erpRo && w.erpRo !== s.ro ? ` (it has the customer on ${w.erpRo}, the session is on ${s.ro}: correct the RO in the ERP)` : ""}, so the 5-minute access can't be opened.${realRo(s) && w.erpRo && fold(w.erpRo) !== fold(realRo(s)) ? " Fix RO under Web page, then press Remote again." : ""}` }; return redraw(); }
       try {
         w.tunnel = null; await openTunnel(m, w, win);
@@ -2868,6 +2892,18 @@
         box.append(fx, el("p", "note", "Uses the ERP's own Set Router (LDN → Pelanggan): it changes the record (Router column and ERP master), not the PPPoE connection."));
       } else if (w.erpRo && !real && fold(nameNorm(w.erpRo)) !== fold(nameNorm(s.ro || "")))
         box.append(el("p", "note warn", `The ERP has this customer on ${w.erpRo}, but the session is on ${s.ro}; which ERP router that is isn't certain, so fix it in LDN → Pelanggan → Set Router.`));
+      // the router bridge's own access: countdown and Close now
+      if (w.own && w.own.until > Date.now()) {
+        const p = el("p", "note good"), a = el("a", null, w.own.url); a.href = w.own.url; a.target = "_blank"; a.rel = "noreferrer noopener";
+        const cl = el("button", "copy", "Close now"); cl.type = "button"; cl.dataset.k = `${m.key}ownclose`;
+        cl.onclick = async () => { cl.disabled = true; try { await bridge("close", { handle: w.own.handle }); w.own = null; m.msg = { good: true, text: "Closed on the router." }; } catch (err) { m.msg = { bad: true, text: `Not closed: ${err.message} (the router removes it by itself at the end).` }; } redraw(); };
+        p.append("Open (router bridge): ", a, ` · until ${hhmm(w.own.until)} · `, cl); box.append(p);
+      }
+      if (w.needSetup) {
+        const su = el("button", "copy", `Set up ${w.needSetup} in the router bridge`); su.type = "button"; su.dataset.k = `${m.key}bsetup`;
+        su.onclick = async () => { await bridge("setup", { ro: realRo(s) || w.needSetup }, 600000).catch(() => null); w.needSetup = null; redraw(); };
+        const p = el("p", "note"); p.append("Remote went through the ERP because the router bridge doesn't know this RO yet. ", su); box.append(p);
+      }
       // test and 5-minute access, through the ERP when it found the session
       const acts = el("div", "actions");
       if (w.id && w.erpFound) {
