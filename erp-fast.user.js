@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.91
+// @version      2.92
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -2858,8 +2858,10 @@
             const j = await api("/api/admin/ldn-radius/bulk-set-router", { usernames: [username], router: real });
             if (!j?.success && !j?.mapUpdated) throw new Error(j?.error || (j?.errors || []).join("; ") || "not set");
             if (m.r) m.r.router = real;
-            m.msg = { good: true, text: `RO set to ${real} (LDN ${j.mapUpdated ?? "?"}, ERP master ${j.fsUpdated ?? "?"}). Only the record changed; the connection stays as it is.` };
             await openWeb(m, username, redraw);
+            // Remote ONU reads its own copy of the customer list, which Set Router doesn't refresh right away
+            const stale = m.web?.erpRo && fold(m.web.erpRo) !== fold(real);
+            m.msg = { good: true, text: `RO set to ${real} (LDN ${j.mapUpdated ?? "?"}, ERP master ${j.fsUpdated ?? "?"}). Only the record changed; the connection stays as it is.${stale ? ` The ERP's Remote ONU still reads ${m.web.erpRo} from its own copy of the customer list, which Set Router doesn't refresh; Remote works once the ERP updates that copy.` : ""}` };
           } catch (err) { m.msg = { bad: true, text: `RO not changed: ${err.message}` }; }
           w.fixing = false; redraw(); }, redraw, `${m.key}fixro`);
         fx.classList.remove("wide"); if (w.fixing) { fx.disabled = true; fx.textContent = "Setting…"; }
