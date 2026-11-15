@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.87
+// @version      2.88
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -1970,6 +1970,7 @@
       .erp-dock .modem form { display: grid; gap: 8px; margin-top: 10px; }
       .erp-dock .pw { display: flex; align-items: center; gap: 8px; margin-top: 8px; padding: 8px 10px; border-radius: 8px; background: var(--raised); color: var(--paper); font: 13px "JetBrains Mono", ui-monospace, monospace; }
       .erp-dock .pw span { flex: 1; overflow-wrap: anywhere; }
+      .erp-dock .copy.on { color: var(--green); box-shadow: inset 0 0 0 1px var(--green); }
       .erp-dock .loginform { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; } .erp-dock .loginform .field { height: 30px; flex: 1 1 110px; min-width: 0; }
       .erp-dock .rx { font-variant-numeric: tabular-nums; }
       .erp-dock .webbox .facts { margin: 8px 0; } .erp-dock .webbox .note { margin: 6px 0; } .erp-dock .webbox .note a { color: var(--paper); overflow-wrap: anywhere; }
@@ -2681,7 +2682,7 @@
     // The way in is chosen once per PC (kept in this browser): the NOC WireGuard (the modem's IP straight away) or the
     // ERP's 5-minute port on the RO (logged; works from any PC). Remote finds the live session, opens the page that
     // way, and copies the modem's login password when one is saved for its model.
-    const REMOTE_WAY = "erpDock.remoteWay", LOGINS = "erpDock.modemLogins"; // the logins stay in this browser, never in the script
+    const REMOTE_WAY = "erpDock.remoteWay", LOGINS = "erpDock.modemLogins", KEEP_OPEN = "erpDock.keepOpen"; // the logins stay in this browser, never in the script
     const modelKey = (x) => fold(x || "").trim();
     function loginFor(model) { // the model's own login, else one saved for its brand (the first word, e.g. "zte")
       const all = ls.get(LOGINS, {}), k = modelKey(model); if (!k) return null;
@@ -2703,11 +2704,36 @@
       if (way === "wg") { go(`http://${s.addr}/`); m.msg = { good: true, text: `Remote: opened http://${s.addr}/ (WireGuard).${copied}` }; return redraw(); }
       if (!w.id || !w.erpFound) { go(`http://${s.addr}/`); m.msg = { text: `Remote: the ERP can't find this session (customer on another RO?), so the 5-minute access isn't possible; opened http://${s.addr}/, which needs the NOC WireGuard.${copied}` }; return redraw(); }
       try {
-        const j = await api("/api/noc/remote-modem", { customerId: w.id }), min = Number(j.menit) > 0 ? Number(j.menit) : 5, secs = Number(j.kedaluwarsaDetik) || min * 60;
-        w.tunnel = { url: String(j.url), until: Date.now() + secs * 1000, note: j.keterangan || "" }; go(w.tunnel.url);
-        m.msg = { good: true, text: `Remote: opened through the ERP's 5-minute access.${copied}` };
+        w.tunnel = null; await openTunnel(m, w, win);
+        if (ls.get(KEEP_OPEN, true)) { w.keep = true; keepTick(m, w); }
+        m.msg = { good: true, text: `Remote: opened through the ERP's 5-minute access${w.keep ? ", kept open while this tab is" : ""}.${copied}` };
       } catch (err) { win?.close(); m.msg = { bad: true, text: `Remote: access not opened (${err.message}).` }; }
       redraw();
+    }
+    // The ERP's access is a port on the RO that the router removes after 5 minutes. Keep open asks for it again ~30 s
+    // before it closes, as pressing the button again would (each one logged), for up to an hour while this tab is open;
+    // when the new access has another address, the modem's tab is moved to it (its login may need entering again).
+    async function openTunnel(m, w, win) {
+      const j = await api("/api/noc/remote-modem", { customerId: w.id }), min = Number(j.menit) > 0 ? Number(j.menit) : 5, secs = Number(j.kedaluwarsaDetik) || min * 60;
+      const url = String(j.url), moved = w.tunnel && w.tunnel.url !== url;
+      w.tunnel = { url, until: Date.now() + secs * 1000, note: j.keterangan || "", since: w.tunnel?.since || Date.now() };
+      if (win) w.win = win;
+      if (w.win && !w.win.closed) { if (!w.renewing || moved) try { w.win.location.replace(url); } catch { window.open(url, "_blank", "noopener"); } }
+      else if (!w.renewing) window.open(url, "_blank", "noopener");
+      return moved;
+    }
+    function keepTick(m, w) {
+      clearInterval(w.keepTimer);
+      w.keepTimer = setInterval(async () => {
+        const t = w.tunnel;
+        if (!w.keep || !t) return clearInterval(w.keepTimer);
+        if (Date.now() - t.since > 60 * 60000) { w.keep = false; m.msg = { text: "Keep open stopped after an hour; press Remote again for more." }; modemDraw(m); return clearInterval(w.keepTimer); }
+        if (t.until - Date.now() > 30000 || w.renewing) return;
+        w.renewing = true;
+        try { const moved = await openTunnel(m, w); m.msg = { good: true, text: moved ? "Access renewed at a new address: the modem's tab was moved there (log in again if it asks)." : "Access renewed for another 5 minutes." }; }
+        catch (err) { w.keep = false; m.msg = { bad: true, text: `Access not renewed (${err.message}); it closes when the time runs out.` }; }
+        w.renewing = false; modemDraw(m);
+      }, 5000);
     }
     function remoteWayRow(m, after) {
       const row = el("div", "actions"), cur = ls.get(REMOTE_WAY, "");
@@ -2851,11 +2877,8 @@
           const go = armButton(w.st, "Open from anywhere · 5 min", "Click again: open a 5-minute port on the RO (logged)", () => {
             let win = null; try { win = window.open("about:blank", "_blank"); if (win) win.opener = null; } catch { /* blocked */ }
             w.st.armed = 0; w.opening = true; redraw();
-            api("/api/noc/remote-modem", { customerId: w.id }).then((j) => {
-              const min = Number(j.menit) > 0 ? Number(j.menit) : 5, secs = Number(j.kedaluwarsaDetik) || min * 60;
-              w.tunnel = { url: String(j.url), until: Date.now() + secs * 1000, note: j.keterangan || "" };
-              if (win && !win.closed) win.location.replace(w.tunnel.url); else window.open(w.tunnel.url, "_blank", "noopener");
-            }).catch((err) => { win?.close(); w.err = `Access not opened: ${err.message}. Dashbor NOC → Remote ONU → "Buka Akses 5 Menit" sends the same request.`; }).finally(() => { w.opening = false; redraw(); });
+            w.tunnel = null;
+            openTunnel(m, w, win).then(() => { if (ls.get(KEEP_OPEN, true)) { w.keep = true; keepTick(m, w); } }).catch((err) => { win?.close(); w.err = `Access not opened: ${err.message}. Dashbor NOC → Remote ONU → "Buka Akses 5 Menit" sends the same request.`; }).finally(() => { w.opening = false; redraw(); });
           }, redraw, `${m.key}tunnel`);
           go.classList.remove("wide", "primary"); if (w.opening) { go.disabled = true; go.textContent = "Opening…"; } acts.append(go);
         }
@@ -2863,9 +2886,13 @@
       box.append(acts);
       if (w.tunnel && w.tunnel.until > Date.now()) {
         const p = el("p", "note good"), a = el("a", null, w.tunnel.url); a.href = w.tunnel.url; a.target = "_blank"; a.rel = "noreferrer noopener";
-        const left = el("b"); p.append("Open now: ", a, " · closes in ", left); box.append(p);
+        const left = el("b"); p.append("Open now: ", a, w.keep ? " · renews in " : " · closes in ", left); box.append(p);
+        const kp = el("button", `copy${w.keep ? " on" : ""}`, w.keep ? "Keep open: on" : "Keep open: off"); kp.type = "button"; kp.dataset.k = `${m.key}keep`;
+        kp.title = "Ask for the access again before it closes, up to an hour (each renewal is logged like a press)";
+        kp.onclick = () => { w.keep = !w.keep; ls.set(KEEP_OPEN, w.keep); if (w.keep) { w.tunnel.since = Date.now(); keepTick(m, w); } else clearInterval(w.keepTimer); redraw(); };
+        p.append(" ", kp);
         const tick = (first) => { if (!w.tunnel) return; const sLeft = Math.max(0, Math.round((w.tunnel.until - Date.now()) / 1000)); left.textContent = `${Math.floor(sLeft / 60)}:${String(sLeft % 60).padStart(2, "0")}`;
-          if (!sLeft) { w.tunnel = null; redraw(); } else if (first || left.isConnected) setTimeout(tick, 1000); }; // the first tick runs before the box is on the page
+          if (!sLeft && !w.keep) { w.tunnel = null; redraw(); } else if (!sLeft) redraw(); else if (first || left.isConnected) setTimeout(tick, 1000); }; // the first tick runs before the box is on the page
         tick(true);
       }
       if (w.probe) {
