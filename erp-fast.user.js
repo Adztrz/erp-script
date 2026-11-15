@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.81
+// @version      2.82
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -1817,6 +1817,7 @@
       .erp-dock .map .brief.replaying { box-shadow: inset 0 0 0 1px #e0b252; } .erp-dock .map .brief.replaying .replay span { color: #e0b252; }
       .erp-dock .map .mpin { position: absolute; z-index: 5; transform: translate(-50%, calc(-100% - 8px)); padding: 3px 7px; border-radius: 4px; background: var(--bone); color: #07090b; font: 600 11px/1.3 Inter, system-ui, sans-serif; white-space: nowrap; pointer-events: none; max-width: 90%; overflow: hidden; text-overflow: ellipsis; }
       .erp-dock .map .mpin::after { content: ""; position: absolute; left: 50%; bottom: -8px; width: 2px; height: 8px; margin-left: -1px; background: var(--bone); }
+      .erp-dock .map .pan { position: absolute; inset: 0; will-change: transform; }
       .erp-dock .map .ring { position: absolute; border-radius: 50%; box-shadow: inset 0 0 0 1.5px rgba(233,225,220,.7); pointer-events: none; }
       .erp-dock .map .ring.half { box-shadow: none; border: 1px dashed rgba(233,225,220,.45); }
       .erp-dock .mdot { position: absolute; width: 11px; height: 11px; margin: -5.5px 0 0 -5.5px; padding: 0; border: 1.5px solid rgba(7,9,11,.9); border-radius: 50%; background: var(--green); cursor: pointer;
@@ -3465,7 +3466,7 @@
       z = Math.max(8, Math.min(T.max, z + (box.zoom || 0)));
       const size = 256 * 2 ** z, [cx, cy] = box.ctr ? [box.ctr[0] * size, box.ctr[1] * size] : proj(mid, z), left = cx - w / 2, top = cy - h / 2 - (box.ctr ? 0 : 6), tiles = el("div", "tiles");
       box.geo = { size, cx, cy, left, top }; panMap(box);
-      for (let tx = Math.floor(left / 256); tx * 256 < left + w; tx++) for (let ty = Math.floor(top / 256); ty * 256 < top + h; ty++) {
+      for (let tx = Math.floor((left - 256) / 256); tx * 256 < left + w + 256; tx++) for (let ty = Math.floor((top - 256) / 256); ty * 256 < top + h + 256; ty++) {
         const img = el("img"); img.src = T.url(tx, ty, z); img.alt = ""; img.draggable = false; img.style.left = `${tx * 256 - left}px`; img.style.top = `${ty * 256 - top}px`; tiles.append(img); }
       const tip = el("span", "tip"); tip.hidden = true;
       waitForBrief(box);
@@ -3484,7 +3485,7 @@
       const bar = replayBar(box);
       const scene = briefScene({ pts: kinds, at: (p) => { const [x, y] = proj(p, z); return [x - left, y - top]; }, mpp, w, h, about: { ...about, replay: rp, bar: !!bar } });
       box.scene = scene;
-      box.replaceChildren(tiles, ...briefUnder(scene), ...dots, ...briefOver(scene), tip, zoom, el("span", "attr", T.attr));
+      mapLayers(box, [tiles, ...briefUnder(scene), ...dots, ...briefOver(scene), tip, zoom, el("span", "attr", T.attr)]);
       if (bar) box.querySelector(".brief").append(bar);
       swapTiles(box, tiles, { z, kind, left, top, id: `area:${box.getAttribute("aria-label")}` });
     }
@@ -3500,7 +3501,7 @@
       box.geo = { size, cx, cy, left, top }; panMap(box);
       const [mx, my] = world(n.c), hx = mx - left, hy = my - top; // this customer, wherever the map has been dragged
       const tiles = el("div", "tiles");
-      for (let tx = Math.floor(left / 256); tx * 256 < left + w; tx++) for (let ty = Math.floor(top / 256); ty * 256 < top + h; ty++) {
+      for (let tx = Math.floor((left - 256) / 256); tx * 256 < left + w + 256; tx++) for (let ty = Math.floor((top - 256) / 256); ty * 256 < top + h + 256; ty++) {
         const img = el("img"); img.src = T.url(tx, ty, z); img.alt = ""; img.draggable = false; img.style.left = `${tx * 256 - left}px`; img.style.top = `${ty * 256 - top}px`; tiles.append(img); }
       const ring = (f, cls) => { const d = el("span", `ring ${cls}`), R = (radius * f) / mpp; d.style.cssText = `width:${2 * R}px;height:${2 * R}px;left:${hx - R}px;top:${hy - R}px`; return d; };
       const tip = el("span", "tip"); tip.hidden = true;
@@ -3536,17 +3537,24 @@
         rings: [[hx, hy, radius / 2 / mpp, `${radius / 2} m`], [hx, hy, radius / mpp, radius < 1000 ? `${radius} m` : "1 km"]],
         me: [hx, hy, r.nama || r.username], about: { what: `Radius ${radius < 1000 ? `${radius} m` : "1 km"} dari ${r.nama || r.username}`, near: r } });
       box.scene = scene;
-      box.replaceChildren(tiles, ring(0.5, "half"), ring(1, ""), ...briefUnder(scene), ...dots, me, ...briefOver(scene), tip, zoom, el("span", "attr", T.attr));
+      mapLayers(box, [tiles, ring(0.5, "half"), ring(1, ""), ...briefUnder(scene), ...dots, me, ...briefOver(scene), tip, zoom, el("span", "attr", T.attr)]);
       swapTiles(box, tiles, { z, kind, left, top, id: `near:${r.username}` });
     }
     // Drag a map to pan it: the picture follows the pointer, and every ~100 px (and on release) the tiles are drawn
     // again around the new centre, kept as a share of the world so zooming keeps the place. A press that moves less
     // than 4 px is still a click (a dot opens its customer). ◎ goes back to the start.
+    // What moves with the map goes in one layer (.pan) and a drag moves only that layer, on the graphics card: moving the
+    // ~900 dots and labels one by one cost ~23 ms a step on a big router. The strip, legend and buttons stay put.
+    const MAP_FIXED = ".zoom, .seg, .attr, .tip, .brief, .foot, .sharesheet";
+    function mapLayers(box, items) {
+      const pan = el("div", "pan"), fixed = [];
+      for (const c of items) if (c.matches(MAP_FIXED)) fixed.push(c); else pan.append(c);
+      box.replaceChildren(pan, ...fixed);
+    }
     function panMap(box) {
       if (box.panReady) return; box.panReady = true;
       let start = null, moved = false;
-      const layer = () => [...box.children].filter((c) => !c.matches(".zoom, .seg, .attr, .tip, .brief, .foot, .sharesheet"));
-      const shift = (dx, dy) => layer().forEach((c) => { c.style.translate = dx || dy ? `${dx}px ${dy}px` : ""; });
+      const shift = (dx, dy) => { const p = box.querySelector(":scope > .pan"); if (p) p.style.transform = dx || dy ? `translate3d(${dx}px, ${dy}px, 0)` : ""; };
       const commit = (dx, dy) => { const g = box.geo; if (!g) return; box.ctr = [(g.cx - dx) / g.size, (g.cy - dy) / g.size]; box.redraw?.(); };
       box.addEventListener("pointerdown", (e) => {
         if (e.button !== 0 || e.target.closest(".zoom, .seg")) return;
@@ -3557,7 +3565,7 @@
         const dx = e.clientX - start.x, dy = e.clientY - start.y;
         if (!moved && Math.hypot(dx, dy) < 4) return;
         if (!moved) { moved = true; box.classList.add("panning"); try { box.setPointerCapture(e.pointerId); } catch {} }
-        if (Math.hypot(dx, dy) > 100) { commit(dx, dy); start = { x: e.clientX, y: e.clientY }; return; } // fresh tiles for the new edge
+        if (Math.abs(dx) > 240 || Math.abs(dy) > 240) { commit(dx, dy); start = { x: e.clientX, y: e.clientY }; return; } // past the tile margin: fresh tiles around the new centre
         shift(dx, dy);
       });
       const end = (e) => {
@@ -3570,7 +3578,7 @@
       box.addEventListener("pointerup", end); box.addEventListener("pointercancel", end);
       // a click on the map itself (not a dot, a button or a drag) copies that spot's Google Maps link, for a technician
       box.addEventListener("click", (e) => {
-        const g = box.geo; if (e.defaultPrevented || e.target !== box || !g || g.left == null) return;
+        const g = box.geo; if (e.defaultPrevented || !(e.target === box || e.target.matches(".pan, .tiles")) || !g || g.left == null) return;
         const r = box.getBoundingClientRect(), px = e.clientX - r.left, py = e.clientY - r.top, x = g.left + px, y = g.top + py;
         const lng = (x / g.size) * 360 - 180, lat = (Math.atan(Math.sinh(Math.PI * (1 - (2 * y) / g.size))) * 180) / Math.PI, url = `https://www.google.com/maps?q=${lat.toFixed(6)},${lng.toFixed(6)}`;
         box.querySelector(".mpin")?.remove();
@@ -3607,20 +3615,20 @@
         box.classList.add("still"); // same view, or panned: no pop
         if (prev.left === v.left && prev.top === v.top && prev.tiles !== tiles) { // a data refresh: keep the drawn tiles, and a loading screen or old view still on its way
           tiles.replaceWith(prev.tiles); box.prevView.tiles = lastView.tiles = prev.tiles;
-          for (const x of box.htBusy || []) if (!x.isConnected) box.insertBefore(x, prev.tiles);
+          for (const x of box.htBusy || []) if (!x.isConnected) prev.tiles.before(x);
         }
         return;
       }
       const ready = Promise.race([Promise.all([...tiles.querySelectorAll("img")].map((im) => (im.complete ? 0 : new Promise((ok) => { im.onload = im.onerror = ok; })))), new Promise((ok) => setTimeout(ok, 900))]);
       tiles.classList.add("ht-wait");
       if (!prev) { // first view: the loading screen
-        const load = el("div", "ht-load"); box.insertBefore(load, tiles); box.htBusy = [load];
+        const load = el("div", "ht-load"); tiles.before(load); box.htBusy = [load];
         ready.then(() => { box.htBusy = []; tiles.classList.replace("ht-wait", "ht-in"); load.classList.add("gone"); setTimeout(() => { load.remove(); tiles.classList.remove("ht-in"); }, 520); });
         return;
       }
       // the old picture, moved to where the new view puts it: a point at old-screen x lands at s·(x + oldLeft) − newLeft
       const ghost = prev.tiles, s = 2 ** (v.z - prev.z);
-      ghost.classList.remove("ht-in", "ht-wait", "ht-out"); ghost.classList.add("ghost"); ghost.style.transform = ""; box.insertBefore(ghost, tiles); box.htBusy = [ghost];
+      ghost.classList.remove("ht-in", "ht-wait", "ht-out"); ghost.classList.add("ghost"); ghost.style.transform = ""; tiles.before(ghost); box.htBusy = [ghost];
       if (prev.kind === v.kind) { void ghost.offsetWidth; ghost.style.transform = `translate(${s * prev.left - v.left}px, ${s * prev.top - v.top}px) scale(${s})`; } // after a layout, so it moves
       ready.then(() => { box.htBusy = []; tiles.classList.replace("ht-wait", "ht-in"); ghost.classList.add("ht-out"); setTimeout(() => { ghost.remove(); ghost.style.transform = ""; ghost.classList.remove("ghost", "ht-out"); tiles.classList.remove("ht-in"); }, 520); });
     }
