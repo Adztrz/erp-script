@@ -101,6 +101,28 @@ Every Dock map (Nearby, a router's offline customers, a PON port) reads as a bri
 - **Ctrl + mouse wheel** zooms in and out around the pointer (without zooming the page); drag to pan, ◎ to recentre.
 - **Sat** switches between the street map and satellite. Google's satellite tiles can't go into the picture, so a satellite share has a plain dark background.
 
+## Incidents (3.0)
+
+An outage becomes one **incident** with its own record, shown at the top of the Dock while it's open:
+
+- **Router incidents** open when the Outage radar sees a router well below its usual level, and close by themselves when it's back. Deeper drops (dropping → down) are logged.
+- **PON incidents** open when 3 or more customers of one PON port (and a quarter of the port) go down in the same drop-log reading, and close when 80% of them are back online.
+- **Desktop alerts:** switch them on once (*Desktop alerts for new incidents*). The ERP tab that took the reading sends one alert per new incident and per recovery, even with the Dock closed; clicking it opens the incident.
+- **The incident card:** since when, how many affected now and at the worst, a **timeline** (what the Dock saw, plus your notes), **Add note**, **Mark resolved**. A router incident links to its router view (who's offline, cause & dispatch, report, map); a PON incident shows cause & dispatch, the report and the map right there. SPKs made and reports sent from the card are added to the timeline.
+- Kept 7 days in the browser.
+
+## Shift journal (3.0)
+
+**Tools → Shift journal** drafts this shift's entries for the ERP's **Jurnal Piket NOC**: each incident (time, what happened, your notes, when it came back), and what was done from the Dock (SPKs, Fix RO, reboots). Each draft can be edited (category, text, reference) and recorded with **Catat**, the journal's own entry; **Skip** leaves it out. **Copy summary** gives a handover line for closing the shift, which stays in the ERP.
+
+## Development
+
+The script is built from `src/`: parts of the one script cut at its own section headings, joined in file-name order by `node build.mjs` into `erp-fast.user.js` (the file Tampermonkey installs). The parts aren't modules; joining them gives back the same code, so a part can use anything from another.
+
+- `node build.mjs` builds; `node build.mjs --check` fails when the built file isn't what `src/` gives.
+- `node --test` runs the tests in `test/`: the build, the router bridge's scheduling and address check, replay, down-for times and Fix RO's router matching.
+- `git config core.hooksPath hooks` once, and every commit is checked; GitHub runs the same check on every push.
+
 ## Router bridge (Remote without the ERP)
 
 `erp-router-bridge.user.js` is a second, optional userscript. With it, **Remote** opens a customer's modem page without the ERP's Remote ONU, so a wrong RO in the ERP doesn't matter: the Dock finds the session's real RO from RADIUS, and the bridge opens a temporary port on that RO itself through RouterOS 7's REST API.
