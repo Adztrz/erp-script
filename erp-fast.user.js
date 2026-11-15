@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.86
+// @version      2.87
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -1970,6 +1970,7 @@
       .erp-dock .modem form { display: grid; gap: 8px; margin-top: 10px; }
       .erp-dock .pw { display: flex; align-items: center; gap: 8px; margin-top: 8px; padding: 8px 10px; border-radius: 8px; background: var(--raised); color: var(--paper); font: 13px "JetBrains Mono", ui-monospace, monospace; }
       .erp-dock .pw span { flex: 1; overflow-wrap: anywhere; }
+      .erp-dock .loginform { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; } .erp-dock .loginform .field { height: 30px; flex: 1 1 110px; min-width: 0; }
       .erp-dock .rx { font-variant-numeric: tabular-nums; }
       .erp-dock .webbox .facts { margin: 8px 0; } .erp-dock .webbox .note { margin: 6px 0; } .erp-dock .webbox .note a { color: var(--paper); overflow-wrap: anywhere; }
       .erp-dock .note.warn { color: #e0b252; }
@@ -2676,6 +2677,64 @@
     }
     // the modem box: on a customer's card, or alone for a modem no customer is linked to
     const mods = new Map(); // key → { el, st, live, pw, form, msg }
+    // ---- Remote: one button to the modem's own page ----
+    // The way in is chosen once per PC (kept in this browser): the NOC WireGuard (the modem's IP straight away) or the
+    // ERP's 5-minute port on the RO (logged; works from any PC). Remote finds the live session, opens the page that
+    // way, and copies the modem's login password when one is saved for its model.
+    const REMOTE_WAY = "erpDock.remoteWay", LOGINS = "erpDock.modemLogins"; // the logins stay in this browser, never in the script
+    const modelKey = (x) => fold(x || "").trim();
+    function loginFor(model) { // the model's own login, else one saved for its brand (the first word, e.g. "zte")
+      const all = ls.get(LOGINS, {}), k = modelKey(model); if (!k) return null;
+      return all[k] ? { ...all[k], key: k } : all[k.split(" ")[0]] ? { ...all[k.split(" ")[0]], key: k.split(" ")[0] } : null;
+    }
+    async function remoteGo(r) {
+      const key = `u:${r.username}`, m = mods.get(key); if (!m) return;
+      const way = ls.get(REMOTE_WAY, "");
+      if (!way) { m.askWay = true; modemDraw(m); m.el.scrollIntoView({ block: "nearest" }); return; }
+      m.askWay = false;
+      let win = null; try { win = window.open("about:blank", "_blank"); if (win) win.opener = null; } catch { /* blocked: links below instead */ }
+      const redraw = () => modemDraw(m), go = (url) => { if (win && !win.closed) win.location.replace(url); else window.open(url, "_blank", "noopener"); };
+      m.msg = { text: "Remote: finding the modem…" }; redraw(); m.el.scrollIntoView({ block: "nearest" });
+      await openWeb(m, r.username, redraw);
+      const w = m.web, s = w.sess, { ont, dev } = modemOf(r), login = loginFor(ont?.model || dev?.model);
+      if (!s) { win?.close(); m.msg = { bad: true, text: `Remote: not online now (no PPPoE session), so the modem can't be reached.${ont || dev ? " Reboot still works through TR-069 or the OLT." : ""}` }; return redraw(); }
+      const copied = login ? " Login password copied." : "";
+      if (login) navigator.clipboard?.writeText(login.p).catch(() => {});
+      if (way === "wg") { go(`http://${s.addr}/`); m.msg = { good: true, text: `Remote: opened http://${s.addr}/ (WireGuard).${copied}` }; return redraw(); }
+      if (!w.id || !w.erpFound) { go(`http://${s.addr}/`); m.msg = { text: `Remote: the ERP can't find this session (customer on another RO?), so the 5-minute access isn't possible; opened http://${s.addr}/, which needs the NOC WireGuard.${copied}` }; return redraw(); }
+      try {
+        const j = await api("/api/noc/remote-modem", { customerId: w.id }), min = Number(j.menit) > 0 ? Number(j.menit) : 5, secs = Number(j.kedaluwarsaDetik) || min * 60;
+        w.tunnel = { url: String(j.url), until: Date.now() + secs * 1000, note: j.keterangan || "" }; go(w.tunnel.url);
+        m.msg = { good: true, text: `Remote: opened through the ERP's 5-minute access.${copied}` };
+      } catch (err) { win?.close(); m.msg = { bad: true, text: `Remote: access not opened (${err.message}).` }; }
+      redraw();
+    }
+    function remoteWayRow(m, after) {
+      const row = el("div", "actions"), cur = ls.get(REMOTE_WAY, "");
+      for (const [v, label] of [["wg", "NOC WireGuard on this PC"], ["erp", "ERP's 5-minute access"]]) {
+        const b = el("button", `btn${cur === v ? " primary" : ""}`, label); b.type = "button"; b.dataset.k = `${m.key}way${v}`;
+        b.onclick = () => { ls.set(REMOTE_WAY, v); m.askWay = false; if (after) after(); else modemDraw(m); }; row.append(b); }
+      return row;
+    }
+    function loginRow(m, model) {
+      const box = el("span"), f = m.login, saved = loginFor(model);
+      if (f) { // the form: model (or just the brand, for all its models), user, password
+        const inp = (k, ph, type = "text") => { const i = el("input", "field"); i.type = type; i.placeholder = ph; i.value = f[k] || ""; i.autocomplete = "off"; i.dataset.k = `${m.key}lg${k}`; i.setAttribute("aria-label", ph); i.oninput = () => { f[k] = i.value; }; return i; };
+        const save = el("button", "copy", "Save"); save.type = "button";
+        save.onclick = () => { const k = modelKey(f.model); if (!k || !f.u) return; const all = ls.get(LOGINS, {}); all[k] = { u: f.u.trim(), p: f.p || "" }; ls.set(LOGINS, all); m.login = null; modemDraw(m); };
+        const cancel = el("button", "copy", "Cancel"); cancel.type = "button"; cancel.onclick = () => { m.login = null; modemDraw(m); };
+        const form = el("span", "loginform"); form.append(inp("model", "model, or brand for all"), inp("u", "user"), inp("p", "password", "password"), save, cancel); box.append(form);
+        return box; }
+      if (saved) {
+        box.append(el("span", "mono", `${saved.u} · ${"•".repeat(Math.min(8, saved.p.length || 1))}`));
+        const cu = el("button", "copy", "Copy user"); cu.type = "button"; cu.onclick = () => copy(saved.u, cu);
+        const cp = el("button", "copy", "Copy password"); cp.type = "button"; cp.onclick = () => copy(saved.p, cp);
+        const ed = el("button", "copy", "Edit"); ed.type = "button"; ed.onclick = () => { m.login = { model: saved.key, u: saved.u, p: saved.p }; modemDraw(m); };
+        const rm = el("button", "copy", "Remove"); rm.type = "button"; rm.onclick = () => { const all = ls.get(LOGINS, {}); delete all[saved.key]; ls.set(LOGINS, all); modemDraw(m); };
+        box.append(cu, cp, ed, rm); if (saved.key !== modelKey(model)) box.append(el("span", "sub", ` (saved for all ${saved.key.toUpperCase()})`)); return box; }
+      const add = el("button", "copy", model ? `Save a login for ${model}` : "Save a login"); add.type = "button";
+      add.onclick = () => { m.login = { model: model || "", u: "", p: "" }; modemDraw(m); }; box.append(add); return box;
+    }
     function modemBox(key, r) {
       let m = mods.get(key);
       if (!m) { m = { el: el("div", "near modem rise"), rb: { armed: 0 }, wf: { armed: 0 }, key, r }; m.el.style.setProperty("--i", "3"); mods.set(key, m); } // reboot and WiFi each arm on their own
@@ -2689,7 +2748,11 @@
       if (!onts || !acs) { parts.push(el("p", "note ld", "Looking the modem up on the OLTs… (the first time takes about 10 seconds)")); m.el.replaceChildren(...parts); return; }
       const { sn, ont, dev } = m.r ? modemOf(m.r) : { sn: m.key, ont: onts.bySn.get(m.key), dev: acs.bySn.get(m.key) };
       if (!ont && !dev) { parts.push(el("p", "note", sn ? `${sn} isn't on any OLT's list or on TR-069.` : "No modem serial on file, and no ONT or TR-069 modem logs in with this username."));
-        if (m.r) parts.push(webSection(m, m.r.username, null, redraw)); m.el.replaceChildren(...parts); return; }
+        if (m.r) { const b = el("button", "btn primary", "Remote ↗"); b.type = "button"; b.dataset.k = `${m.key}remote`; b.onclick = () => remoteGo(m.r); const a = el("div", "actions"); a.append(b); parts.push(a);
+          if (m.askWay) parts.push(el("p", "note", "How does this PC reach modems? Asked once; change it under Web page."), remoteWayRow(m, () => remoteGo(m.r)));
+          parts.push(webSection(m, m.r.username, null, redraw)); }
+        if (m.msg) parts.push(el("p", `note ${m.msg.bad ? "late" : m.msg.good ? "good" : ""}`, m.msg.text));
+        m.el.replaceChildren(...parts); return; }
       const live = m.live, st = live?.status || ont?.st, pill = el("span", "pill");
       pill.append(el("span", `dot ${ontState({ st })}`), st ? st[0].toUpperCase() + st.slice(1) : "TR-069 only"); head.append(pill);
       const facts = el("dl", "facts"), fact = (label, value, opts = {}) => { if (!value) return; const dd = el("dd", opts.cls || null);
@@ -2713,9 +2776,11 @@
       if (dev) fact("TR-069", `last report ${when(dev.inform) || "never"}${dev.ssid ? ` · WiFi ${dev.ssid}${dev.ssid5 ? ` / ${dev.ssid5}` : ""}` : ""}`);
       else fact("TR-069", "not connected: WiFi can't be changed from here, reboot goes through the OLT");
       if (m.r && ont?.pppoe && lower(ont.pppoe) !== lower(m.r.username)) fact("Note", `the OLT has this ONT under ${ont.pppoe}`, { cls: "warn" });
+      fact("Login", loginRow(m, ont?.model || dev?.model || ""));
       parts.push(facts);
       // actions
       const acts = el("div", "actions"), btn = (label, fn, k) => { const b = el("button", "btn", label); b.type = "button"; b.onclick = fn; b.dataset.k = `${m.key}${k}`; acts.append(b); return b; };
+      if (m.r) { const b = btn("Remote ↗", () => remoteGo(m.r), "remote"); b.classList.add("primary"); b.title = "Open the modem's page (R on the card)"; }
       if (dev) {
         btn(m.pw ? "Hide password" : m.pwBusy ? "Opening…" : "WiFi password", async () => {
           if (m.pw) { m.pw = null; return redraw(); }
@@ -2738,6 +2803,7 @@
         rb.classList.remove("wide", "primary"); if (!rb.classList.contains("arm")) rb.classList.add("btn"); acts.append(rb);
       }
       parts.push(acts);
+      if (m.askWay) parts.push(el("p", "note", "How does this PC reach modems? Asked once; change it under Web page."), remoteWayRow(m, () => remoteGo(m.r)));
       { const u = m.r?.username || ont?.pppoe || dev?.pppoe; if (u) parts.push(webSection(m, u, dev, redraw)); }
       if (m.pw) { const box = el("div", "pw"); if (m.pw.none) box.append(el("span", null, "No WiFi password on record for this modem."));
         else { box.append(el("span", null, `${m.pw.ssid ? `${m.pw.ssid} · ` : ""}${m.pw.sandi}`)); const c = el("button", "copy", "Copy"); c.type = "button"; c.onclick = () => copy(m.pw.sandi, c); box.append(c); }
@@ -2755,6 +2821,7 @@
     function webSection(m, username, dev, redraw) {
       const w = m.web, box = el("div", "webbox");
       const head = el("div", "row"), e = el("div", "eyebrow"); e.style.margin = "12px 0 0"; e.append("Web page"); head.append(e); box.append(head);
+      if (ls.get(REMOTE_WAY, "")) { const ch = el("button", "copy", `Remote: ${ls.get(REMOTE_WAY) === "wg" ? "WireGuard" : "ERP 5-min"} · change`); ch.type = "button"; ch.onclick = () => { m.askWay = true; modemDraw(m); }; head.append(ch); }
       if (!w) {
         const b = el("button", "btn", "Find the modem's address"); b.type = "button"; b.dataset.k = `${m.key}web`; b.style.marginTop = "8px";
         b.onclick = () => openWeb(m, username, redraw); box.append(b); return box;
@@ -3428,7 +3495,7 @@
       const tech = techBox(r);
       const acts = el("div", "actions rise"); acts.style.setProperty("--i", "2");
       const act = (label, fn, primary) => { const b = el("button", `btn${primary ? " primary" : ""}`, label); b.type = "button"; b.onclick = fn; acts.append(b); };
-      act("Open in LDN", () => openIn.ldn(r), true); act("Invoices", () => openIn.invoices(r)); act("Map Terpadu", () => openIn.map(r)); act("Master", () => openIn.master(r));
+      act("Open in LDN", () => openIn.ldn(r), true); act("Remote ↗", () => remoteGo(r)); act("Invoices", () => openIn.invoices(r)); act("Map Terpadu", () => openIn.map(r)); act("Master", () => openIn.master(r));
       const loc = where(r); if (loc) { const a = el("a", "btn", "Google Maps"); a.href = `https://www.google.com/maps?q=${loc.lat},${loc.lng}`; a.target = "_blank"; a.rel = "noreferrer"; acts.append(a); }
       const bill = payBox(r); billDraw(bills.get(r.username));
       wrap.append(back, who, facts, tech, acts, forensicBox(r), bill, modemBox(`u:${r.username}`, r), nearView(r));
@@ -4017,6 +4084,7 @@
       if (e.altKey && !e.ctrlKey && !e.metaKey && e.key.toLowerCase() === "k") { e.preventDefault(); panel ? close() : open(); return; }
       if (!panel || !panel.contains(document.activeElement) && document.activeElement !== document.body) return;
       // F over the map: full screen (the search box always has focus, so over the map F wins over typing)
+      if ((e.key === "r" || e.key === "R") && view.card && !e.ctrlKey && !e.metaKey && !e.altKey && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName ?? "")) { e.preventDefault(); remoteGo(view.card); return; }
       if ((e.key === "f" || e.key === "F") && !e.ctrlKey && !e.metaKey && !e.altKey && (panel.querySelector(".map:hover") || fullMap())
         && (document.activeElement === panel.querySelector(".top input") || !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName ?? ""))) { e.preventDefault(); e.stopPropagation(); toggleFull(fullMap() || panel.querySelector(".map:hover")); return; }
       if (e.key === "Escape" && fullMap()) { e.preventDefault(); e.stopPropagation(); toggleFull(fullMap()); return; }
