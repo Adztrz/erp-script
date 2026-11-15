@@ -20,6 +20,7 @@
         const now = Object.keys(d.off), gone = now.filter((u) => !was.has(u)), back = [...was].filter((u) => !d.off[u] && d.u[u]);
         d.ev = [...(d.ev || []).filter((e) => e[0] > t - 86400000), [t, gone, back]];
         d.at = t; idbPut("drops", d); drops = d;
+        incDrops(gone, d).catch(() => {});
       } catch { /* the next reading tries again */ }
     }
     const dropsOf = async () => (drops && Date.now() - drops.at < DROP_EVERY) ? drops : (drops = (await idbGet("drops")) || drops);

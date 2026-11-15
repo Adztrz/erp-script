@@ -286,6 +286,13 @@
       .erp-dock .modem form { display: grid; gap: 8px; margin-top: 10px; }
       .erp-dock .pw { display: flex; align-items: center; gap: 8px; margin-top: 8px; padding: 8px 10px; border-radius: 8px; background: var(--raised); color: var(--paper); font: 13px "JetBrains Mono", ui-monospace, monospace; }
       .erp-dock .pw span { flex: 1; overflow-wrap: anywhere; }
+      /* incidents and the shift journal */
+      .erp-dock .item.incident { box-shadow: inset 2px 0 0 var(--red); }
+      .erp-dock .timeline .tl { display: grid; grid-template-columns: 44px 1fr; gap: 8px; padding: 3px 0; font-size: 13px; color: var(--paper); }
+      .erp-dock .timeline .tl.auto { color: var(--body); } .erp-dock .timeline .tl .mono { color: var(--muted); font-size: 12px; }
+      .erp-dock .timeline .field { width: 100%; margin-top: 8px; height: 34px; }
+      .erp-dock .jp { display: grid; gap: 6px; } .erp-dock .jp textarea.field { min-height: 64px; height: auto; padding: 8px 10px; resize: vertical; font: 13px/1.45 Inter, system-ui, sans-serif; }
+      .erp-dock .jp select.field { height: 32px; } .erp-dock .jp.done { opacity: .55; }
       .erp-dock .copy.on { color: var(--green); box-shadow: inset 0 0 0 1px var(--green); }
       .erp-dock .loginform { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; } .erp-dock .loginform .field { height: 30px; flex: 1 1 110px; min-width: 0; }
       .erp-dock .rx { font-variant-numeric: tabular-nums; }

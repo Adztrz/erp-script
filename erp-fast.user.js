@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.99
+// @version      3.0
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -1970,6 +1970,13 @@
       .erp-dock .modem form { display: grid; gap: 8px; margin-top: 10px; }
       .erp-dock .pw { display: flex; align-items: center; gap: 8px; margin-top: 8px; padding: 8px 10px; border-radius: 8px; background: var(--raised); color: var(--paper); font: 13px "JetBrains Mono", ui-monospace, monospace; }
       .erp-dock .pw span { flex: 1; overflow-wrap: anywhere; }
+      /* incidents and the shift journal */
+      .erp-dock .item.incident { box-shadow: inset 2px 0 0 var(--red); }
+      .erp-dock .timeline .tl { display: grid; grid-template-columns: 44px 1fr; gap: 8px; padding: 3px 0; font-size: 13px; color: var(--paper); }
+      .erp-dock .timeline .tl.auto { color: var(--body); } .erp-dock .timeline .tl .mono { color: var(--muted); font-size: 12px; }
+      .erp-dock .timeline .field { width: 100%; margin-top: 8px; height: 34px; }
+      .erp-dock .jp { display: grid; gap: 6px; } .erp-dock .jp textarea.field { min-height: 64px; height: auto; padding: 8px 10px; resize: vertical; font: 13px/1.45 Inter, system-ui, sans-serif; }
+      .erp-dock .jp select.field { height: 32px; } .erp-dock .jp.done { opacity: .55; }
       .erp-dock .copy.on { color: var(--green); box-shadow: inset 0 0 0 1px var(--green); }
       .erp-dock .loginform { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; } .erp-dock .loginform .field { height: 30px; flex: 1 1 110px; min-width: 0; }
       .erp-dock .rx { font-variant-numeric: tabular-nums; }
@@ -2400,7 +2407,7 @@
     const hhmm = (t) => new Date(t).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
     async function radarTick(force) {
       if (radarOff && !force) return;
-      const last = Number(ls.get(RADAR_AT, 0));
+      const last = Number(ls.get(RADAR_AT, 0)); let fetched = false;
       if (force || Date.now() - last >= RADAR_EVERY) {
         ls.set(RADAR_AT, Date.now()); // the other tabs wait
         try {
@@ -2409,7 +2416,7 @@
           for (const f of ov.feed || []) c[f.nasname] = Number(f.open) || 0;
           hist.s = [...hist.s.filter((x) => x.t > Date.now() - RADAR_KEEP), { t: Date.now(), c }];
           hist.feed = (ov.feed || []).map((f) => ({ ip: f.nasname, name: f.shortname, open: Number(f.open) || 0, healthy: !!f.healthy, newest: f.newest }));
-          hist.at = Date.now(); radarOff = "";
+          hist.at = Date.now(); radarOff = ""; fetched = true;
           await idbPut("radar", hist);
         } catch (e) {
           ls.set(RADAR_AT, last);
@@ -2419,6 +2426,7 @@
       }
       const hist = await idbGet("radar");
       radar = hist ? assess(hist) : null;
+      if (fetched) incRadar(radar).catch(() => {}); // only the tab that took the reading: one alert, not one per tab
       if (fab) { const a = radar?.alerts ?? []; fab.classList.toggle("alert", a.length > 0); fab.title = a.length ? `Dock (Alt+K): outage on ${a.map((x) => x.name).join(", ")}` : "Dock (Alt+K)"; }
       if (panel && (view.mode === "radar" || (!view.q.trim() && !view.card && !view.mode)) && radar?.at !== radarDrawn) drawBody();
     }
@@ -2480,6 +2488,7 @@
         const now = Object.keys(d.off), gone = now.filter((u) => !was.has(u)), back = [...was].filter((u) => !d.off[u] && d.u[u]);
         d.ev = [...(d.ev || []).filter((e) => e[0] > t - 86400000), [t, gone, back]];
         d.at = t; idbPut("drops", d); drops = d;
+        incDrops(gone, d).catch(() => {});
       } catch { /* the next reading tries again */ }
     }
     const dropsOf = async () => (drops && Date.now() - drops.at < DROP_EVERY) ? drops : (drops = (await idbGet("drops")) || drops);
@@ -2607,6 +2616,204 @@
       b.onclick = () => { view.mode = "radar"; view.nas = null; view.card = null; drawBody(); }; return b;
     }
 
+    // ---- Incidents ----
+    // An outage becomes one incident with its own record: a router well below its usual level (the radar), or a PON
+    // port where several customers went down in the same drop-log reading. The tab that took the reading opens,
+    // updates and closes them (so one desktop alert, not one per tab); each keeps a timeline of what happened and what
+    // was done, which the shift journal turns into Jurnal Piket entries. Kept 7 days, in this browser.
+    const INC_KEEP = 7 * 86400000, NOTIFY = "erpDock.notify";
+    let incidents = null;
+    const incList = async () => (incidents = (await idbGet("incidents")) || []);
+    const incSave = (l) => { incidents = l.filter((x) => x.state === "open" || (x.end || x.start) > Date.now() - INC_KEEP); idbPut("incidents", incidents); };
+    const incOpen = () => (incidents || []).filter((x) => x.state === "open");
+    function notify(title, body, inc) { // a desktop alert, when you've switched them on
+      if (!ls.get(NOTIFY, false) || !("Notification" in window) || Notification.permission !== "granted") return;
+      try { const n = new Notification(title, { body, tag: inc ? `erpdock-${inc.id}` : undefined, silent: false });
+        n.onclick = async () => { window.focus(); n.close(); if (!panel) await open(); view.mode = "incident"; view.inc = inc?.id; view.card = null; drawBody(); }; } catch { /* not allowed here */ }
+    }
+    // from each radar reading: routers that dropped open an incident, deeper drops are logged, routers back close it
+    async function incRadar(r) {
+      if (!r || r.learning) return;
+      const l = await incList(), now = Date.now();
+      for (const x of r.alerts) {
+        let inc = l.find((i) => i.state === "open" && i.kind === "router" && i.key === x.ip);
+        const what = `${x.name} ${x.level === "down" ? "down" : "dropping"}: ${x.open} online, usually ${x.usual}`;
+        if (!inc) {
+          inc = { id: `${now.toString(36)}${Math.random().toString(36).slice(2, 5)}`, kind: "router", key: x.ip, title: `Router ${x.name}`, start: x.since || now, state: "open", level: x.level, affected: x.gap, peak: x.gap, log: [[x.since || now, what, 1]] };
+          l.push(inc); notify(`Gangguan: ${inc.title}`, `${x.gap} sesi hilang · ${x.open} online, biasanya ${x.usual}`, inc);
+        } else {
+          if (x.level !== inc.level) inc.log.push([now, what, 1]);
+          inc.level = x.level; inc.affected = x.gap; inc.peak = Math.max(inc.peak || 0, x.gap);
+        }
+      }
+      for (const inc of l.filter((i) => i.state === "open" && i.kind === "router" && !r.alerts.some((x) => x.ip === i.key))) {
+        const x = r.list.find((y) => y.ip === inc.key);
+        inc.state = "recovered"; inc.end = now; inc.affected = 0; inc.log.push([now, `Back to its usual level${x ? `: ${x.open} online` : ""}`, 1]);
+        notify(`Pulih: ${inc.title}`, `Setelah ${lama(now - inc.start)}`, inc);
+      }
+      incSave(l); incDrawn();
+    }
+    // from each drop-log reading: 3+ customers of one PON port going down together (and a quarter of the port) open a
+    // PON incident; it closes when 80% of them are back online
+    async function incDrops(gone, d) {
+      const l = await incList(), now = Date.now();
+      if (gone.length && customers && (onts || (await ontIndex().catch(() => null)))) {
+        const byUser = new Map(customers.map((c) => [lower(c.username), c])), ports = new Map();
+        for (const u of gone) { const c = byUser.get(u), o = c && modemOf(c).ont; if (!o) continue;
+          const k = `${o.pid}|${o.pon}`; if (!ports.has(k)) ports.set(k, { o, users: [] }); ports.get(k).users.push(u); }
+        for (const [k, p] of ports) {
+          const size = onts.rows.filter((x) => x.pid === p.o.pid && x.pon === p.o.pon).length;
+          let inc = l.find((i) => i.state === "open" && i.kind === "pon" && i.key === k);
+          if (inc) { const add = p.users.filter((u) => !inc.users.includes(u)); if (add.length) { inc.users.push(...add); inc.log.push([now, `${add.length} more down`, 1]); } }
+          else if (p.users.length >= 3 && p.users.length >= size * 0.25) {
+            inc = { id: `${now.toString(36)}${Math.random().toString(36).slice(2, 5)}`, kind: "pon", key: k, title: `${p.o.olt} · PON ${p.o.pon}`, start: d.off[p.users[0]]?.from || now, state: "open", users: [...p.users], size, log: [[now, `${p.users.length} of ${size} on the port down together`, 1]] };
+            l.push(inc); notify(`Gangguan: ${inc.title}`, `${p.users.length} dari ${size} pelanggan di port ini mati bersamaan`, inc);
+          }
+          if (inc) { inc.affected = inc.users.filter((u) => d.off[u]).length; inc.peak = Math.max(inc.peak || 0, inc.users.length); }
+        }
+      }
+      for (const inc of l.filter((i) => i.state === "open" && i.kind === "pon")) {
+        inc.affected = inc.users.filter((u) => d.off[u]).length;
+        if (inc.affected <= inc.users.length * 0.2) { inc.state = "recovered"; inc.end = now; inc.log.push([now, `${inc.users.length - inc.affected} of ${inc.users.length} back online`, 1]); notify(`Pulih: ${inc.title}`, `Setelah ${lama(now - inc.start)}`, inc); }
+      }
+      incSave(l); incDrawn();
+    }
+    // what was done, from the Dock's own buttons: into the incident on screen, and the shift's own list for the journal
+    function incidentNote(text) {
+      const inc = view.mode === "incident" && (incidents || []).find((x) => x.id === view.inc); if (!inc) return;
+      inc.log.push([Date.now(), text]); incSave(incidents);
+    }
+    function shiftNote(kategori, teks, rujukan = "") {
+      idbGet("shiftlog").then((l) => { l = (l || []).filter((x) => x.t > Date.now() - 2 * 86400000); l.push({ t: Date.now(), kategori, teks, rujukan }); idbPut("shiftlog", l); });
+    }
+    const incDrawn = () => { if (panel && (view.mode === "incident" || (!view.q.trim() && !view.card && !view.mode))) drawBody(); };
+
+    // the open incidents at the top of the home view
+    function incidentRows() {
+      const out = [], list = incOpen().sort((a, b) => b.start - a.start);
+      if (!incidents) { incList().then(() => incOpen().length && incDrawn()); return out; }
+      if (!list.length) return out;
+      const e = el("div", "eyebrow"); e.append("Incidents ", el("b", null, `${list.length} open`)); out.push(e);
+      list.forEach((inc, i) => {
+        const b = el("button", "item rise incident"); b.type = "button"; b.style.setProperty("--i", String(i));
+        b.append(el("span", "dot down"), el("span", "t", inc.title), el("span", "r", `${lama(Date.now() - inc.start)}`),
+          el("span", "s", inc.kind === "router" ? `${inc.affected} sessions below usual · since ${hhmm(inc.start)}` : `${inc.affected} of ${inc.users.length} still down · since ${hhmm(inc.start)}`));
+        b.onclick = () => { view.mode = "incident"; view.inc = inc.id; view.card = null; drawBody(); }; out.push(b);
+      });
+      if ("Notification" in window && (!ls.get(NOTIFY, false) || Notification.permission !== "granted")) {
+        const n = el("button", "copy", "Desktop alerts for new incidents"); n.type = "button";
+        n.onclick = async () => { const p = await Notification.requestPermission().catch(() => "denied"); ls.set(NOTIFY, p === "granted"); drawBody(); };
+        const p = el("p", "note"); p.append(n); out.push(p);
+      }
+      return out;
+    }
+
+    // one incident: what, since when, the timeline, notes, and the tools for it (cause & dispatch, report, map)
+    function incidentView(id) {
+      const inc = (incidents || []).find((x) => x.id === id), wrap = el("div", "card");
+      const back = el("button", "back", "← Back"); back.type = "button"; back.onclick = () => { view.mode = null; view.inc = null; drawBody(); }; wrap.append(back);
+      if (!inc) { wrap.append(el("p", "note", "This incident isn't kept any more.")); return wrap; }
+      const who = el("div", "who rise"), pill = el("span", "pill"); pill.append(el("span", `dot ${inc.state === "open" ? "down" : "on"}`), inc.state === "open" ? "Open" : "Recovered");
+      who.append(el("h3", null, inc.title), pill); wrap.append(who);
+      const facts = el("dl", "facts rise"), fact = (k, v) => { if (v) facts.append(el("dt", null, k), el("dd", null, v)); };
+      fact("Since", `${hhmm(inc.start)} · ${lama((inc.end || Date.now()) - inc.start)}${inc.end ? ` · recovered ${hhmm(inc.end)}` : ""}`);
+      fact("Affected", inc.kind === "router" ? `${inc.affected} sessions below usual now · ${inc.peak} at the worst` : `${inc.affected} of ${inc.users.length} still down · ${inc.size || "?"} on the port`);
+      wrap.append(facts);
+      // timeline and a note
+      const tl = el("div", "near timeline rise"), e = el("div", "eyebrow"); e.style.margin = "0 0 6px"; e.append("Timeline"); tl.append(e);
+      for (const [t, text, auto] of [...inc.log].sort((a, b) => a[0] - b[0])) { const r = el("div", `tl${auto ? " auto" : ""}`); r.append(el("span", "mono", hhmm(t)), el("span", null, text)); tl.append(r); }
+      const note = el("input", "field"); note.placeholder = "Add a note: who you called, what they found…"; note.dataset.k = `inc${inc.id}note`;
+      const add = () => { const v = note.value.trim(); if (!v) return; inc.log.push([Date.now(), v]); incSave(incidents); drawBody(); };
+      note.onkeydown = (ev) => { if (ev.key === "Enter") { ev.preventDefault(); add(); } };
+      const acts = el("div", "actions"), btn = (l, f) => { const b = el("button", "btn", l); b.type = "button"; b.onclick = f; acts.append(b); return b; };
+      btn("Add note", add);
+      if (inc.state === "open") btn("Mark resolved", () => { inc.state = "recovered"; inc.end = Date.now(); inc.log.push([inc.end, "Marked resolved"]); incSave(incidents); drawBody(); });
+      tl.append(note, acts); wrap.append(tl);
+      // the tools: for a router, its own view; for a PON, its customers here
+      if (inc.kind === "router") {
+        const go = el("button", "btn primary", "Who's offline, cause & dispatch, report, map"); go.type = "button"; go.style.marginTop = "8px";
+        go.onclick = () => { view.mode = "radar"; view.nas = inc.key; drawBody(); }; wrap.append(go);
+      } else if (customers) {
+        const byUser = new Map(customers.map((c) => [lower(c.username), c])), custs = inc.users.map((u) => byUser.get(u)).filter(Boolean);
+        const down = custs.filter((c) => drops?.off[lower(c.username)]);
+        if (down.length) wrap.append(causeBox(down, inc.title), reportBox({ title: inc.title, down: down.length, total: inc.size || custs.length, since: inc.start, custs: down }));
+        const pts = custs.map((c) => ({ c, p: where(c), on: !drops?.off[lower(c.username)] })).filter((z) => z.p);
+        if (pts.length) wrap.append(areaMap(pts, `Map of ${inc.title}`, { what: inc.title, since: inc.start }));
+      }
+      const rm = el("button", "copy", "Remove this incident"); rm.type = "button"; rm.style.marginTop = "10px";
+      rm.onclick = () => { incSave(incidents.filter((x) => x.id !== inc.id)); view.mode = null; view.inc = null; drawBody(); }; wrap.append(rm);
+      setTimeout(() => wrap.querySelector(`[data-k="inc${inc.id}note"]`) && document.activeElement === document.body && note.focus(), 0);
+      return wrap;
+    }
+    // ---- Shift journal: a draft for the ERP's Jurnal Piket NOC ----
+    // The incidents of the shift that's running (with their timelines) and what was done from the Dock (SPKs, Fix RO,
+    // reboots) become entries written the way the journal's own example is: time, what happened, what was done, when it
+    // came back. Each can be edited and recorded with the journal's own "Catat" (an entri: category, text, reference);
+    // closing the shift (serah terima) stays in the ERP.
+    const JP_DONE = "erpDock.jpDone", JP_KAT = { gangguan: "Gangguan / insiden", tiket: "Tiket pelanggan", pemantauan: "Pemantauan rutin", pemeliharaan: "Pemeliharaan / konfigurasi", koordinasi: "Koordinasi lapangan", lainnya: "Lain-lain" };
+    let jp = null; // { at, shift: { id, shift, mulaiMs, selesaiMs }, err }
+    const wibDate = (t = Date.now()) => new Date(t + 7 * 3600000).toISOString().slice(0, 10);
+    async function jpLoad() {
+      try { const j = await api(`/api/noc/jurnal-piket?tanggal=${wibDate()}`); jp = { at: Date.now(), shift: j.sekarang?.berjalan || null, write: j.bolehTulis !== false }; }
+      catch (err) { jp = { at: Date.now(), err: err.message }; }
+    }
+    function incidentEntry(inc) {
+      const notes = inc.log.filter(([, , auto]) => !auto).map(([t, x]) => `${hhmm(t)} ${x}`);
+      const what = inc.kind === "router" ? `${inc.title} turun, ${inc.peak} sesi di bawah biasanya` : `${inc.title}: ${inc.peak} pelanggan mati bersamaan${inc.size ? ` (dari ${inc.size} di port)` : ""}`;
+      return `${hhmm(inc.start)} ${what}.${notes.length ? ` ${notes.join("; ")}.` : ""} ${inc.state === "open" ? "Masih berlangsung." : `Pulih ${hhmm(inc.end)} (${lama(inc.end - inc.start)}).`}`;
+    }
+    function journalView() {
+      const out = [], head = el("div", "rhead"), e = el("div", "eyebrow"); e.style.margin = "10px 6px 6px"; e.append("Shift journal");
+      const erp = el("a", "btn", "Jurnal Piket ↗"); erp.href = "/noc-dashboard/jurnal-piket"; const tools = el("div", "tools"); tools.append(erp); head.append(e, tools);
+      const back = el("button", "back", "← Back"); back.type = "button"; back.style.marginLeft = "6px"; back.onclick = () => { view.mode = null; drawBody(); };
+      out.push(head, back);
+      if (!jp || Date.now() - jp.at > 5 * 60000) { out.push(el("p", "note ld", "Reading the journal's current shift…")); Promise.all([jpLoad(), incList(), idbGet("shiftlog").then((l) => (view.jpLog = l || []))]).then(() => view.mode === "journal" && drawBody()); return out; }
+      if (jp.err) { out.push(el("p", "note late", `The journal didn't answer: ${jp.err}`)); return out; }
+      const s = jp.shift; if (!s) { out.push(el("p", "note", "No shift is running in the journal right now.")); return out; }
+      out.push(el("p", "note", `Shift ${s.shift}, ${hhmm(s.mulaiMs)}–${hhmm(s.selesaiMs)} (${s.tanggalPiket}). Each draft below can be edited, then recorded with Catat; closing the shift stays in the ERP.`));
+      const done = new Set(ls.get(JP_DONE, {})[s.id] || []), mark = (k) => { const all = ls.get(JP_DONE, {}); all[s.id] = [...new Set([...(all[s.id] || []), k])]; ls.set(JP_DONE, Object.fromEntries(Object.entries(all).slice(-6))); };
+      const drafts = [
+        ...(incidents || []).filter((i) => i.start < s.selesaiMs && (i.end || Date.now()) >= s.mulaiMs).map((i) => ({ k: `inc:${i.id}:${i.state}`, t: i.start, kategori: "gangguan", teks: incidentEntry(i), rujukan: i.title })),
+        ...(view.jpLog || []).filter((x) => x.t >= s.mulaiMs && x.t < s.selesaiMs).map((x) => ({ k: `log:${x.t}`, t: x.t, kategori: x.kategori, teks: `${hhmm(x.t)} ${x.teks}`, rujukan: x.rujukan })),
+      ].sort((a, b) => a.t - b.t);
+      if (!drafts.length) { out.push(el("p", "note", "Nothing from the Dock in this shift yet: incidents, SPKs, Fix RO and reboots show up here.")); return out; }
+      if (!jp.write) out.push(el("p", "note warn", "Your account can read the journal but not write to it: copy the drafts instead."));
+      const st = (view.jpSt ||= {});
+      drafts.forEach((d, i) => {
+        const box = el("div", `near jp rise${done.has(d.k) ? " done" : ""}`); box.style.setProperty("--i", String(Math.min(i, 10)));
+        const f = (st[d.k] ||= { kategori: d.kategori, teks: d.teks, rujukan: d.rujukan });
+        const sel = el("select", "field"); for (const [k, l] of Object.entries(JP_KAT)) { const o = el("option", null, l); o.value = k; o.selected = f.kategori === k; sel.append(o); }
+        sel.onchange = () => { f.kategori = sel.value; };
+        const ta = el("textarea", "field"); ta.rows = 3; ta.value = f.teks; ta.dataset.k = `jp${i}`; ta.oninput = () => { f.teks = ta.value; };
+        const ref = el("input", "field"); ref.value = f.rujukan; ref.placeholder = "Rujukan (opsional): tiket / router / OLT"; ref.oninput = () => { f.rujukan = ref.value; };
+        const acts = el("div", "actions");
+        if (done.has(d.k)) acts.append(el("span", "sub", "Recorded in the journal"));
+        else {
+          const rec = el("button", "btn primary", f.busy ? "Recording…" : "Catat"); rec.type = "button"; rec.disabled = !!f.busy || !jp.write;
+          rec.onclick = async () => { f.busy = true; drawBody();
+            try { await api("/api/noc/jurnal-piket", { aksi: "entri", jurnalId: s.id, kategori: f.kategori, teks: f.teks.trim(), rujukan: f.rujukan.trim() }); mark(d.k); f.err = ""; }
+            catch (err) { f.err = `Not recorded: ${err.message}`; }
+            f.busy = false; drawBody(); };
+          const cp = el("button", "btn", "Copy"); cp.type = "button"; cp.onclick = () => copy(f.teks, cp);
+          const skip = el("button", "copy", "Skip"); skip.type = "button"; skip.onclick = () => { mark(d.k); drawBody(); };
+          acts.append(rec, cp, skip);
+        }
+        box.append(sel, ta, ref, acts); if (f.err) box.append(el("p", "note late", f.err)); out.push(box);
+      });
+      // a summary for closing the shift in the ERP (serah terima)
+      const open = (incidents || []).filter((i) => i.state === "open");
+      const sum = [`Shift ${s.shift} ${s.tanggalPiket}: ${drafts.filter((d) => d.kategori === "gangguan").length} gangguan, ${drafts.length - drafts.filter((d) => d.kategori === "gangguan").length} tindakan lain.`,
+        open.length ? `Masih menggantung: ${open.map((i) => i.title).join(", ")}.` : "Tidak ada gangguan yang menggantung."].join(" ");
+      const sb = el("div", "near rise"), se = el("div", "eyebrow"); se.style.margin = "0 0 6px"; se.append("For the handover"); const pre = el("div", "pw msg"); pre.textContent = sum;
+      const c = el("button", "btn", "Copy summary"); c.type = "button"; c.onclick = () => copy(sum, c); const a = el("div", "actions"); a.append(c);
+      sb.append(se, pre, a); out.push(sb);
+      return out;
+    }
+    function journalItem(i) {
+      const b = el("button", "item rise"); b.type = "button"; b.style.setProperty("--i", String(i));
+      b.append(svg("M6 3h10l3 3v15H6zM9 8h7M9 12h7M9 16h4"), el("span", "t", "Shift journal"), el("span", "r", "Jurnal Piket"), el("span", "s", "This shift's incidents and actions, drafted for the NOC journal"));
+      b.onclick = () => { view.mode = "journal"; view.card = null; jp = null; drawBody(); }; return b;
+    }
     // ---- Modems: any ONT by its SN, its OLT port and signal, and remote work on it ----
     // The ERP's own calls: each OLT's cached ONT list (46 OLTs, ~11,000 ONTs, kept 2 hours), live signal per ONT,
     // reboot through the OLT by SN, and for modems on TR-069 (GenieACS): the WiFi password, a WiFi change and a reboot.
@@ -2845,6 +3052,7 @@
           try {
             const j = viaAcs ? await api(`/api/olt/acs/devices/${encodeURIComponent(dev.id)}`, { action: "reboot" }) : await api("/api/admin/reboot-onu-by-sn", { serialNumber: ont.raw });
             const q = j.data?.status;
+            shiftNote("tiket", `Reboot modem ${m.r?.username || ont?.raw || m.key} lewat ${via}`, m.r?.username || "");
             m.msg = { good: true, text: q === "queued-offline" ? "The modem isn't answering TR-069: the reboot waits until it does." : q === "queued-natbound" ? "Queued: it reboots at the modem's next report (within ~5 min)." : `Reboot sent via ${via}. Back in 1–3 minutes.` };
           } catch (err) { m.msg = { bad: true, text: `Reboot failed: ${err.message}` }; }
           redraw(); }, redraw, `${m.key}reboot`);
@@ -2888,6 +3096,7 @@
             const j = await api("/api/admin/ldn-radius/bulk-set-router", { usernames: [username], router: real });
             if (!j?.success && !j?.mapUpdated) throw new Error(j?.error || (j?.errors || []).join("; ") || "not set");
             if (m.r) m.r.router = real;
+            shiftNote("pemeliharaan", `Fix RO ${username}: ${w.erpRo} → ${real} (data ERP disamakan dengan sesi)`, username);
             await openWeb(m, username, redraw);
             // Remote ONU reads its own copy of the customer list, which Set Router doesn't refresh right away
             const stale = m.web?.erpRo && fold(m.web.erpRo) !== fold(real);
@@ -3229,6 +3438,7 @@
             ...((t.anggotaIds || []).length ? {} : { teamEmptyAtCreate: B(true) }) } },
             updateTransforms: [{ fieldPath: "createdAt", setToServerValue: "REQUEST_TIME" }, { fieldPath: "updatedAt", setToServerValue: "REQUEST_TIME" }], currentDocument: { exists: false } }] });
           st.done[g.key] = { id, team: t.namaTim };
+          shiftNote("koordinasi", `SPK "${st.title.trim()}" untuk ${t.namaTim}`, g.key); incidentNote(`SPK made for ${t.namaTim}: ${st.title.trim()}`);
           realFetch("/api/spk/mirror", { method: "POST", headers: { authorization: await fsToken() } }).catch(() => {}); // into Daftar SPK straight away
         } catch (err) { st.msg = `Not made: ${err.message}`; }
         st.busy = false; st.armed = false; draw();
@@ -3382,8 +3592,8 @@
       const phones = [...new Set(custs.map((c) => phone62(c.phone)).filter(Boolean))];
       const pre = el("div", "pw msg"); pre.textContent = text; box.append(pre);
       const acts = el("div", "actions"), btn = (label, fn) => { const b = el("button", "btn", label); b.type = "button"; b.onclick = () => fn(b); acts.append(b); return b; };
-      btn("Copy report", (b) => copy(text, b));
-      const wa = el("a", "btn primary", "WhatsApp ↗"); wa.href = `https://wa.me/?text=${encodeURIComponent(text)}`; wa.target = "_blank"; wa.rel = "noreferrer noopener"; acts.prepend(wa);
+      btn("Copy report", (b) => { copy(text, b); incidentNote("Outage report copied for the technicians"); });
+      const wa = el("a", "btn primary", "WhatsApp ↗"); wa.href = `https://wa.me/?text=${encodeURIComponent(text)}`; wa.target = "_blank"; wa.rel = "noreferrer noopener"; wa.onclick = () => incidentNote("Outage report sent on WhatsApp"); acts.prepend(wa);
       if (phones.length) btn(`Copy ${phones.length} phone numbers`, (b) => copy(phones.join("\n"), b));
       if (custs.length) btn("Copy customer notice", (b) => copy(notice, b));
       box.append(acts); return box;
@@ -3519,6 +3729,8 @@
       else if (view.mode === "pon") parts.push(...ponBoard());
       else if (view.mode === "health") parts.push(...healthView());
       else if (view.mode === "map") parts.push(...mapView());
+      else if (view.mode === "incident") parts.push(incidentView(view.inc));
+      else if (view.mode === "journal") parts.push(...journalView());
       else if (!view.q.trim()) parts.push(...homeView());
       else parts.push(...resultsView(view.q));
       body.replaceChildren(...parts);
@@ -3526,7 +3738,7 @@
       items.forEach((x, i) => x.setAttribute("aria-selected", String(i === view.sel)));
     }
     function homeView() {
-      const out = [];
+      const out = [...incidentRows()];
       if (customers) {
         const on = customers.filter((r) => r.online && !r.isolir).length, iso = customers.filter((r) => r.isolir).length;
         const e = el("div", "eyebrow"); e.append("Customers ", el("b", null, ago(custAt))); out.push(e);
@@ -3539,7 +3751,7 @@
       SHORTCUTS.forEach(([label, path, icon], i) => { const t = el("button", "tile rise"); t.type = "button"; t.style.setProperty("--i", String(i)); t.append(svg(icon), label);
         t.onclick = path === "/customer-map" ? () => { view.mode = "map"; view.mapFull = true; view.card = null; drawBody(); } : () => go(path); g.append(t); }); // Map Terpadu: the Dock's own map
       out.push(g);
-      const e4 = el("div", "eyebrow"); e4.append("Tools"); out.push(e4, radarItem(0), boardItem(1, "pon"), boardItem(2, "signal"), boardItem(3, "health"), spkToolItem(4, "bulk"), spkToolItem(5, "review")); // Bulk Lunas shows when searched (or a list is pasted)
+      const e4 = el("div", "eyebrow"); e4.append("Tools"); out.push(e4, radarItem(0), journalItem(1), boardItem(2, "pon"), boardItem(3, "signal"), boardItem(4, "health"), spkToolItem(5, "bulk"), spkToolItem(6, "review")); // Bulk Lunas shows when searched (or a list is pasted)
       const recent = ls.get(RECENT, []).map((u) => customers?.find((r) => r.username === u)).filter(Boolean);
       if (recent.length) { const e3 = el("div", "eyebrow"); e3.append("Recent customers"); out.push(e3, ...recent.slice(0, 5).map(custItem)); }
       if (!customers) out.push(el("p", "note", "To look customers up here, open LDN Radius → Pelanggan once: its fast search keeps the list in this browser."));
@@ -4177,7 +4389,7 @@
         if (view.card || view.mode || view.modem) { view.card = null; view.mode = null; view.modem = null; drawBody(); }
         panel.querySelector("input")?.focus(); return; // the key then lands in the box
       }
-      if (e.key === "Escape") { e.preventDefault(); if (view.mode === "bulk" && bulk?.phase !== "paying") { view.mode = null; drawBody(); panel.querySelector("input")?.focus(); } else if (view.modem && !view.card) { view.modem = null; drawBody(); panel.querySelector("input")?.focus(); } else if ((view.mode === "signal" || view.mode === "pon" || view.mode === "health" || view.mode === "map") && !view.card) { if (view.pon) { view.pon = null; if (view.from) { view.mode = view.from; view.from = null; } } else view.mode = null; drawBody(); panel.querySelector("input")?.focus(); } else if (view.mode === "radar" && !view.card) { if (view.nas) view.nas = null; else view.mode = null; drawBody(); panel.querySelector("input")?.focus(); } else if (view.card) { view.card = null; drawBody(); panel.querySelector("input")?.focus(); } else { close(); fab?.focus(); } }
+      if (e.key === "Escape") { e.preventDefault(); if (view.mode === "bulk" && bulk?.phase !== "paying") { view.mode = null; drawBody(); panel.querySelector("input")?.focus(); } else if (view.modem && !view.card) { view.modem = null; drawBody(); panel.querySelector("input")?.focus(); } else if ((view.mode === "signal" || view.mode === "pon" || view.mode === "health" || view.mode === "map" || view.mode === "incident" || view.mode === "journal") && !view.card) { if (view.pon) { view.pon = null; if (view.from) { view.mode = view.from; view.from = null; } } else view.mode = null; drawBody(); panel.querySelector("input")?.focus(); } else if (view.mode === "radar" && !view.card) { if (view.nas) view.nas = null; else view.mode = null; drawBody(); panel.querySelector("input")?.focus(); } else if (view.card) { view.card = null; drawBody(); panel.querySelector("input")?.focus(); } else { close(); fab?.focus(); } }
       else if (/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement?.tagName ?? "") && document.activeElement !== panel.querySelector(".top input")) return; // a form field in the Dock keeps its keys
       else if ((e.key === "ArrowDown" || e.key === "ArrowUp") && items.length) { e.preventDefault(); view.sel = (view.sel + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
         items.forEach((x, i) => x.setAttribute("aria-selected", String(i === view.sel))); items[view.sel].scrollIntoView({ block: "nearest" }); }

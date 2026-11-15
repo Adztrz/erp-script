@@ -9,7 +9,7 @@
     const hhmm = (t) => new Date(t).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
     async function radarTick(force) {
       if (radarOff && !force) return;
-      const last = Number(ls.get(RADAR_AT, 0));
+      const last = Number(ls.get(RADAR_AT, 0)); let fetched = false;
       if (force || Date.now() - last >= RADAR_EVERY) {
         ls.set(RADAR_AT, Date.now()); // the other tabs wait
         try {
@@ -18,7 +18,7 @@
           for (const f of ov.feed || []) c[f.nasname] = Number(f.open) || 0;
           hist.s = [...hist.s.filter((x) => x.t > Date.now() - RADAR_KEEP), { t: Date.now(), c }];
           hist.feed = (ov.feed || []).map((f) => ({ ip: f.nasname, name: f.shortname, open: Number(f.open) || 0, healthy: !!f.healthy, newest: f.newest }));
-          hist.at = Date.now(); radarOff = "";
+          hist.at = Date.now(); radarOff = ""; fetched = true;
           await idbPut("radar", hist);
         } catch (e) {
           ls.set(RADAR_AT, last);
@@ -28,6 +28,7 @@
       }
       const hist = await idbGet("radar");
       radar = hist ? assess(hist) : null;
+      if (fetched) incRadar(radar).catch(() => {}); // only the tab that took the reading: one alert, not one per tab
       if (fab) { const a = radar?.alerts ?? []; fab.classList.toggle("alert", a.length > 0); fab.title = a.length ? `Dock (Alt+K): outage on ${a.map((x) => x.name).join(", ")}` : "Dock (Alt+K)"; }
       if (panel && (view.mode === "radar" || (!view.q.trim() && !view.card && !view.mode)) && radar?.at !== radarDrawn) drawBody();
     }

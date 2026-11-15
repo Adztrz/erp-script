@@ -155,6 +155,7 @@
           try {
             const j = viaAcs ? await api(`/api/olt/acs/devices/${encodeURIComponent(dev.id)}`, { action: "reboot" }) : await api("/api/admin/reboot-onu-by-sn", { serialNumber: ont.raw });
             const q = j.data?.status;
+            shiftNote("tiket", `Reboot modem ${m.r?.username || ont?.raw || m.key} lewat ${via}`, m.r?.username || "");
             m.msg = { good: true, text: q === "queued-offline" ? "The modem isn't answering TR-069: the reboot waits until it does." : q === "queued-natbound" ? "Queued: it reboots at the modem's next report (within ~5 min)." : `Reboot sent via ${via}. Back in 1–3 minutes.` };
           } catch (err) { m.msg = { bad: true, text: `Reboot failed: ${err.message}` }; }
           redraw(); }, redraw, `${m.key}reboot`);

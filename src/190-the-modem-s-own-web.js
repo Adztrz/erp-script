@@ -26,6 +26,7 @@
             const j = await api("/api/admin/ldn-radius/bulk-set-router", { usernames: [username], router: real });
             if (!j?.success && !j?.mapUpdated) throw new Error(j?.error || (j?.errors || []).join("; ") || "not set");
             if (m.r) m.r.router = real;
+            shiftNote("pemeliharaan", `Fix RO ${username}: ${w.erpRo} → ${real} (data ERP disamakan dengan sesi)`, username);
             await openWeb(m, username, redraw);
             // Remote ONU reads its own copy of the customer list, which Set Router doesn't refresh right away
             const stale = m.web?.erpRo && fold(m.web.erpRo) !== fold(real);

@@ -92,8 +92,8 @@
       const phones = [...new Set(custs.map((c) => phone62(c.phone)).filter(Boolean))];
       const pre = el("div", "pw msg"); pre.textContent = text; box.append(pre);
       const acts = el("div", "actions"), btn = (label, fn) => { const b = el("button", "btn", label); b.type = "button"; b.onclick = () => fn(b); acts.append(b); return b; };
-      btn("Copy report", (b) => copy(text, b));
-      const wa = el("a", "btn primary", "WhatsApp ↗"); wa.href = `https://wa.me/?text=${encodeURIComponent(text)}`; wa.target = "_blank"; wa.rel = "noreferrer noopener"; acts.prepend(wa);
+      btn("Copy report", (b) => { copy(text, b); incidentNote("Outage report copied for the technicians"); });
+      const wa = el("a", "btn primary", "WhatsApp ↗"); wa.href = `https://wa.me/?text=${encodeURIComponent(text)}`; wa.target = "_blank"; wa.rel = "noreferrer noopener"; wa.onclick = () => incidentNote("Outage report sent on WhatsApp"); acts.prepend(wa);
       if (phones.length) btn(`Copy ${phones.length} phone numbers`, (b) => copy(phones.join("\n"), b));
       if (custs.length) btn("Copy customer notice", (b) => copy(notice, b));
       box.append(acts); return box;

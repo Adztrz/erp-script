@@ -52,6 +52,7 @@
             ...((t.anggotaIds || []).length ? {} : { teamEmptyAtCreate: B(true) }) } },
             updateTransforms: [{ fieldPath: "createdAt", setToServerValue: "REQUEST_TIME" }, { fieldPath: "updatedAt", setToServerValue: "REQUEST_TIME" }], currentDocument: { exists: false } }] });
           st.done[g.key] = { id, team: t.namaTim };
+          shiftNote("koordinasi", `SPK "${st.title.trim()}" untuk ${t.namaTim}`, g.key); incidentNote(`SPK made for ${t.namaTim}: ${st.title.trim()}`);
           realFetch("/api/spk/mirror", { method: "POST", headers: { authorization: await fsToken() } }).catch(() => {}); // into Daftar SPK straight away
         } catch (err) { st.msg = `Not made: ${err.message}`; }
         st.busy = false; st.armed = false; draw();

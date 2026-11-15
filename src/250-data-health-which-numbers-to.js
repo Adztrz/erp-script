@@ -128,6 +128,8 @@
       else if (view.mode === "pon") parts.push(...ponBoard());
       else if (view.mode === "health") parts.push(...healthView());
       else if (view.mode === "map") parts.push(...mapView());
+      else if (view.mode === "incident") parts.push(incidentView(view.inc));
+      else if (view.mode === "journal") parts.push(...journalView());
       else if (!view.q.trim()) parts.push(...homeView());
       else parts.push(...resultsView(view.q));
       body.replaceChildren(...parts);
@@ -135,7 +137,7 @@
       items.forEach((x, i) => x.setAttribute("aria-selected", String(i === view.sel)));
     }
     function homeView() {
-      const out = [];
+      const out = [...incidentRows()];
       if (customers) {
         const on = customers.filter((r) => r.online && !r.isolir).length, iso = customers.filter((r) => r.isolir).length;
         const e = el("div", "eyebrow"); e.append("Customers ", el("b", null, ago(custAt))); out.push(e);
@@ -148,7 +150,7 @@
       SHORTCUTS.forEach(([label, path, icon], i) => { const t = el("button", "tile rise"); t.type = "button"; t.style.setProperty("--i", String(i)); t.append(svg(icon), label);
         t.onclick = path === "/customer-map" ? () => { view.mode = "map"; view.mapFull = true; view.card = null; drawBody(); } : () => go(path); g.append(t); }); // Map Terpadu: the Dock's own map
       out.push(g);
-      const e4 = el("div", "eyebrow"); e4.append("Tools"); out.push(e4, radarItem(0), boardItem(1, "pon"), boardItem(2, "signal"), boardItem(3, "health"), spkToolItem(4, "bulk"), spkToolItem(5, "review")); // Bulk Lunas shows when searched (or a list is pasted)
+      const e4 = el("div", "eyebrow"); e4.append("Tools"); out.push(e4, radarItem(0), journalItem(1), boardItem(2, "pon"), boardItem(3, "signal"), boardItem(4, "health"), spkToolItem(5, "bulk"), spkToolItem(6, "review")); // Bulk Lunas shows when searched (or a list is pasted)
       const recent = ls.get(RECENT, []).map((u) => customers?.find((r) => r.username === u)).filter(Boolean);
       if (recent.length) { const e3 = el("div", "eyebrow"); e3.append("Recent customers"); out.push(e3, ...recent.slice(0, 5).map(custItem)); }
       if (!customers) out.push(el("p", "note", "To look customers up here, open LDN Radius → Pelanggan once: its fast search keeps the list in this browser."));
