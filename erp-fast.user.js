@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.88
+// @version      2.89
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -2679,10 +2679,10 @@
     // the modem box: on a customer's card, or alone for a modem no customer is linked to
     const mods = new Map(); // key → { el, st, live, pw, form, msg }
     // ---- Remote: one button to the modem's own page ----
-    // The way in is chosen once per PC (kept in this browser): the NOC WireGuard (the modem's IP straight away) or the
-    // ERP's 5-minute port on the RO (logged; works from any PC). Remote finds the live session, opens the page that
-    // way, and copies the modem's login password when one is saved for its model.
-    const REMOTE_WAY = "erpDock.remoteWay", LOGINS = "erpDock.modemLogins", KEEP_OPEN = "erpDock.keepOpen"; // the logins stay in this browser, never in the script
+    // Remote finds the live session and opens the modem's page through the ERP's 5-minute port on the RO (logged; any
+    // PC), and copies the modem's login password when one is saved for its model. (Straight to the modem's IP over the
+    // NOC WireGuard never got through, so that way is gone.)
+    const LOGINS = "erpDock.modemLogins", KEEP_OPEN = "erpDock.keepOpen"; // the logins stay in this browser, never in the script
     const modelKey = (x) => fold(x || "").trim();
     function loginFor(model) { // the model's own login, else one saved for its brand (the first word, e.g. "zte")
       const all = ls.get(LOGINS, {}), k = modelKey(model); if (!k) return null;
@@ -2690,19 +2690,15 @@
     }
     async function remoteGo(r) {
       const key = `u:${r.username}`, m = mods.get(key); if (!m) return;
-      const way = ls.get(REMOTE_WAY, "");
-      if (!way) { m.askWay = true; modemDraw(m); m.el.scrollIntoView({ block: "nearest" }); return; }
-      m.askWay = false;
-      let win = null; try { win = window.open("about:blank", "_blank"); if (win) win.opener = null; } catch { /* blocked: links below instead */ }
-      const redraw = () => modemDraw(m), go = (url) => { if (win && !win.closed) win.location.replace(url); else window.open(url, "_blank", "noopener"); };
+      let win = null; try { win = window.open("about:blank", "_blank"); if (win) win.opener = null; } catch { /* blocked: the access opens in a new tab instead */ }
+      const redraw = () => modemDraw(m);
       m.msg = { text: "Remote: finding the modem…" }; redraw(); m.el.scrollIntoView({ block: "nearest" });
       await openWeb(m, r.username, redraw);
       const w = m.web, s = w.sess, { ont, dev } = modemOf(r), login = loginFor(ont?.model || dev?.model);
       if (!s) { win?.close(); m.msg = { bad: true, text: `Remote: not online now (no PPPoE session), so the modem can't be reached.${ont || dev ? " Reboot still works through TR-069 or the OLT." : ""}` }; return redraw(); }
       const copied = login ? " Login password copied." : "";
       if (login) navigator.clipboard?.writeText(login.p).catch(() => {});
-      if (way === "wg") { go(`http://${s.addr}/`); m.msg = { good: true, text: `Remote: opened http://${s.addr}/ (WireGuard).${copied}` }; return redraw(); }
-      if (!w.id || !w.erpFound) { go(`http://${s.addr}/`); m.msg = { text: `Remote: the ERP can't find this session (customer on another RO?), so the 5-minute access isn't possible; opened http://${s.addr}/, which needs the NOC WireGuard.${copied}` }; return redraw(); }
+      if (!w.id || !w.erpFound) { win?.close(); m.msg = { bad: true, text: `Remote: the ERP's Remote ONU can't find this session${w.erpRo && w.erpRo !== s.ro ? ` (it has the customer on ${w.erpRo}, the session is on ${s.ro}: correct the RO in the ERP)` : ""}, so the 5-minute access can't be opened.` }; return redraw(); }
       try {
         w.tunnel = null; await openTunnel(m, w, win);
         if (ls.get(KEEP_OPEN, true)) { w.keep = true; keepTick(m, w); }
@@ -2734,13 +2730,6 @@
         catch (err) { w.keep = false; m.msg = { bad: true, text: `Access not renewed (${err.message}); it closes when the time runs out.` }; }
         w.renewing = false; modemDraw(m);
       }, 5000);
-    }
-    function remoteWayRow(m, after) {
-      const row = el("div", "actions"), cur = ls.get(REMOTE_WAY, "");
-      for (const [v, label] of [["wg", "NOC WireGuard on this PC"], ["erp", "ERP's 5-minute access"]]) {
-        const b = el("button", `btn${cur === v ? " primary" : ""}`, label); b.type = "button"; b.dataset.k = `${m.key}way${v}`;
-        b.onclick = () => { ls.set(REMOTE_WAY, v); m.askWay = false; if (after) after(); else modemDraw(m); }; row.append(b); }
-      return row;
     }
     function loginRow(m, model) {
       const box = el("span"), f = m.login, saved = loginFor(model);
@@ -2775,7 +2764,6 @@
       const { sn, ont, dev } = m.r ? modemOf(m.r) : { sn: m.key, ont: onts.bySn.get(m.key), dev: acs.bySn.get(m.key) };
       if (!ont && !dev) { parts.push(el("p", "note", sn ? `${sn} isn't on any OLT's list or on TR-069.` : "No modem serial on file, and no ONT or TR-069 modem logs in with this username."));
         if (m.r) { const b = el("button", "btn primary", "Remote ↗"); b.type = "button"; b.dataset.k = `${m.key}remote`; b.onclick = () => remoteGo(m.r); const a = el("div", "actions"); a.append(b); parts.push(a);
-          if (m.askWay) parts.push(el("p", "note", "How does this PC reach modems? Asked once; change it under Web page."), remoteWayRow(m, () => remoteGo(m.r)));
           parts.push(webSection(m, m.r.username, null, redraw)); }
         if (m.msg) parts.push(el("p", `note ${m.msg.bad ? "late" : m.msg.good ? "good" : ""}`, m.msg.text));
         m.el.replaceChildren(...parts); return; }
@@ -2829,7 +2817,6 @@
         rb.classList.remove("wide", "primary"); if (!rb.classList.contains("arm")) rb.classList.add("btn"); acts.append(rb);
       }
       parts.push(acts);
-      if (m.askWay) parts.push(el("p", "note", "How does this PC reach modems? Asked once; change it under Web page."), remoteWayRow(m, () => remoteGo(m.r)));
       { const u = m.r?.username || ont?.pppoe || dev?.pppoe; if (u) parts.push(webSection(m, u, dev, redraw)); }
       if (m.pw) { const box = el("div", "pw"); if (m.pw.none) box.append(el("span", null, "No WiFi password on record for this modem."));
         else { box.append(el("span", null, `${m.pw.ssid ? `${m.pw.ssid} · ` : ""}${m.pw.sandi}`)); const c = el("button", "copy", "Copy"); c.type = "button"; c.onclick = () => copy(m.pw.sandi, c); box.append(c); }
@@ -2842,12 +2829,11 @@
     // ---- the modem's own web page ----
     // The ERP's Remote ONU looks for the session only on the RO the customer record names, and about 1 in 10 online
     // customers are really on another RO (old ARJOSARI/TREMAS records), so it finds nothing. Here the address comes
-    // from RADIUS (the live session: its IP and real RO). The links open from a device on the NOC WireGuard; "from
-    // anywhere" is the ERP's temporary port on the RO (5 minutes, logged), which needs the ERP to find the session too.
+    // from RADIUS (the live session: its IP and real RO). The page opens through the ERP's temporary port on the RO
+    // (5 minutes, logged), which needs the ERP to find the session too.
     function webSection(m, username, dev, redraw) {
       const w = m.web, box = el("div", "webbox");
       const head = el("div", "row"), e = el("div", "eyebrow"); e.style.margin = "12px 0 0"; e.append("Web page"); head.append(e); box.append(head);
-      if (ls.get(REMOTE_WAY, "")) { const ch = el("button", "copy", `Remote: ${ls.get(REMOTE_WAY) === "wg" ? "WireGuard" : "ERP 5-min"} · change`); ch.type = "button"; ch.onclick = () => { m.askWay = true; modemDraw(m); }; head.append(ch); }
       if (!w) {
         const b = el("button", "btn", "Find the modem's address"); b.type = "button"; b.dataset.k = `${m.key}web`; b.style.marginTop = "8px";
         b.onclick = () => openWeb(m, username, redraw); box.append(b); return box;
@@ -2859,12 +2845,7 @@
       const facts = el("dl", "facts"), ip = el("dd", "mono", s.addr); const c = el("button", "copy", "Copy"); c.type = "button"; c.onclick = () => copy(s.addr, c); ip.append(c);
       facts.append(el("dt", null, "Modem IP"), ip, el("dt", null, "On"), el("dd", null, `${s.ro} · online ${dur(s.up)}`)); box.append(facts);
       if (w.erpRo && nameNorm(w.erpRo).split(/[\s-]/)[0] !== nameNorm(s.ro).split(/[\s-]/)[0])
-        box.append(el("p", "note warn", `The ERP has this customer on ${w.erpRo}, but the session is on ${s.ro}: the ERP's own Remote ONU and its 5-minute access can't find it. Correct the customer's RO in the ERP to fix that; the links below work anyway.`));
-      // direct links
-      const links = el("div", "actions"), link = (label, url) => { const a = el("a", links.children.length ? "btn" : "btn primary", label); /* port 80 first: the main way in, on the NOC WireGuard */ a.href = url; a.target = "_blank"; a.rel = "noreferrer noopener"; links.append(a); };
-      link("Open :80 ↗", `http://${s.addr}/`); link(":8080 ↗", `http://${s.addr}:8080/`);
-      if (dev?.mgmt && dev.mgmt !== s.addr) link(`TR-069 IP ${dev.mgmt} ↗`, `http://${dev.mgmt}/`);
-      box.append(links, el("p", "note", "These open on a device connected to the NOC WireGuard (the RO only lets 10.99.98.0/24 reach modems)."));
+        box.append(el("p", "note warn", `The ERP has this customer on ${w.erpRo}, but the session is on ${s.ro}: the ERP's own Remote ONU and its 5-minute access can't find it. Correct the customer's RO in the ERP to fix that.`));
       // test and 5-minute access, through the ERP when it found the session
       const acts = el("div", "actions");
       if (w.id && w.erpFound) {
