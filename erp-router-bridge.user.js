@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — router bridge for the Dock's Remote
 // @namespace    adztrz
-// @version      1.0
+// @version      1.1
 // @description  Lets the ERP Dock's Remote open a customer's modem page without the ERP: a temporary port on the RO itself (RouterOS 7 REST), only for your own IP, removed by the router after 30 minutes. Router logins stay in Tampermonkey's storage, which the ERP page can't read.
 // @match        https://*/*
 // @run-at       document-start
@@ -114,7 +114,8 @@
 
   // ---- talking with the Dock: only status, setup, open and close; the router commands are built here ----
   window.addEventListener("message", async (e) => {
-    const d = e.data; if (e.source !== window || d?.erpBridge !== "req") return;
+    // Tampermonkey runs this in a sandbox whose window isn't the page's, so the sender is checked by origin
+    const d = e.data; if (d?.erpBridge !== "req" || e.origin !== location.origin) return;
     const reply = (ok, data) => window.postMessage({ erpBridge: "res", id: d.id, ok, ...(ok ? { data } : { error: data?.message || String(data), code: data?.code }) }, "*");
     try {
       if (d.op === "status") return reply(true, { version: 1, ros: list().map((c) => ({ name: c.name, nas: c.nas })) });
