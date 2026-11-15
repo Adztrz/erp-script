@@ -1,0 +1,3 @@
+#!/bin/sh
+# Refuses a commit when erp-fast.user.js wasn't rebuilt from src/, or a test fails. Install once: git config core.hooksPath hooks
+node build.mjs --check && node --test --test-reporter=dot
