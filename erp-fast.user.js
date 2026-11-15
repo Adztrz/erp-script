@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.83
+// @version      2.84
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -1817,7 +1817,7 @@
       .erp-dock .map .brief.replaying { box-shadow: inset 0 0 0 1px #e0b252; } .erp-dock .map .brief.replaying .replay span { color: #e0b252; }
       .erp-dock .map .mpin { position: absolute; z-index: 5; transform: translate(-50%, calc(-100% - 8px)); padding: 3px 7px; border-radius: 4px; background: var(--bone); color: #07090b; font: 600 11px/1.3 Inter, system-ui, sans-serif; white-space: nowrap; pointer-events: none; max-width: 90%; overflow: hidden; text-overflow: ellipsis; }
       .erp-dock .map .mpin::after { content: ""; position: absolute; left: 50%; bottom: -8px; width: 2px; height: 8px; margin-left: -1px; background: var(--bone); }
-      .erp-dock .map .pan { position: absolute; inset: 0; will-change: transform; }
+      .erp-dock .map .pan { position: absolute; inset: 0; will-change: transform; } .erp-dock .map .bgdots { position: absolute; pointer-events: none; }
       .erp-dock .map .ring { position: absolute; border-radius: 50%; box-shadow: inset 0 0 0 1.5px rgba(233,225,220,.7); pointer-events: none; }
       .erp-dock .map .ring.half { box-shadow: none; border: 1px dashed rgba(233,225,220,.45); }
       .erp-dock .mdot { position: absolute; width: 11px; height: 11px; margin: -5.5px 0 0 -5.5px; padding: 0; border: 1.5px solid rgba(7,9,11,.9); border-radius: 50%; background: var(--green); cursor: pointer;
@@ -3308,6 +3308,25 @@
       const by = new Map(); for (const x of list) { const k = `${x.from || "(kosong)"} → ${x.to}`; by.set(k, [...(by.get(k) || []), x]); }
       return { at: Date.now(), online, list, pairs: [...by].sort((a, b) => b[1].length - a[1].length) };
     }
+    // The whole network on one map (Map Terpadu in the Dock): every active customer with a saved location, online from the
+    // live session list (else the customer list), with the same brief, villages, boxes and replay as a router's map.
+    // From the Go to tile it opens full screen.
+    function mapView() {
+      const out = [], head = el("div", "rhead"), e = el("div", "eyebrow"); e.style.margin = "10px 6px 6px"; e.append("Network map");
+      const erp = el("button", "btn", "ERP's Peta Terpadu"); erp.type = "button"; erp.onclick = () => go("/customer-map");
+      const tools = el("div", "tools"); tools.append(erp); head.append(e, tools);
+      const back = el("button", "back", "← Back"); back.type = "button"; back.style.marginLeft = "6px"; back.onclick = () => { view.mode = null; drawBody(); };
+      out.push(head, back);
+      if (!customers) { out.push(el("p", "note", "Open LDN Radius → Pelanggan once so the customer list is kept here.")); return out; }
+      const on = (c) => (live && Date.now() - live.at < 10 * 60000 ? live.by.has(lower(c.username)) : !!c.online);
+      const pts = customers.filter((c) => !c.isInactive).map((c) => ({ c, p: where(c), on: on(c) })).filter((z) => z.p);
+      const map = areaMap(pts, `Map of ${pts.length} customers`, { what: "Semua pelanggan" });
+      // the live list arrives after: update who's online in place (a fresh drawBody would close full screen)
+      if (!live || Date.now() - live.at > 10 * 60000) liveSessions().then(() => { for (const z of pts) z.on = on(z.c); map.isConnected && map.redraw(); }).catch(() => {});
+      out.push(map, el("p", "note", `${pts.length} of ${customers.length} customers have a saved location. Problems are framed and named; F or ⤢ for full screen.`));
+      if (view.mapFull) { view.mapFull = false; setTimeout(() => map.isConnected && toggleFull(map), 50); }
+      return out;
+    }
     function boardItem(i, mode) {
       const b = el("button", "item rise"); b.type = "button"; b.style.setProperty("--i", String(i));
       const [t, s, icon] = { signal: ["Weak signal", "Modems below −28 / −26 dBm, and PON ports where several are weak", "M4 18h2M8 14h2v4H8zM12 10h2v8h-2zM16 6h2v12h-2z"],
@@ -3348,6 +3367,7 @@
       else if (view.mode === "signal") parts.push(...signalView());
       else if (view.mode === "pon") parts.push(...ponBoard());
       else if (view.mode === "health") parts.push(...healthView());
+      else if (view.mode === "map") parts.push(...mapView());
       else if (!view.q.trim()) parts.push(...homeView());
       else parts.push(...resultsView(view.q));
       body.replaceChildren(...parts);
@@ -3365,7 +3385,8 @@
       }
       const e2 = el("div", "eyebrow"); e2.append("Go to"); out.push(e2);
       const g = el("div", "grid");
-      SHORTCUTS.forEach(([label, path, icon], i) => { const t = el("button", "tile rise"); t.type = "button"; t.style.setProperty("--i", String(i)); t.append(svg(icon), label); t.onclick = () => go(path); g.append(t); });
+      SHORTCUTS.forEach(([label, path, icon], i) => { const t = el("button", "tile rise"); t.type = "button"; t.style.setProperty("--i", String(i)); t.append(svg(icon), label);
+        t.onclick = path === "/customer-map" ? () => { view.mode = "map"; view.mapFull = true; view.card = null; drawBody(); } : () => go(path); g.append(t); }); // Map Terpadu: the Dock's own map
       out.push(g);
       const e4 = el("div", "eyebrow"); e4.append("Tools"); out.push(e4, radarItem(0), boardItem(1, "pon"), boardItem(2, "signal"), boardItem(3, "health"), spkToolItem(4, "bulk"), spkToolItem(5, "review")); // Bulk Lunas shows when searched (or a list is pasted)
       const recent = ls.get(RECENT, []).map((u) => customers?.find((r) => r.username === u)).filter(Boolean);
@@ -3470,8 +3491,18 @@
         const img = el("img"); img.src = T.url(tx, ty, z); img.alt = ""; img.draggable = false; img.style.left = `${tx * 256 - left}px`; img.style.top = `${ty * 256 - top}px`; tiles.append(img); }
       const tip = el("span", "tip"); tip.hidden = true;
       waitForBrief(box);
-      const dots = [...kinds].sort((a, c) => RANK[a.k] - RANK[c.k]).map((z0) => { // problems drawn last, on top
-        const [px, py] = proj(z0.p, z), d = el("button", `mdot ${z0.k}${z0.u ? " unst" : ""}${z0.t && Date.now() - z0.t < FRESH ? " fresh" : ""}`); d.type = "button"; d.tabIndex = -1; d.style.left = `${px - left}px`; d.style.top = `${py - top}px`;
+      // only dots within the view and its tile margin are made; past 1500 of them, the online ones are painted on one
+      // canvas (no name on hover) and only the others are buttons, so the whole network stays quick to draw and drag
+      const M = 260, near = [...kinds].sort((a, c) => RANK[a.k] - RANK[c.k]).map((z0) => [z0, proj(z0.p, z)])
+        .filter(([, [px, py]]) => px - left > -M && py - top > -M && px - left < w + M && py - top < h + M);
+      const many = near.length > 1500;
+      let paint = null;
+      if (many) { const dpr = devicePixelRatio || 1; paint = el("canvas", "bgdots"); paint.width = (w + 2 * M) * dpr; paint.height = (h + 2 * M) * dpr;
+        Object.assign(paint.style, { left: `${-M}px`, top: `${-M}px`, width: `${w + 2 * M}px`, height: `${h + 2 * M}px` });
+        const g = paint.getContext("2d"); g.scale(dpr, dpr); g.fillStyle = "#55bc82"; g.strokeStyle = "rgba(7,9,11,.85)"; g.lineWidth = 1;
+        for (const [z0, [px, py]] of near) if (z0.k === "on") { g.beginPath(); g.arc(px - left + M, py - top + M, 3, 0, 7); g.fill(); g.stroke(); } }
+      const dots = near.filter(([z0]) => !(many && z0.k === "on")).map(([z0, [px, py]]) => { // problems drawn last, on top
+        const d = el("button", `mdot ${z0.k}${z0.u ? " unst" : ""}${z0.t && Date.now() - z0.t < FRESH ? " fresh" : ""}`); d.type = "button"; d.tabIndex = -1; d.style.left = `${px - left}px`; d.style.top = `${py - top}px`;
         const name = `${z0.c.nama || z0.c.username} · ${KIND[z0.k][0].toLowerCase()}${z0.t ? ` ${lama(Date.now() - z0.t)}` : ""}${z0.u ? " · tidak stabil" : ""}`; d.setAttribute("aria-label", name);
         d.onmouseenter = () => { tip.textContent = name; tip.style.left = d.style.left; tip.style.top = d.style.top; tip.classList.toggle("low", py - top < 34); tip.hidden = false; d.classList.add("hl"); };
         d.onmouseleave = () => { tip.hidden = true; d.classList.remove("hl"); };
@@ -3485,7 +3516,7 @@
       const bar = replayBar(box);
       const scene = briefScene({ pts: kinds, at: (p) => { const [x, y] = proj(p, z); return [x - left, y - top]; }, mpp, w, h, about: { ...about, replay: rp, bar: !!bar } });
       box.scene = scene;
-      mapLayers(box, [tiles, ...briefUnder(scene), ...dots, ...briefOver(scene), tip, zoom, el("span", "attr", T.attr)]);
+      mapLayers(box, [tiles, ...briefUnder(scene), ...(paint ? [paint] : []), ...dots, ...briefOver(scene), tip, zoom, el("span", "attr", T.attr)]);
       if (bar) box.querySelector(".brief").append(bar);
       swapTiles(box, tiles, { z, kind: carto ? "carto" : kind, left, top, id: `area:${box.getAttribute("aria-label")}` });
     }
@@ -3993,7 +4024,7 @@
         if (view.card || view.mode || view.modem) { view.card = null; view.mode = null; view.modem = null; drawBody(); }
         panel.querySelector("input")?.focus(); return; // the key then lands in the box
       }
-      if (e.key === "Escape") { e.preventDefault(); if (view.mode === "bulk" && bulk?.phase !== "paying") { view.mode = null; drawBody(); panel.querySelector("input")?.focus(); } else if (view.modem && !view.card) { view.modem = null; drawBody(); panel.querySelector("input")?.focus(); } else if ((view.mode === "signal" || view.mode === "pon" || view.mode === "health") && !view.card) { if (view.pon) { view.pon = null; if (view.from) { view.mode = view.from; view.from = null; } } else view.mode = null; drawBody(); panel.querySelector("input")?.focus(); } else if (view.mode === "radar" && !view.card) { if (view.nas) view.nas = null; else view.mode = null; drawBody(); panel.querySelector("input")?.focus(); } else if (view.card) { view.card = null; drawBody(); panel.querySelector("input")?.focus(); } else { close(); fab?.focus(); } }
+      if (e.key === "Escape") { e.preventDefault(); if (view.mode === "bulk" && bulk?.phase !== "paying") { view.mode = null; drawBody(); panel.querySelector("input")?.focus(); } else if (view.modem && !view.card) { view.modem = null; drawBody(); panel.querySelector("input")?.focus(); } else if ((view.mode === "signal" || view.mode === "pon" || view.mode === "health" || view.mode === "map") && !view.card) { if (view.pon) { view.pon = null; if (view.from) { view.mode = view.from; view.from = null; } } else view.mode = null; drawBody(); panel.querySelector("input")?.focus(); } else if (view.mode === "radar" && !view.card) { if (view.nas) view.nas = null; else view.mode = null; drawBody(); panel.querySelector("input")?.focus(); } else if (view.card) { view.card = null; drawBody(); panel.querySelector("input")?.focus(); } else { close(); fab?.focus(); } }
       else if (/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement?.tagName ?? "") && document.activeElement !== panel.querySelector(".top input")) return; // a form field in the Dock keeps its keys
       else if ((e.key === "ArrowDown" || e.key === "ArrowUp") && items.length) { e.preventDefault(); view.sel = (view.sel + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
         items.forEach((x, i) => x.setAttribute("aria-selected", String(i === view.sel))); items[view.sel].scrollIntoView({ block: "nearest" }); }
