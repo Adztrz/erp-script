@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      2.80
+// @version      2.81
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -1799,6 +1799,24 @@
       .erp-dock .map .basemap { position: absolute; bottom: 20px; right: 8px; z-index: 4; background: rgba(9,11,12,.88); }
       .erp-dock .ponbox { margin: 2px 0 8px; } .erp-dock .ponbox .note { margin: 4px 10px 8px; }
       .erp-dock .ponrow { margin-top: 4px; box-shadow: inset 0 0 0 1px var(--hair); }
+      /* the map's extra layers: villages with their team, lines to the nearest FAT/ODP with its down/all count, a ring on
+         customers who keep reconnecting, a pulse on fresh drops, the replay slider, the copied-spot pin */
+      .erp-dock .map .vlbl { position: absolute; transform: translate(-50%, -50%); text-align: center; pointer-events: none; white-space: nowrap; font: 600 10px/1.25 Inter, system-ui, sans-serif; letter-spacing: .06em; text-transform: uppercase; color: rgba(233,225,220,.62); text-shadow: 0 1px 2px #000, 0 0 3px #000; }
+      .erp-dock .map .vlbl small { display: block; font-size: 9px; font-weight: 500; letter-spacing: 0; text-transform: none; color: rgba(170,200,255,.8); }
+      .erp-dock .map svg.links { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; } .erp-dock .map svg.links line { stroke: rgba(239,239,237,.4); stroke-width: 1; }
+      .erp-dock .map .fcnt { position: absolute; z-index: 2; height: 16px; padding: 0 5px; border-radius: 3px; background: rgba(9,11,12,.92); color: var(--paper); font: 700 10px/16px Inter, system-ui, sans-serif; pointer-events: none; box-shadow: inset 0 0 0 1px var(--hair); }
+      .erp-dock .map .fcnt.bad { background: var(--red); color: #fff; box-shadow: none; }
+      .erp-dock .mdot.unst { outline: 2px dashed #e0b252; outline-offset: 2px; }
+      .erp-dock .mdot.fresh::after { content: ""; position: absolute; inset: -7px; border-radius: 50%; border: 2px solid rgba(239,239,237,.8); animation: erp-fresh 1.6s var(--out) infinite; pointer-events: none; }
+      @keyframes erp-fresh { from { transform: scale(.55); opacity: .9; } to { transform: scale(1.6); opacity: 0; } }
+      @media (prefers-reduced-motion: reduce) { .erp-dock .mdot.fresh::after { animation: none; opacity: .7; } }
+      .erp-dock .map .legend .k.link { width: 10px; height: 1px; border-radius: 0; background: rgba(239,239,237,.6); } .erp-dock .map .legend .k.unst { background: var(--green); outline: 1.5px dashed #e0b252; outline-offset: 1px; }
+      .erp-dock .map .legend .k.fresh { background: #efefed; box-shadow: 0 0 0 1px #07090b, 0 0 0 2.5px rgba(239,239,237,.7); }
+      .erp-dock .map .brief .replay { display: flex; align-items: center; gap: 8px; margin-top: 5px; pointer-events: auto; font-size: 11px; color: var(--body); }
+      .erp-dock .map .brief .replay span { flex: none; min-width: 128px; font-variant-numeric: tabular-nums; } .erp-dock .map .brief .replay input { flex: 1; min-width: 0; accent-color: var(--bone); cursor: pointer; }
+      .erp-dock .map .brief.replaying { box-shadow: inset 0 0 0 1px #e0b252; } .erp-dock .map .brief.replaying .replay span { color: #e0b252; }
+      .erp-dock .map .mpin { position: absolute; z-index: 5; transform: translate(-50%, calc(-100% - 8px)); padding: 3px 7px; border-radius: 4px; background: var(--bone); color: #07090b; font: 600 11px/1.3 Inter, system-ui, sans-serif; white-space: nowrap; pointer-events: none; max-width: 90%; overflow: hidden; text-overflow: ellipsis; }
+      .erp-dock .map .mpin::after { content: ""; position: absolute; left: 50%; bottom: -8px; width: 2px; height: 8px; margin-left: -1px; background: var(--bone); }
       .erp-dock .map .ring { position: absolute; border-radius: 50%; box-shadow: inset 0 0 0 1.5px rgba(233,225,220,.7); pointer-events: none; }
       .erp-dock .map .ring.half { box-shadow: none; border: 1px dashed rgba(233,225,220,.45); }
       .erp-dock .mdot { position: absolute; width: 11px; height: 11px; margin: -5.5px 0 0 -5.5px; padding: 0; border: 1.5px solid rgba(7,9,11,.9); border-radius: 50%; background: var(--green); cursor: pointer;
@@ -2448,13 +2466,16 @@
       if (!force && Date.now() - Number(ls.get(DROP_AT, 0)) < DROP_EVERY) return;
       ls.set(DROP_AT, Date.now()); // the other tabs wait
       try {
-        live = null; const lv = await liveSessions(), t = Date.now(), d = (await idbGet("drops")) || { first: t, u: {}, off: {} }, seen = new Set();
+        live = null; const lv = await liveSessions(), t = Date.now(), d = (await idbGet("drops")) || { first: t, u: {}, off: {} }, seen = new Set(), was = new Set(Object.keys(d.off));
         for (const [u, x] of lv.by) { seen.add(u); const r = d.u[u] ||= { s: [] };
           if (x.start && !r.s.includes(x.start)) r.s.push(x.start);
           r.s = r.s.filter((v) => v > t - DROP_KEEP).slice(-40); Object.assign(r, { last: t, ip: x.addr, mac: x.mac, nas: x.ip, ro: x.ro }); delete d.off[u]; }
         for (const [u, r] of Object.entries(d.u)) {
           if (!seen.has(u) && !d.off[u]) d.off[u] = { from: r.last, seen: t };
           if (r.last < t - DROP_KEEP) { delete d.u[u]; delete d.off[u]; } }
+        // who went down and who came back since the last reading, 24 h of them, so a map can be wound back (Replay)
+        const now = Object.keys(d.off), gone = now.filter((u) => !was.has(u)), back = [...was].filter((u) => !d.off[u] && d.u[u]);
+        d.ev = [...(d.ev || []).filter((e) => e[0] > t - 86400000), [t, gone, back]];
         d.at = t; idbPut("drops", d); drops = d;
       } catch { /* the next reading tries again */ }
     }
@@ -3432,21 +3453,25 @@
       const w = box.clientWidth, h = box.clientHeight; if (!w || !pts.length) return;
       const { kind, carto, T } = tileSource(), q = (a, f) => a[Math.min(a.length - 1, Math.max(0, Math.floor(a.length * f)))];
       // with customers in trouble the map frames them (the rest still show where they fall), so they can be named
-      const kinds = pts.map((z0) => ({ ...z0, k: health(z0.c, z0.on) })), focus = kinds.filter((z0) => RANK[z0.k] > 1), fit = focus.length ? focus : kinds;
+      const rp = box.replayT || 0, offT = rp ? offAt(rp) : null;
+      const kinds = pts.map((z0) => { let on = z0.on ?? !!z0.c.online;
+        if (offT) { const u = lower(z0.c.username); if (drops?.u[u] || drops?.off[u]) on = !offT.has(u); }
+        const k = !on && offT && !z0.c.isolir && (z0.on ?? !!z0.c.online) ? "off" : health(z0.c, on); // online now, down then: no OLT reason for back then
+        return mark({ ...z0, k }, rp); }), focus = kinds.filter((z0) => RANK[z0.k] > 1), fit = focus.length ? focus : kinds;
       const la = fit.map((z) => z.p.lat).sort((a, b) => a - b), lo = fit.map((z) => z.p.lng).sort((a, b) => a - b), cut = fit.length > 20 ? 0.02 : 0;
       const b = { s: q(la, cut), n: q(la, 1 - cut), w: q(lo, cut), e: q(lo, 1 - cut) }, mid = { lat: (b.s + b.n) / 2, lng: (b.w + b.e) / 2 };
       const proj = (p, z) => { const size = 256 * 2 ** z, sin = Math.sin(p.lat * Math.PI / 180); return [((p.lng + 180) / 360) * size, (0.5 - Math.log((1 + sin) / (1 - sin)) / (4 * Math.PI)) * size]; };
       let z = Math.min(T.max, 17); while (z > 8) { const [x0, y0] = proj({ lat: b.n, lng: b.w }, z), [x1, y1] = proj({ lat: b.s, lng: b.e }, z); if (x1 - x0 <= w - 96 && y1 - y0 <= h - 150) break; z--; } // clear of the strip and the legend
       z = Math.max(8, Math.min(T.max, z + (box.zoom || 0)));
       const size = 256 * 2 ** z, [cx, cy] = box.ctr ? [box.ctr[0] * size, box.ctr[1] * size] : proj(mid, z), left = cx - w / 2, top = cy - h / 2 - (box.ctr ? 0 : 6), tiles = el("div", "tiles");
-      box.geo = { size, cx, cy }; panMap(box);
+      box.geo = { size, cx, cy, left, top }; panMap(box);
       for (let tx = Math.floor(left / 256); tx * 256 < left + w; tx++) for (let ty = Math.floor(top / 256); ty * 256 < top + h; ty++) {
         const img = el("img"); img.src = T.url(tx, ty, z); img.alt = ""; img.draggable = false; img.style.left = `${tx * 256 - left}px`; img.style.top = `${ty * 256 - top}px`; tiles.append(img); }
       const tip = el("span", "tip"); tip.hidden = true;
       waitForBrief(box);
       const dots = [...kinds].sort((a, c) => RANK[a.k] - RANK[c.k]).map((z0) => { // problems drawn last, on top
-        const [px, py] = proj(z0.p, z), d = el("button", `mdot ${z0.k}`); d.type = "button"; d.tabIndex = -1; d.style.left = `${px - left}px`; d.style.top = `${py - top}px`;
-        const name = `${z0.c.nama || z0.c.username} · ${KIND[z0.k][0].toLowerCase()}`; d.setAttribute("aria-label", name);
+        const [px, py] = proj(z0.p, z), d = el("button", `mdot ${z0.k}${z0.u ? " unst" : ""}${z0.t && Date.now() - z0.t < FRESH ? " fresh" : ""}`); d.type = "button"; d.tabIndex = -1; d.style.left = `${px - left}px`; d.style.top = `${py - top}px`;
+        const name = `${z0.c.nama || z0.c.username} · ${KIND[z0.k][0].toLowerCase()}${z0.t ? ` ${lama(Date.now() - z0.t)}` : ""}${z0.u ? " · tidak stabil" : ""}`; d.setAttribute("aria-label", name);
         d.onmouseenter = () => { tip.textContent = name; tip.style.left = d.style.left; tip.style.top = d.style.top; tip.classList.toggle("low", py - top < 34); tip.hidden = false; d.classList.add("hl"); };
         d.onmouseleave = () => { tip.hidden = true; d.classList.remove("hl"); };
         d.onclick = () => { view.card = z0.c; view.sel = 0; remember(z0.c); draw(); }; return d; });
@@ -3456,9 +3481,11 @@
       zoom.append(recentre(box), baseButton(box, kind), shareButton(box));
       box.classList.toggle("sat", kind === "sat"); box.classList.toggle("carto", carto);
       const mpp = 156543.03392 * Math.cos(mid.lat * Math.PI / 180) / 2 ** z;
-      const scene = briefScene({ pts: kinds, at: (p) => { const [x, y] = proj(p, z); return [x - left, y - top]; }, mpp, w, h, about });
+      const bar = replayBar(box);
+      const scene = briefScene({ pts: kinds, at: (p) => { const [x, y] = proj(p, z); return [x - left, y - top]; }, mpp, w, h, about: { ...about, replay: rp, bar: !!bar } });
       box.scene = scene;
       box.replaceChildren(tiles, ...briefUnder(scene), ...dots, ...briefOver(scene), tip, zoom, el("span", "attr", T.attr));
+      if (bar) box.querySelector(".brief").append(bar);
       swapTiles(box, tiles, { z, kind, left, top, id: `area:${box.getAttribute("aria-label")}` });
     }
     function tileMap(box, r, n, radius, rows) {
@@ -3470,7 +3497,7 @@
       const size = 256 * 2 ** z, world = (p) => { const sin = Math.sin(p.lat * Math.PI / 180); return [((p.lng + 180) / 360) * size, (0.5 - Math.log((1 + sin) / (1 - sin)) / (4 * Math.PI)) * size]; };
       if (box.ctrFor !== r.username) { box.ctr = null; box.ctrFor = r.username; }
       const [cx, cy] = box.ctr ? [box.ctr[0] * size, box.ctr[1] * size] : world(n.c), left = cx - w / 2, top = cy - h / 2, mpp = mpp0 / 2 ** z;
-      box.geo = { size, cx, cy }; panMap(box);
+      box.geo = { size, cx, cy, left, top }; panMap(box);
       const [mx, my] = world(n.c), hx = mx - left, hy = my - top; // this customer, wherever the map has been dragged
       const tiles = el("div", "tiles");
       for (let tx = Math.floor(left / 256); tx * 256 < left + w; tx++) for (let ty = Math.floor(top / 256); ty * 256 < top + h; ty++) {
@@ -3478,9 +3505,9 @@
       const ring = (f, cls) => { const d = el("span", `ring ${cls}`), R = (radius * f) / mpp; d.style.cssText = `width:${2 * R}px;height:${2 * R}px;left:${hx - R}px;top:${hy - R}px`; return d; };
       const tip = el("span", "tip"); tip.hidden = true;
       waitForBrief(box);
-      n.list.forEach((x) => { x.k = health(x.r); });
+      n.list.forEach((x) => { x.k = health(x.r); x.t = DOWN.has(x.k) ? downAt(x.r) : 0; x.u = (x.k === "on" || x.k === "weak") && unstable(x.r); });
       const dots = n.list.map((x, i) => {
-        const [px, py] = world(x.p), b = el("button", `mdot ${x.k}`); b.type = "button"; b.tabIndex = -1; b.style.zIndex = RANK[x.k] > 1 ? "1" : "";
+        const [px, py] = world(x.p), b = el("button", `mdot ${x.k}${x.u ? " unst" : ""}${x.t && Date.now() - x.t < FRESH ? " fresh" : ""}`); b.type = "button"; b.tabIndex = -1; b.style.zIndex = RANK[x.k] > 1 ? "1" : "";
         b.style.left = `${px - left}px`; b.style.top = `${py - top}px`; b.style.setProperty("--d", `${Math.round(Math.min(1, x.d / radius) * 350)}ms`);
         b.setAttribute("aria-label", `${x.r.nama || x.r.username}, ${KIND[x.k][0].toLowerCase()}, ${Math.round(x.d)} m`);
         b.onmouseenter = () => hl(i, true); b.onmouseleave = () => hl(i, false);
@@ -3505,7 +3532,7 @@
       zoom.append(recentre(box), baseButton(box, kind), shareButton(box));
       box.classList.toggle("sat", kind === "sat"); box.classList.toggle("carto", !!carto);
       const at = (p) => { const [x, y] = world(p); return [x - left, y - top]; };
-      const scene = briefScene({ pts: [{ c: r, p: n.c, k: health(r), me: true }, ...n.list.map((x) => ({ c: x.r, p: x.p, k: x.k }))], at, mpp, w, h,
+      const scene = briefScene({ pts: [{ c: r, p: n.c, k: health(r), me: true }, ...n.list.map((x) => ({ c: x.r, p: x.p, k: x.k, t: x.t, u: x.u }))], at, mpp, w, h,
         rings: [[hx, hy, radius / 2 / mpp, `${radius / 2} m`], [hx, hy, radius / mpp, radius < 1000 ? `${radius} m` : "1 km"]],
         me: [hx, hy, r.nama || r.username], about: { what: `Radius ${radius < 1000 ? `${radius} m` : "1 km"} dari ${r.nama || r.username}`, near: r } });
       box.scene = scene;
@@ -3541,6 +3568,16 @@
         commit(dx, dy);
       };
       box.addEventListener("pointerup", end); box.addEventListener("pointercancel", end);
+      // a click on the map itself (not a dot, a button or a drag) copies that spot's Google Maps link, for a technician
+      box.addEventListener("click", (e) => {
+        const g = box.geo; if (e.defaultPrevented || e.target !== box || !g || g.left == null) return;
+        const r = box.getBoundingClientRect(), px = e.clientX - r.left, py = e.clientY - r.top, x = g.left + px, y = g.top + py;
+        const lng = (x / g.size) * 360 - 180, lat = (Math.atan(Math.sinh(Math.PI * (1 - (2 * y) / g.size))) * 180) / Math.PI, url = `https://www.google.com/maps?q=${lat.toFixed(6)},${lng.toFixed(6)}`;
+        box.querySelector(".mpin")?.remove();
+        const pin = el("span", "mpin", "Lokasi disalin"); pin.style.left = `${px}px`; pin.style.top = `${py}px`; box.append(pin);
+        navigator.clipboard?.writeText(url).catch(() => { pin.textContent = url; });
+        setTimeout(() => pin.remove(), 1800);
+      });
       // Ctrl + wheel zooms (instead of the whole page), one level per notch, keeping the place under the pointer still
       let acc = 0, last = 0;
       box.addEventListener("wheel", (e) => {
@@ -3608,8 +3645,50 @@
       if (!on) return o && /los/i.test(o.st) ? "los" : o && /dying|power/i.test(o.st) ? "pwr" : "off";
       return o && usable(o) && o.rx < -28 ? "weak" : "on";
     }
-    const detail = (z) => (z.k === "weak" ? dbm(modemOf(z.c).ont?.rx) : z.k === "los" ? "LOS" : z.k === "pwr" ? "mati listrik" : "offline");
+    const detail = (z) => (z.k === "weak" ? dbm(modemOf(z.c).ont?.rx) : `${z.k === "los" ? "LOS" : z.k === "pwr" ? "mati listrik" : "offline"}${z.t ? ` ${lama(Date.now() - z.t)}` : ""}`);
     const shortName = (c) => String(c.nama || c.username || "").trim().split(/\s+/).slice(0, 2).join(" ");
+    // From the drop log and the modem's own TR-069 report: when an offline customer went down (0 = unknown), and whether
+    // an online one keeps reconnecting (4+ new sessions in 24 h, as on the Down? box)
+    function downAt(c) {
+      const u = lower(c.username), gone = drops?.off[u], inf = modemOf(c).dev?.inform, tr = inf ? Date.parse(inf) || 0 : 0;
+      if (gone) return tr && tr >= gone.from - 60000 && tr <= gone.seen ? tr : gone.from;
+      return tr;
+    }
+    const unstable = (c) => (drops?.u[lower(c.username)]?.s || []).filter((t) => t > Date.now() - 86400000).length >= 4;
+    const lama = (ms) => { const m = Math.max(1, Math.round(ms / 60000)); return m < 60 ? `${m} mnt` : m < 2880 ? `${Math.round(m / 60)} jam` : `${Math.round(m / 1440)} hari`; };
+    const FRESH = 30 * 60000;
+    function mark(z, replay) { // t: down since; u: unstable. Neither while replaying (they describe now)
+      z.t = !replay && DOWN.has(z.k) ? downAt(z.c) : 0; z.u = !replay && (z.k === "on" || z.k === "weak") && unstable(z.c); return z;
+    }
+    // Replay: the drop log's readings wound back from now to time T; who was offline then
+    function offAt(T) {
+      const off = new Set(Object.keys(drops?.off || {}));
+      for (const [t, gone, back] of [...(drops?.ev || [])].reverse()) { if (t <= T) break; for (const u of gone) off.delete(u); for (const u of back) off.add(u); }
+      return off;
+    }
+    function replayBar(box) {
+      const ev = drops?.ev || []; if (ev.length < 2) return null;
+      const step = 15 * 60000, t0 = Math.max(ev[0][0], Date.now() - 86400000), n = Math.max(1, Math.round((Date.now() - t0) / step));
+      const bar = el("div", "replay"), lab = el("span"), rng = el("input"); rng.type = "range"; rng.min = "0"; rng.max = String(n); rng.step = "1";
+      rng.setAttribute("aria-label", "Replay the last 24 hours");
+      const at = (v) => (+v >= n ? 0 : t0 + +v * step), say = (v) => { const T = at(v); lab.textContent = T ? `Putar ulang · ${hhmm(T)}` : "Putar ulang · sekarang"; };
+      rng.value = String(box.replayT ? Math.max(0, Math.round((box.replayT - t0) / step)) : n); say(rng.value);
+      rng.oninput = () => say(rng.value);
+      rng.onchange = () => { box.replayT = at(rng.value); box.replayFocus = true; box.redraw(); };
+      if (box.replayFocus) { box.replayFocus = false; setTimeout(() => rng.focus(), 0); }
+      bar.append(lab, rng); return bar;
+    }
+    // each customer's nearest FAT/ODP within 250 m, through a grid of ~330 m cells so a big router stays quick
+    let boxGrid = null;
+    function nearestBox(p) {
+      if (!netList?.length) return null;
+      if (boxGrid?.list !== netList) { const g = new Map();
+        for (const a of netList) if (/FAT|ODP/.test(a.type)) { const k = `${Math.floor(a.p.lat / 0.003)},${Math.floor(a.p.lng / 0.003)}`; if (!g.has(k)) g.set(k, []); g.get(k).push(a); }
+        boxGrid = { list: netList, g }; }
+      const i = Math.floor(p.lat / 0.003), j = Math.floor(p.lng / 0.003); let best = null, bd = 250;
+      for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) for (const x of boxGrid.g.get(`${i + a},${j + b}`) || []) { const d = metres(p, x.p); if (d < bd) { bd = d; best = x; } }
+      return best;
+    }
     // FAT/ODP/FDT/ODC with a location, from Planning's cached asset list; [] when Planning hasn't been opened here
     let netList = null, netLoading = null;
     const netAssets = () => (netLoading ||= (async () => {
@@ -3631,6 +3710,7 @@
     function waitForBrief(box) {
       if (!netList && !box.netWait) { box.netWait = true; netAssets().then(() => box.isConnected && box.redraw?.()); }
       if (!onts && !box.ontWait) { box.ontWait = true; ontIndex().then(() => box.isConnected && box.redraw?.()).catch(() => {}); }
+      if (!box.moreWait) { box.moreWait = true; Promise.all([dropsOf(), acsIndex(), techIndex().catch(() => {})]).then(() => box.isConnected && box.redraw?.()).catch(() => {}); }
     }
     // The box most likely at fault: with two or more customers down, the FAT/ODP closest to all of them (least total
     // distance), if it's within 400 m of them on average. A pointer for where to look first, not a proof.
@@ -3650,13 +3730,14 @@
     }
     // Everything the brief shows, in map pixels, so the map on screen and the shared picture are drawn from one plan.
     function briefScene({ pts, at, mpp, w, h, rings = [], me = null, about = {} }) {
+      for (const z of pts) if (z.t === undefined) mark(z, about.replay);
       const sev = severity(pts), probs = pts.filter((z) => z.k !== "on" && z.k !== "iso").sort((a, b) => RANK[b.k] - RANK[a.k]);
       const down = pts.filter((z) => DOWN.has(z.k)), fault = suspect(down);
       const vil = new Map(); for (const z of (probs.length ? probs : pts)) { const d = z.c.desa ? titleCase(z.c.desa.trim()) : ""; if (d) vil.set(d, (vil.get(d) || 0) + 1); }
       const villages = [...vil].sort((a, b) => b[1] - a[1]);
       const title = sev.down ? `${sev.down} dari ${sev.act} pelanggan mati` : sev.weak ? `${sev.weak} dari ${sev.act} redaman tinggi` : `Semua ${sev.act} pelanggan online`;
       const counts = ["los", "pwr", "off", "weak", "iso", "on"].filter((k) => sev.n[k]).map((k) => `${sev.n[k]} ${KIND[k][0].toLowerCase()}`).join(" · ");
-      const sub = [about.what, villages.slice(0, 3).map(([d]) => d).join(", "), about.since ? `sejak ${hhmm(about.since)}` : `per ${hhmm(Date.now())}`].filter(Boolean).join(" · ");
+      const sub = [about.what, villages.slice(0, 3).map(([d]) => d).join(", "), about.replay ? `per ${hhmm(about.replay)} (putar ulang)` : about.since ? `sejak ${hhmm(about.since)}` : `per ${hhmm(Date.now())}`].filter(Boolean).join(" · ");
       const inView = ([x, y], m = 0) => x >= -m && y >= -m && x <= w + m && y <= h + m;
       let assets = (netList || []).map((a) => ({ ...a, xy: at(a.p) })).filter((a) => inView(a.xy, 10));
       // zoomed out, hundreds of boxes bury the customers: keep the ones near a problem (200 m), at most 80
@@ -3664,8 +3745,16 @@
       const faultXY = fault ? at(fault.p) : null;
       // name the problems where there's room: beside the dot, else the other side, above or below; never over the strip,
       // the legend or another name
-      const used = [[0, 0, w, 72], [0, h - 58, w, h]], labels = [];
+      const used = [[0, 0, w, about.bar ? 100 : 72], [0, h - 58, w, h]], labels = [];
       const free = (r) => r[0] >= 4 && r[2] <= w - 40 && used.every((u) => r[2] < u[0] || r[0] > u[2] || r[3] < u[1] || r[1] > u[3]);
+      // each customer's nearest FAT/ODP: a line from every down customer to theirs, and on each box with any down a count
+      // of down / all its customers on this map ("3/5"); half or more down with 2+ is the box to suspect
+      const groups = new Map();
+      for (const z of pts) { if (z.k === "iso" || z.me && !DOWN.has(z.k)) continue; const a = nearestBox(z.p); if (!a) continue; z.box = a;
+        let g = groups.get(a.code); if (!g) groups.set(a.code, (g = { a, down: 0, all: 0 })); g.all++; if (DOWN.has(z.k)) g.down++; }
+      const fats = [...groups.values()].filter((g) => g.down).map((g) => ({ ...g, bad: g.down >= 2 && g.down / g.all >= 0.5, xy: at(g.a.p) }))
+        .sort((a, b) => b.bad - a.bad || b.down - a.down || b.down / b.all - a.down / a.all);
+      const links = down.filter((z) => z.box).map((z) => [at(z.p), at(z.box.p)]).filter(([a, b]) => inView(a, 40) || inView(b, 40));
       if (faultXY) used.push([faultXY[0] - 18, faultXY[1] - 18, faultXY[0] + 18, faultXY[1] + 18], [faultXY[0] - 75, faultXY[1] + 18, faultXY[0] + 75, faultXY[1] + 40]); // the ring and its tag
       for (const z of probs) { if (labels.length >= 14) break;
         const [x, y] = at(z.p); if (!inView([x, y])) continue;
@@ -3673,17 +3762,39 @@
         const r = [[x + 9, y - th / 2], [x - 9 - tw, y - th / 2], [x - tw / 2, y - 12 - th], [x - tw / 2, y + 12]].map(([a, b]) => [a, b, a + tw, b + th]).find(free);
         if (r) { used.push(r); labels.push({ x: r[0], y: r[1], w: tw, text, k: z.k }); }
       }
+      // villages (where 3+ of the map's customers live), named at their middle with the field team that covers them
+      const vg = new Map();
+      for (const z of pts) { if (!z.c.desa) continue; const d = titleCase(z.c.desa.trim()); let v = vg.get(d); if (!v) vg.set(d, (v = { n: 0, la: 0, lo: 0 })); v.n++; v.la += z.p.lat; v.lo += z.p.lng; }
+      const vlabels = [];
+      for (const [d, v] of [...vg].sort((a, b) => b[1].n - a[1].n)) { if (v.n < 3 || vlabels.length >= 12) continue;
+        const [x, y] = at({ lat: v.la / v.n, lng: v.lo / v.n }); if (!inView([x, y])) continue;
+        const tl = teamsFor(d), team = (tl.find((t) => teamKind(t.name) === "field") || tl[0])?.name || "";
+        const tw = Math.max(d.length * 6.6, team.length * 5.4) + 8, hh = team ? 13 : 7; // at the middle, else nudged until it's clear
+        const spot = [[0, 0], [0, -28], [0, 28], [-tw * 0.7, 0], [tw * 0.7, 0], [-tw * 0.6, -26], [tw * 0.6, 26], [tw * 0.6, -26], [-tw * 0.6, 26]]
+          .map(([dx, dy]) => [x + dx, y + dy]).find(([a, b]) => free([a - tw / 2, b - 13, a + tw / 2, b + hh]));
+        if (!spot) continue; used.push([spot[0] - tw / 2, spot[1] - 13, spot[0] + tw / 2, spot[1] + hh]); vlabels.push({ x: spot[0], y: spot[1], d, team }); }
+      // the counts last (names and villages first), only on boxes with 2+ down: a lone "1/1" is just the line
+      const badges = [];
+      for (const g of fats) { if (badges.length >= 15 || g.down < 2 || !inView(g.xy)) continue; const text = `${g.down}/${g.all}`, tw = text.length * 6 + 10, r = [g.xy[0] + 6, g.xy[1] - 20, g.xy[0] + 6 + tw, g.xy[1] - 4];
+        if (!free(r) && !g.bad) continue; used.push(r); badges.push({ x: r[0], y: r[1], w: tw, text, bad: g.bad, code: g.a.code }); }
       const shown = assets.length <= 30; // codes only when they fit; the squares always
       const nice = [10, 20, 50, 100, 200, 500, 1000, 2000, 5000].filter((m) => m / mpp <= 110).pop() || 10;
       const legend = ["los", "pwr", "off", "weak", "iso", "on"].filter((k) => sev.n[k]).map((k) => [k, KIND[k][0]]);
       if (assets.length) legend.push(["box", "FAT / ODP"]);
       if (fault) legend.push(["fault", "Cek di sini"]);
+      if (links.length) legend.push(["link", "Garis ke FAT/ODP terdekat · mati/semua"]);
+      if (pts.some((z) => z.t && Date.now() - z.t < FRESH)) legend.push(["fresh", "Baru mati (< 30 mnt)"]);
+      if (pts.some((z) => z.u)) legend.push(["unst", "Tidak stabil (4+ sambung ulang/24 jam)"]);
       const dots = pts.map((z) => ({ ...z, xy: at(z.p) })).filter((z) => inView(z.xy, 8)).sort((a, b) => RANK[a.k] - RANK[b.k]);
-      return { w, h, dots, sev, title, counts, sub, villages, probs, labels, rings, me, assets, shown, fault, faultXY, legend, scale: { px: nice / mpp, label: nice >= 1000 ? `${nice / 1000} km` : `${nice} m` }, about, noNet: netList && !netList.length };
+      return { w, h, dots, sev, title, counts, sub, villages, probs, labels, rings, me, assets, shown, fault, faultXY, legend, scale: { px: nice / mpp, label: nice >= 1000 ? `${nice / 1000} km` : `${nice} m` }, about, noNet: netList && !netList.length, fats, links, badges, vlabels };
     }
     // below the dots: the network boxes and the suspected one; above them: names, strip, legend, scale
     function briefUnder(s) {
-      const out = [];
+      const out = [], NS = "http://www.w3.org/2000/svg";
+      for (const v of s.vlabels) { const d = el("span", "vlbl", v.d); d.style.left = `${v.x}px`; d.style.top = `${v.y}px`; if (v.team) d.append(el("small", null, v.team)); out.push(d); }
+      if (s.links.length) { const svg = document.createElementNS(NS, "svg"); svg.setAttribute("class", "links"); svg.setAttribute("width", s.w); svg.setAttribute("height", s.h);
+        for (const [[x1, y1], [x2, y2]] of s.links) { const l = document.createElementNS(NS, "line"); l.setAttribute("x1", x1); l.setAttribute("y1", y1); l.setAttribute("x2", x2); l.setAttribute("y2", y2); svg.append(l); }
+        out.push(svg); }
       for (const a of s.assets) { const d = el("span", `asset ${a.type.toLowerCase()}`); d.style.left = `${a.xy[0]}px`; d.style.top = `${a.xy[1]}px`; d.title = a.code;
         if (s.shown && a.code !== s.fault?.code) d.append(el("i", null, a.code)); out.push(d); }
       if (s.faultXY) { const f = el("span", "fault"); f.style.left = `${s.faultXY[0]}px`; f.style.top = `${s.faultXY[1]}px`; f.append(el("i", null, `Cek di sini · ${s.fault.code}`)); out.push(f); }
@@ -3691,6 +3802,7 @@
     }
     function briefOver(s) {
       const out = [];
+      for (const b of s.badges) { const d = el("span", `fcnt${b.bad ? " bad" : ""}`, b.text); d.style.left = `${b.x}px`; d.style.top = `${b.y}px`; d.title = `${b.code}: ${b.text} pelanggan mati`; out.push(d); }
       for (const [x, y, R, t] of s.rings) { const l = el("span", "ringlbl", t); l.style.left = `${x}px`; l.style.top = `${y - R}px`; out.push(l); }
       if (s.me) { const l = el("span", "melbl", s.me[2]); l.style.left = `${s.me[0]}px`; l.style.top = `${s.me[1]}px`; out.push(l); }
       for (const l of s.labels) { const d = el("span", `plbl ${l.k}`, l.text); d.style.left = `${l.x}px`; d.style.top = `${l.y}px`; out.push(d); }
@@ -3699,6 +3811,7 @@
       if (s.fault) strip.append(el("div", "bf", `Cek di sini: ${s.fault.code} (rata-rata ${s.fault.avg} m dari yang mati)`));
       out.push(strip);
       const leg = el("div", "legend"); for (const [k, label] of s.legend) { const i = el("span"); i.append(el("i", `k ${k}`), label); leg.append(i); }
+      if (s.about.replay) strip.classList.add("replaying");
       const sc = el("div", "scale"), north = el("span", "north", "U"); north.title = "Utara: atas peta selalu utara"; north.setAttribute("aria-label", "North is up");
       sc.append(el("i"), s.scale.label, north); sc.firstChild.style.width = `${Math.round(s.scale.px)}px`;
       const foot = el("div", "foot"); foot.append(sc, leg); out.push(foot);
@@ -3708,12 +3821,13 @@
     function briefText(s) {
       const link = (p) => `https://www.google.com/maps?q=${p.lat.toFixed(6)},${p.lng.toFixed(6)}`;
       const lines = [`*GANGGUAN ${LEVEL[s.sev.lv][0]}* · ${s.title}`, s.about.what || "", s.counts];
-      if (s.villages.length) lines.push(`Desa: ${s.villages.slice(0, 6).map(([d, n]) => `${d} (${n})`).join(", ")}`);
+      if (s.villages.length) lines.push(`Desa: ${s.villages.slice(0, 6).map(([d, n]) => { const tl = teamsFor(d), t = (tl.find((x) => teamKind(x.name) === "field") || tl[0])?.name; return `${d} (${n}${t ? `, ${t}` : ""})`; }).join(", ")}`);
+      if (s.fats.length) lines.push(`Per FAT/ODP terdekat: ${s.fats.slice(0, 6).map((g) => `${g.a.code} ${g.down}/${g.all} mati`).join(", ")}`);
       if (s.fault) lines.push(`Cek di sini: ${s.fault.code} (perkiraan) ${link(s.fault.p)}`);
       for (const k of ["los", "pwr", "off", "weak"]) {
         const l = s.probs.filter((z) => z.k === k); if (!l.length) continue;
         lines.push("", `${KIND[k][0]} (${l.length}):`);
-        l.slice(0, 20).forEach((z, i) => lines.push(`${i + 1}. ${z.c.nama || z.c.username} (${z.c.username})${k === "weak" ? ` · ${detail(z)}` : ""}${z.c.phone ? ` · ${z.c.phone}` : ""} · ${link(z.p)}`));
+        l.slice(0, 20).forEach((z, i) => lines.push(`${i + 1}. ${z.c.nama || z.c.username} (${z.c.username})${k === "weak" ? ` · ${detail(z)}` : z.t ? ` · mati ${lama(Date.now() - z.t)}` : ""}${z.c.phone ? ` · ${z.c.phone}` : ""} · ${link(z.p)}`));
         if (l.length > 20) lines.push(`… dan ${l.length - 20} lagi`);
       }
       lines.push("", `Dibuat ${wib()} WIB`);
@@ -3736,11 +3850,18 @@
           if (kind === "pwr") g.setLineDash([2, 2]); g.stroke(); g.setLineDash([]); return; }
         g.fillStyle = KIND[kind][1]; g.fill(); g.lineWidth = 2; g.strokeStyle = "rgba(255,255,255,.9)"; g.stroke(); };
       for (const [x, y, R] of s.rings) { g.beginPath(); g.arc(x, y, R, 0, 7); g.lineWidth = 1.5; g.strokeStyle = "rgba(233,225,220,.6)"; g.stroke(); }
+      g.shadowColor = "#000"; g.shadowBlur = 3; g.textAlign = "center";
+      for (const v of s.vlabels) { font(600, 10); g.fillStyle = "rgba(233,225,220,.7)"; g.fillText(v.d.toUpperCase(), v.x, v.y + (v.team ? -1 : 3)); if (v.team) { font(500, 9); g.fillStyle = "rgba(170,200,255,.85)"; g.fillText(v.team, v.x, v.y + 10); } }
+      g.shadowBlur = 0; g.textAlign = "start";
+      g.beginPath(); for (const [[x1, y1], [x2, y2]] of s.links) { g.moveTo(x1, y1); g.lineTo(x2, y2); } g.lineWidth = 1; g.strokeStyle = "rgba(239,239,237,.45)"; g.stroke();
       for (const a of s.assets) { g.fillStyle = "#3e7edf"; g.strokeStyle = "#07090b"; g.lineWidth = 1.5; g.fillRect(a.xy[0] - 4, a.xy[1] - 4, 8, 8); g.strokeRect(a.xy[0] - 4, a.xy[1] - 4, 8, 8);
         if (s.shown && a.code !== s.fault?.code) { font(500, 10); g.fillStyle = "rgba(170,200,255,.95)"; g.fillText(a.code, a.xy[0] + 7, a.xy[1] + 3); } }
       if (s.faultXY) { const [x, y] = s.faultXY; g.beginPath(); g.arc(x, y, 16, 0, 7); g.setLineDash([4, 3]); g.lineWidth = 2.5; g.strokeStyle = "#f12614"; g.stroke(); g.setLineDash([]);
         font(600, 11); const t = `Cek di sini · ${s.fault.code}`, tw = g.measureText(t).width + 12; pill(x - tw / 2, y + 20, tw, 18, 4, "#f12614"); g.fillStyle = "#fff"; g.fillText(t, x - tw / 2 + 6, y + 33); }
-      for (const z of s.dots) if (!z.me) dot(z.xy[0], z.xy[1], z.k, RANK[z.k] > 1 ? 6.5 : 5);
+      const unst = (x, y, r) => { g.beginPath(); g.arc(x, y, r, 0, 7); g.setLineDash([3, 2]); g.lineWidth = 2; g.strokeStyle = "#e0b252"; g.stroke(); g.setLineDash([]); };
+      for (const z of s.dots) if (!z.me) { dot(z.xy[0], z.xy[1], z.k, RANK[z.k] > 1 ? 6.5 : 5); if (z.u) unst(z.xy[0], z.xy[1], 9.5);
+        if (z.t && Date.now() - z.t < FRESH) { g.beginPath(); g.arc(z.xy[0], z.xy[1], 11, 0, 7); g.lineWidth = 1.5; g.strokeStyle = "rgba(239,239,237,.7)"; g.stroke(); } }
+      for (const b of s.badges) { font(700, 10); pill(b.x, b.y, b.w, 16, 3, b.bad ? "#f12614" : "rgba(9,11,12,.92)"); g.fillStyle = b.bad ? "#fff" : "#efefed"; g.fillText(b.text, b.x + 5, b.y + 12); }
       if (s.me) { const [x, y, name] = s.me; g.beginPath(); g.arc(x, y, 8, 0, 7); g.fillStyle = "#e9e1dc"; g.fill(); g.lineWidth = 3; g.strokeStyle = "#07090b"; g.stroke();
         font(600, 12); const tw = g.measureText(name).width + 12; pill(x - tw / 2, y + 12, tw, 20, 4, "rgba(233,225,220,.95)"); g.fillStyle = "#07090b"; g.fillText(name, x - tw / 2 + 6, y + 26); }
       for (const [x, y, R, t] of s.rings) { font(500, 10); const tw = g.measureText(t).width + 8; pill(x - tw / 2, y - R - 8, tw, 16, 3, "rgba(9,11,12,.85)"); g.fillStyle = "#e9e1dc"; g.fillText(t, x - tw / 2 + 4, y - R + 4); }
@@ -3762,6 +3883,9 @@
       lines.forEach((row, i) => { const ly = sy + 22 + i * 16; for (const [k, l, lx] of row) { const x0 = 16 + lx;
         if (k === "box") { g.fillStyle = "#3e7edf"; g.fillRect(x0, ly - 8, 8, 8); }
         else if (k === "fault") { g.beginPath(); g.arc(x0 + 4, ly - 4, 5, 0, 7); g.setLineDash([2, 2]); g.lineWidth = 1.5; g.strokeStyle = "#f12614"; g.stroke(); g.setLineDash([]); }
+        else if (k === "link") { g.fillStyle = "rgba(239,239,237,.6)"; g.fillRect(x0 - 1, ly - 4.5, 10, 1); }
+        else if (k === "unst") { dot(x0 + 4, ly - 4, "on", 3); unst(x0 + 4, ly - 4, 5.5); }
+        else if (k === "fresh") { dot(x0 + 4, ly - 4, "off", 3); g.beginPath(); g.arc(x0 + 4, ly - 4, 5.5, 0, 7); g.lineWidth = 1; g.strokeStyle = "rgba(239,239,237,.7)"; g.stroke(); }
         else dot(x0 + 4, ly - 4, k, 4);
         g.fillStyle = "#e9e1dc"; g.fillText(l, x0 + 13, ly); } });
       return cv;
