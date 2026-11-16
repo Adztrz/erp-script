@@ -32,7 +32,9 @@
       if (fab) { const a = radar?.alerts ?? []; fab.classList.toggle("alert", a.length > 0); fab.title = a.length ? `Dock (Alt+K): outage on ${a.map((x) => x.name).join(", ")}` : "Dock (Alt+K)"; }
       if (panel && (view.mode === "radar" || (!view.q.trim() && !view.card && !view.mode)) && radar?.at !== radarDrawn) drawBody();
     }
-    // each router against its own last two hours (ignoring the latest 20 minutes): down below 30%, a drop from 8 or 10%
+    // each router against its own last two hours (ignoring the latest 20 minutes): down below 30%, a drop from 8 or 10%;
+    // a feed that stopped with its count still near usual is "nofeed": the ERP stopped hearing from the router, so the
+    // count is frozen, not a measured outage (the router, or only its RADIUS accounting, may be down: check it)
     function assess(hist) {
       const now = Date.now(), samples = hist.s || [], list = [];
       for (const f of hist.feed || []) {
@@ -42,16 +44,18 @@
         let level = "ok";
         if (usual == null) level = cur > 0 ? "learning" : "silent";
         else if (usual < 5 && cur < 5) level = "silent";
-        else if (cur <= usual * 0.3 || (!f.healthy && usual >= 10)) level = "down";
+        else if (cur <= usual * 0.3) level = "down";
+        else if (!f.healthy && usual >= 10) level = "nofeed";
         else if (gap >= step) level = "drop";
         let since = null; // when the dip began
-        if (level === "down" || level === "drop") for (let i = vals.length - 1; i >= 0 && vals[i][1] <= usual - step / 2; i--) since = vals[i][0];
+        if (level === "nofeed") since = Date.parse(f.newest) || null;
+        else if (level === "down" || level === "drop") for (let i = vals.length - 1; i >= 0 && vals[i][1] <= usual - step / 2; i--) since = vals[i][0];
         list.push({ ...f, usual, gap, level, since, series: vals.filter(([t]) => t > now - 24 * 3600000) });
       }
-      const rank = { down: 0, drop: 1, learning: 2, ok: 3, silent: 4 };
+      const rank = { down: 0, nofeed: 1, drop: 2, learning: 3, ok: 4, silent: 5 };
       list.sort((a, b) => rank[a.level] - rank[b.level] || b.open - a.open);
-      const alerts = list.filter((x) => x.level === "down" || x.level === "drop"), watched = list.filter((x) => x.level !== "silent");
-      return { at: hist.at, list, alerts, wide: watched.length >= 4 && alerts.length >= watched.length * 0.6, learning: !samples.length || now - samples[0].t < 25 * 60000 };
+      const alerts = list.filter((x) => x.level === "down" || x.level === "drop" || x.level === "nofeed"), watched = list.filter((x) => x.level !== "silent");
+      return { at: hist.at, list, alerts, wide: watched.length >= 4 && alerts.filter((x) => x.level !== "nofeed").length >= watched.length * 0.6, learning: !samples.length || now - samples[0].t < 25 * 60000 };
     }
     const nameNorm = (n) => String(n || "").toUpperCase().replace(/^RO[\s-]+/, "").trim();
     async function areaNames() {

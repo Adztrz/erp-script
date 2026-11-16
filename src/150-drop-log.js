@@ -55,9 +55,12 @@
       radarDrawn = radar.at;
       const said = (x) => `${x.open} online · usually ${x.usual}${x.since ? ` · since ${hhmm(x.since)}` : ""}`;
       if (radar.wide) out.push(el("div", "ralert", "Most routers dropped at once: more likely the central link or the RADIUS server than one area."));
+      const stuck = radar.alerts.filter((x) => x.level === "nofeed");
+      if (stuck.length > 1 && new Set(stuck.map((x) => x.since)).size === 1) out.push(el("div", "ralert drop", `${stuck.length} routers stopped reporting at the same moment (${hhmm(stuck[0].since)}): more likely the RADIUS accounting link or the ERP's reader than ${stuck.length} outages.`));
       for (const x of radar.alerts) {
-        const b = el("button", `ralert item${x.level === "drop" ? " drop" : ""}`); b.type = "button";
-        b.append(el("b", null, `${x.name}: ${x.level === "down" ? "down" : `${x.gap} fewer online`}`), el("span", null, x.healthy ? said(x) : `${said(x)} · its session feed has stopped`));
+        const b = el("button", `ralert item${x.level === "down" ? "" : " drop"}`); b.type = "button";
+        if (x.level === "nofeed") b.append(el("b", null, `${x.name}: no data since ${x.since ? hhmm(x.since) : "?"}`), el("span", null, `count frozen at ${x.open} (usually ${x.usual}): the ERP stopped hearing from this router, so whether its customers are online isn't known. Check the router, or its OLT's ONT list.`));
+        else b.append(el("b", null, `${x.name}: ${x.level === "down" ? "down" : `${x.gap} fewer online`}`), el("span", null, x.healthy ? said(x) : `${said(x)} · its session feed has stopped`));
         b.onclick = () => { view.nas = x.ip; drawBody(); }; out.push(b);
       }
       if (!radar.alerts.length && !radar.learning) out.push(el("div", "rok", `All ${radar.list.filter((x) => x.level !== "silent").length} routers at their usual level.`));
@@ -69,8 +72,8 @@
         const cv = el("canvas"); cv.setAttribute("aria-hidden", "true");
         const n = el("span", "n"); n.append(String(x.open));
         const dark = x.level === "silent" && (area?.active ?? 0) >= 20; // nothing reported, yet customers on file: the feed or the router
-        n.append(el("small", x.level === "down" ? "late" : x.level === "drop" || dark ? "warn" : null, dark ? "no sessions: check" : x.level === "silent" ? "no sessions" : x.usual == null ? "learning" : x.gap > 0 ? `−${x.gap} vs ${x.usual}` : `usual ${x.usual}`));
-        b.append(el("span", `dot ${x.level === "learning" ? "" : x.level}`), el("span", "t", x.name), cv, n, el("span", "s", [area?.district, area ? `${area.active} active customers` : ""].filter(Boolean).join(" · ") || " "));
+        n.append(el("small", x.level === "down" ? "late" : x.level === "drop" || x.level === "nofeed" || dark ? "warn" : null, dark ? "no sessions: check" : x.level === "nofeed" ? "no data" : x.level === "silent" ? "no sessions" : x.usual == null ? "learning" : x.gap > 0 ? `−${x.gap} vs ${x.usual}` : `usual ${x.usual}`));
+        b.append(el("span", `dot ${x.level === "learning" ? "" : x.level === "nofeed" ? "drop" : x.level}`), el("span", "t", x.name), cv, n, el("span", "s", [area?.district, area ? `${area.active} active customers` : ""].filter(Boolean).join(" · ") || " "));
         b.onclick = () => { view.nas = x.ip; drawBody(); };
         out.push(b); spark(cv, x.series, x.usual);
       });
@@ -83,7 +86,7 @@
       wrap.append(back);
       if (!x) { wrap.append(el("p", "note", "This router isn't in the feed any more.")); return wrap; }
       const who = el("div", "who rise"), pill = el("span", "pill");
-      pill.append(el("span", `dot ${x.level}`), { down: "Down", drop: "Dropping", ok: "Normal", learning: "Learning", silent: "No sessions" }[x.level]);
+      pill.append(el("span", `dot ${x.level === "nofeed" ? "drop" : x.level}`), { down: "Down", drop: "Dropping", nofeed: "No data", ok: "Normal", learning: "Learning", silent: "No sessions" }[x.level]);
       who.append(el("h3", null, x.name), pill); wrap.append(who);
       const stats = el("div", "stats rise"); stats.style.cssText = "margin-top:12px;padding:0"; stats.style.setProperty("--i", "1");
       const stat = (v, l, cls = "") => { const d = el("div", `stat ${cls}`); d.append(el("b", null, String(v)), el("span", null, l)); stats.append(d); return d; };
@@ -144,7 +147,7 @@
       const a = radar?.alerts ?? [];
       b.append(el("span", `dot ${a.some((x) => x.level === "down") ? "down" : a.length ? "drop" : radar && !radar.learning ? "ok" : ""}`), el("span", "t", "Outage radar"),
         el("span", "r", a.length ? `${a.length} alert${a.length > 1 ? "s" : ""}` : radar?.learning ? "learning" : radar ? "all normal" : ""),
-        el("span", "s", a.length ? a.map((x) => `${x.name} ${x.level === "down" ? "down" : `−${x.gap}`}`).join(" · ") : "Routers against their usual level; who's offline, by village and on a map"));
+        el("span", "s", a.length ? a.map((x) => `${x.name} ${x.level === "down" ? "down" : x.level === "nofeed" ? "no data" : `−${x.gap}`}`).join(" · ") : "Routers against their usual level; who's offline, by village and on a map"));
       b.onclick = () => { view.mode = "radar"; view.nas = null; view.card = null; drawBody(); }; return b;
     }
 

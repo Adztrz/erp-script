@@ -19,10 +19,10 @@
       const l = await incList(), now = Date.now();
       for (const x of r.alerts) {
         let inc = l.find((i) => i.state === "open" && i.kind === "router" && i.key === x.ip);
-        const what = `${x.name} ${x.level === "down" ? "down" : "dropping"}: ${x.open} online, usually ${x.usual}`;
+        const what = x.level === "nofeed" ? `${x.name}: no session data since ${x.since ? hhmm(x.since) : "?"} (count frozen at ${x.open})` : `${x.name} ${x.level === "down" ? "down" : "dropping"}: ${x.open} online, usually ${x.usual}`;
         if (!inc) {
           inc = { id: `${now.toString(36)}${Math.random().toString(36).slice(2, 5)}`, kind: "router", key: x.ip, title: `Router ${x.name}`, start: x.since || now, state: "open", level: x.level, affected: x.gap, peak: x.gap, log: [[x.since || now, what, 1]] };
-          l.push(inc); notify(`Gangguan: ${inc.title}`, `${x.gap} sesi hilang · ${x.open} online, biasanya ${x.usual}`, inc);
+          l.push(inc); notify(x.level === "nofeed" ? `Tanpa data: ${inc.title}` : `Gangguan: ${inc.title}`, x.level === "nofeed" ? `Data sesi berhenti sejak ${x.since ? hhmm(x.since) : "?"}: cek router atau OLT` : `${x.gap} sesi hilang · ${x.open} online, biasanya ${x.usual}`, inc);
         } else {
           if (x.level !== inc.level) inc.log.push([now, what, 1]);
           inc.level = x.level; inc.affected = x.gap; inc.peak = Math.max(inc.peak || 0, x.gap);
@@ -79,7 +79,7 @@
       list.forEach((inc, i) => {
         const b = el("button", "item rise incident"); b.type = "button"; b.style.setProperty("--i", String(i));
         b.append(el("span", "dot down"), el("span", "t", inc.title), el("span", "r", `${lama(Date.now() - inc.start)}`),
-          el("span", "s", inc.kind === "router" ? `${inc.affected} sessions below usual · since ${hhmm(inc.start)}` : `${inc.affected} of ${inc.users.length} still down · since ${hhmm(inc.start)}`));
+          el("span", "s", inc.kind === "router" ? `${inc.level === "nofeed" ? "no session data" : `${inc.affected} sessions below usual`} · since ${hhmm(inc.start)}` : `${inc.affected} of ${inc.users.length} still down · since ${hhmm(inc.start)}`));
         b.onclick = () => { view.mode = "incident"; view.inc = inc.id; view.card = null; drawBody(); }; out.push(b);
       });
       if ("Notification" in window && (!ls.get(NOTIFY, false) || Notification.permission !== "granted")) {
@@ -99,7 +99,7 @@
       who.append(el("h3", null, inc.title), pill); wrap.append(who);
       const facts = el("dl", "facts rise"), fact = (k, v) => { if (v) facts.append(el("dt", null, k), el("dd", null, v)); };
       fact("Since", `${hhmm(inc.start)} · ${lama((inc.end || Date.now()) - inc.start)}${inc.end ? ` · recovered ${hhmm(inc.end)}` : ""}`);
-      fact("Affected", inc.kind === "router" ? `${inc.affected} sessions below usual now · ${inc.peak} at the worst` : `${inc.affected} of ${inc.users.length} still down · ${inc.size || "?"} on the port`);
+      fact("Affected", inc.kind === "router" ? (inc.level === "nofeed" ? "Not known: the ERP stopped receiving this router's sessions" : `${inc.affected} sessions below usual now · ${inc.peak} at the worst`) : `${inc.affected} of ${inc.users.length} still down · ${inc.size || "?"} on the port`);
       wrap.append(facts);
       // timeline and a note
       const tl = el("div", "near timeline rise"), e = el("div", "eyebrow"); e.style.margin = "0 0 6px"; e.append("Timeline"); tl.append(e);

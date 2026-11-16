@@ -12,7 +12,7 @@
     }
     function incidentEntry(inc) {
       const notes = inc.log.filter(([, , auto]) => !auto).map(([t, x]) => `${hhmm(t)} ${x}`);
-      const what = inc.kind === "router" ? `${inc.title} turun, ${inc.peak} sesi di bawah biasanya` : `${inc.title}: ${inc.peak} pelanggan mati bersamaan${inc.size ? ` (dari ${inc.size} di port)` : ""}`;
+      const what = inc.kind === "router" ? (inc.level === "nofeed" && !inc.peak ? `${inc.title}: data sesi berhenti masuk ke ERP` : `${inc.title} turun, ${inc.peak} sesi di bawah biasanya`) : `${inc.title}: ${inc.peak} pelanggan mati bersamaan${inc.size ? ` (dari ${inc.size} di port)` : ""}`;
       return `${hhmm(inc.start)} ${what}.${notes.length ? ` ${notes.join("; ")}.` : ""} ${inc.state === "open" ? "Masih berlangsung." : `Pulih ${hhmm(inc.end)} (${lama(inc.end - inc.start)}).`}`;
     }
     function journalView() {

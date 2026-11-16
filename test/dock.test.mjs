@@ -69,3 +69,17 @@ test("Fix RO: the session's router by its NAS address and main name", () => {
   assert.equal(realRo({ ip: "10.200.0.58", ro: "TREMAS" }), null); // address and name disagree: no guess
   assert.equal(realRo({ ro: "PUNUNG" }), null);
 });
+
+test("radar: a stopped feed with its count frozen is 'no data', a real collapse is 'down'", () => {
+  const { assess } = load(dock, ["median", "assess"]);
+  const now = Date.now(), stop = new Date(now - 107 * 60000).toISOString(), s = [];
+  for (let t = now - 115 * 60000; t <= now; t += 5 * 60000) s.push({ t, c: { "10.0.0.1": 1981, "10.0.0.2": t > now - 15 * 60000 ? 40 : 600, "10.0.0.3": 500 } });
+  const r = assess({ at: now, s, feed: [
+    { ip: "10.0.0.1", name: "RO A", open: 1981, healthy: false, newest: stop }, // feed stopped, count frozen
+    { ip: "10.0.0.2", name: "RO B", open: 40, healthy: true, newest: new Date(now).toISOString() }, // sessions really gone
+    { ip: "10.0.0.3", name: "RO C", open: 500, healthy: true, newest: new Date(now).toISOString() } ] });
+  const lv = Object.fromEntries(r.list.map((x) => [x.name, x.level]));
+  assert.deepEqual(lv, { "RO B": "down", "RO A": "nofeed", "RO C": "ok" });
+  assert.equal(r.list.find((x) => x.name === "RO A").since, Date.parse(stop));
+  assert.equal(r.alerts.length, 2);
+});

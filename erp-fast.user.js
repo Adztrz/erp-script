@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      3.0
+// @version      3.1
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -2430,7 +2430,9 @@
       if (fab) { const a = radar?.alerts ?? []; fab.classList.toggle("alert", a.length > 0); fab.title = a.length ? `Dock (Alt+K): outage on ${a.map((x) => x.name).join(", ")}` : "Dock (Alt+K)"; }
       if (panel && (view.mode === "radar" || (!view.q.trim() && !view.card && !view.mode)) && radar?.at !== radarDrawn) drawBody();
     }
-    // each router against its own last two hours (ignoring the latest 20 minutes): down below 30%, a drop from 8 or 10%
+    // each router against its own last two hours (ignoring the latest 20 minutes): down below 30%, a drop from 8 or 10%;
+    // a feed that stopped with its count still near usual is "nofeed": the ERP stopped hearing from the router, so the
+    // count is frozen, not a measured outage (the router, or only its RADIUS accounting, may be down: check it)
     function assess(hist) {
       const now = Date.now(), samples = hist.s || [], list = [];
       for (const f of hist.feed || []) {
@@ -2440,16 +2442,18 @@
         let level = "ok";
         if (usual == null) level = cur > 0 ? "learning" : "silent";
         else if (usual < 5 && cur < 5) level = "silent";
-        else if (cur <= usual * 0.3 || (!f.healthy && usual >= 10)) level = "down";
+        else if (cur <= usual * 0.3) level = "down";
+        else if (!f.healthy && usual >= 10) level = "nofeed";
         else if (gap >= step) level = "drop";
         let since = null; // when the dip began
-        if (level === "down" || level === "drop") for (let i = vals.length - 1; i >= 0 && vals[i][1] <= usual - step / 2; i--) since = vals[i][0];
+        if (level === "nofeed") since = Date.parse(f.newest) || null;
+        else if (level === "down" || level === "drop") for (let i = vals.length - 1; i >= 0 && vals[i][1] <= usual - step / 2; i--) since = vals[i][0];
         list.push({ ...f, usual, gap, level, since, series: vals.filter(([t]) => t > now - 24 * 3600000) });
       }
-      const rank = { down: 0, drop: 1, learning: 2, ok: 3, silent: 4 };
+      const rank = { down: 0, nofeed: 1, drop: 2, learning: 3, ok: 4, silent: 5 };
       list.sort((a, b) => rank[a.level] - rank[b.level] || b.open - a.open);
-      const alerts = list.filter((x) => x.level === "down" || x.level === "drop"), watched = list.filter((x) => x.level !== "silent");
-      return { at: hist.at, list, alerts, wide: watched.length >= 4 && alerts.length >= watched.length * 0.6, learning: !samples.length || now - samples[0].t < 25 * 60000 };
+      const alerts = list.filter((x) => x.level === "down" || x.level === "drop" || x.level === "nofeed"), watched = list.filter((x) => x.level !== "silent");
+      return { at: hist.at, list, alerts, wide: watched.length >= 4 && alerts.filter((x) => x.level !== "nofeed").length >= watched.length * 0.6, learning: !samples.length || now - samples[0].t < 25 * 60000 };
     }
     const nameNorm = (n) => String(n || "").toUpperCase().replace(/^RO[\s-]+/, "").trim();
     async function areaNames() {
@@ -2523,9 +2527,12 @@
       radarDrawn = radar.at;
       const said = (x) => `${x.open} online · usually ${x.usual}${x.since ? ` · since ${hhmm(x.since)}` : ""}`;
       if (radar.wide) out.push(el("div", "ralert", "Most routers dropped at once: more likely the central link or the RADIUS server than one area."));
+      const stuck = radar.alerts.filter((x) => x.level === "nofeed");
+      if (stuck.length > 1 && new Set(stuck.map((x) => x.since)).size === 1) out.push(el("div", "ralert drop", `${stuck.length} routers stopped reporting at the same moment (${hhmm(stuck[0].since)}): more likely the RADIUS accounting link or the ERP's reader than ${stuck.length} outages.`));
       for (const x of radar.alerts) {
-        const b = el("button", `ralert item${x.level === "drop" ? " drop" : ""}`); b.type = "button";
-        b.append(el("b", null, `${x.name}: ${x.level === "down" ? "down" : `${x.gap} fewer online`}`), el("span", null, x.healthy ? said(x) : `${said(x)} · its session feed has stopped`));
+        const b = el("button", `ralert item${x.level === "down" ? "" : " drop"}`); b.type = "button";
+        if (x.level === "nofeed") b.append(el("b", null, `${x.name}: no data since ${x.since ? hhmm(x.since) : "?"}`), el("span", null, `count frozen at ${x.open} (usually ${x.usual}): the ERP stopped hearing from this router, so whether its customers are online isn't known. Check the router, or its OLT's ONT list.`));
+        else b.append(el("b", null, `${x.name}: ${x.level === "down" ? "down" : `${x.gap} fewer online`}`), el("span", null, x.healthy ? said(x) : `${said(x)} · its session feed has stopped`));
         b.onclick = () => { view.nas = x.ip; drawBody(); }; out.push(b);
       }
       if (!radar.alerts.length && !radar.learning) out.push(el("div", "rok", `All ${radar.list.filter((x) => x.level !== "silent").length} routers at their usual level.`));
@@ -2537,8 +2544,8 @@
         const cv = el("canvas"); cv.setAttribute("aria-hidden", "true");
         const n = el("span", "n"); n.append(String(x.open));
         const dark = x.level === "silent" && (area?.active ?? 0) >= 20; // nothing reported, yet customers on file: the feed or the router
-        n.append(el("small", x.level === "down" ? "late" : x.level === "drop" || dark ? "warn" : null, dark ? "no sessions: check" : x.level === "silent" ? "no sessions" : x.usual == null ? "learning" : x.gap > 0 ? `−${x.gap} vs ${x.usual}` : `usual ${x.usual}`));
-        b.append(el("span", `dot ${x.level === "learning" ? "" : x.level}`), el("span", "t", x.name), cv, n, el("span", "s", [area?.district, area ? `${area.active} active customers` : ""].filter(Boolean).join(" · ") || " "));
+        n.append(el("small", x.level === "down" ? "late" : x.level === "drop" || x.level === "nofeed" || dark ? "warn" : null, dark ? "no sessions: check" : x.level === "nofeed" ? "no data" : x.level === "silent" ? "no sessions" : x.usual == null ? "learning" : x.gap > 0 ? `−${x.gap} vs ${x.usual}` : `usual ${x.usual}`));
+        b.append(el("span", `dot ${x.level === "learning" ? "" : x.level === "nofeed" ? "drop" : x.level}`), el("span", "t", x.name), cv, n, el("span", "s", [area?.district, area ? `${area.active} active customers` : ""].filter(Boolean).join(" · ") || " "));
         b.onclick = () => { view.nas = x.ip; drawBody(); };
         out.push(b); spark(cv, x.series, x.usual);
       });
@@ -2551,7 +2558,7 @@
       wrap.append(back);
       if (!x) { wrap.append(el("p", "note", "This router isn't in the feed any more.")); return wrap; }
       const who = el("div", "who rise"), pill = el("span", "pill");
-      pill.append(el("span", `dot ${x.level}`), { down: "Down", drop: "Dropping", ok: "Normal", learning: "Learning", silent: "No sessions" }[x.level]);
+      pill.append(el("span", `dot ${x.level === "nofeed" ? "drop" : x.level}`), { down: "Down", drop: "Dropping", nofeed: "No data", ok: "Normal", learning: "Learning", silent: "No sessions" }[x.level]);
       who.append(el("h3", null, x.name), pill); wrap.append(who);
       const stats = el("div", "stats rise"); stats.style.cssText = "margin-top:12px;padding:0"; stats.style.setProperty("--i", "1");
       const stat = (v, l, cls = "") => { const d = el("div", `stat ${cls}`); d.append(el("b", null, String(v)), el("span", null, l)); stats.append(d); return d; };
@@ -2612,7 +2619,7 @@
       const a = radar?.alerts ?? [];
       b.append(el("span", `dot ${a.some((x) => x.level === "down") ? "down" : a.length ? "drop" : radar && !radar.learning ? "ok" : ""}`), el("span", "t", "Outage radar"),
         el("span", "r", a.length ? `${a.length} alert${a.length > 1 ? "s" : ""}` : radar?.learning ? "learning" : radar ? "all normal" : ""),
-        el("span", "s", a.length ? a.map((x) => `${x.name} ${x.level === "down" ? "down" : `−${x.gap}`}`).join(" · ") : "Routers against their usual level; who's offline, by village and on a map"));
+        el("span", "s", a.length ? a.map((x) => `${x.name} ${x.level === "down" ? "down" : x.level === "nofeed" ? "no data" : `−${x.gap}`}`).join(" · ") : "Routers against their usual level; who's offline, by village and on a map"));
       b.onclick = () => { view.mode = "radar"; view.nas = null; view.card = null; drawBody(); }; return b;
     }
 
@@ -2637,10 +2644,10 @@
       const l = await incList(), now = Date.now();
       for (const x of r.alerts) {
         let inc = l.find((i) => i.state === "open" && i.kind === "router" && i.key === x.ip);
-        const what = `${x.name} ${x.level === "down" ? "down" : "dropping"}: ${x.open} online, usually ${x.usual}`;
+        const what = x.level === "nofeed" ? `${x.name}: no session data since ${x.since ? hhmm(x.since) : "?"} (count frozen at ${x.open})` : `${x.name} ${x.level === "down" ? "down" : "dropping"}: ${x.open} online, usually ${x.usual}`;
         if (!inc) {
           inc = { id: `${now.toString(36)}${Math.random().toString(36).slice(2, 5)}`, kind: "router", key: x.ip, title: `Router ${x.name}`, start: x.since || now, state: "open", level: x.level, affected: x.gap, peak: x.gap, log: [[x.since || now, what, 1]] };
-          l.push(inc); notify(`Gangguan: ${inc.title}`, `${x.gap} sesi hilang · ${x.open} online, biasanya ${x.usual}`, inc);
+          l.push(inc); notify(x.level === "nofeed" ? `Tanpa data: ${inc.title}` : `Gangguan: ${inc.title}`, x.level === "nofeed" ? `Data sesi berhenti sejak ${x.since ? hhmm(x.since) : "?"}: cek router atau OLT` : `${x.gap} sesi hilang · ${x.open} online, biasanya ${x.usual}`, inc);
         } else {
           if (x.level !== inc.level) inc.log.push([now, what, 1]);
           inc.level = x.level; inc.affected = x.gap; inc.peak = Math.max(inc.peak || 0, x.gap);
@@ -2697,7 +2704,7 @@
       list.forEach((inc, i) => {
         const b = el("button", "item rise incident"); b.type = "button"; b.style.setProperty("--i", String(i));
         b.append(el("span", "dot down"), el("span", "t", inc.title), el("span", "r", `${lama(Date.now() - inc.start)}`),
-          el("span", "s", inc.kind === "router" ? `${inc.affected} sessions below usual · since ${hhmm(inc.start)}` : `${inc.affected} of ${inc.users.length} still down · since ${hhmm(inc.start)}`));
+          el("span", "s", inc.kind === "router" ? `${inc.level === "nofeed" ? "no session data" : `${inc.affected} sessions below usual`} · since ${hhmm(inc.start)}` : `${inc.affected} of ${inc.users.length} still down · since ${hhmm(inc.start)}`));
         b.onclick = () => { view.mode = "incident"; view.inc = inc.id; view.card = null; drawBody(); }; out.push(b);
       });
       if ("Notification" in window && (!ls.get(NOTIFY, false) || Notification.permission !== "granted")) {
@@ -2717,7 +2724,7 @@
       who.append(el("h3", null, inc.title), pill); wrap.append(who);
       const facts = el("dl", "facts rise"), fact = (k, v) => { if (v) facts.append(el("dt", null, k), el("dd", null, v)); };
       fact("Since", `${hhmm(inc.start)} · ${lama((inc.end || Date.now()) - inc.start)}${inc.end ? ` · recovered ${hhmm(inc.end)}` : ""}`);
-      fact("Affected", inc.kind === "router" ? `${inc.affected} sessions below usual now · ${inc.peak} at the worst` : `${inc.affected} of ${inc.users.length} still down · ${inc.size || "?"} on the port`);
+      fact("Affected", inc.kind === "router" ? (inc.level === "nofeed" ? "Not known: the ERP stopped receiving this router's sessions" : `${inc.affected} sessions below usual now · ${inc.peak} at the worst`) : `${inc.affected} of ${inc.users.length} still down · ${inc.size || "?"} on the port`);
       wrap.append(facts);
       // timeline and a note
       const tl = el("div", "near timeline rise"), e = el("div", "eyebrow"); e.style.margin = "0 0 6px"; e.append("Timeline"); tl.append(e);
@@ -2759,7 +2766,7 @@
     }
     function incidentEntry(inc) {
       const notes = inc.log.filter(([, , auto]) => !auto).map(([t, x]) => `${hhmm(t)} ${x}`);
-      const what = inc.kind === "router" ? `${inc.title} turun, ${inc.peak} sesi di bawah biasanya` : `${inc.title}: ${inc.peak} pelanggan mati bersamaan${inc.size ? ` (dari ${inc.size} di port)` : ""}`;
+      const what = inc.kind === "router" ? (inc.level === "nofeed" && !inc.peak ? `${inc.title}: data sesi berhenti masuk ke ERP` : `${inc.title} turun, ${inc.peak} sesi di bawah biasanya`) : `${inc.title}: ${inc.peak} pelanggan mati bersamaan${inc.size ? ` (dari ${inc.size} di port)` : ""}`;
       return `${hhmm(inc.start)} ${what}.${notes.length ? ` ${notes.join("; ")}.` : ""} ${inc.state === "open" ? "Masih berlangsung." : `Pulih ${hhmm(inc.end)} (${lama(inc.end - inc.start)}).`}`;
     }
     function journalView() {
