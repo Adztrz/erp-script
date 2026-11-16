@@ -119,6 +119,7 @@ An outage becomes one **incident** with its own record, shown at the top of the 
 
 The script is built from `src/`: parts of the one script cut at its own section headings, joined in file-name order by `node build.mjs` into `erp-fast.user.js` (the file Tampermonkey installs). The parts aren't modules; joining them gives back the same code, so a part can use anything from another.
 
+- Versions (`@version` in `src/000-header.js`, which Tampermonkey needs raised to update): a fix bumps the last number (3.2 → 3.2.1), a new feature the middle (3.3), a big release the first (4.0).
 - `node build.mjs` builds; `node build.mjs --check` fails when the built file isn't what `src/` gives.
 - `node --test` runs the tests in `test/`: the build, the router bridge's scheduling and address check, replay, down-for times and Fix RO's router matching.
 - `git config core.hooksPath hooks` once, and every commit is checked; GitHub runs the same check on every push.
