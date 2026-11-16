@@ -100,6 +100,12 @@
           if (gen !== st.gen) throw new Error("stale");
           r = await realFetch(cfg.url(part, p, size), { headers: { authorization: st.auth } });
         }
+        // a page the server timed out on (502–504, seen on LDN while busy) is asked again twice before giving up
+        for (let again = 0; r.status >= 502 && r.status <= 504 && again < 2; again++) {
+          await new Promise((ok) => setTimeout(ok, 3000 * (again + 1)));
+          if (gen !== st.gen) throw new Error("stale");
+          r = await realFetch(cfg.url(part, p, size), { headers: { authorization: st.auth } });
+        }
         if (!r.ok) throw new Error(`The server said ${r.status}`);
         const j = await r.json(); st.done++; draw();
         return j;
@@ -109,7 +115,7 @@
       const got = new Map([[1, cfg.items(first).map(slim)]]);
       // carry on from an earlier, unfinished download of the same list (same size, under a day old)
       const half = await idbGet(`${part}~partial`);
-      if (half?.pages && half.total === total && Date.now() - half.at < 24 * 60 * 60 * 1000)
+      if (half?.pages && half.total === total && Date.now() - half.at < Math.min(24 * 60 * 60 * 1000, 2 * ttlOf(part)))
         for (const [n, rows] of Object.entries(half.pages)) if (Number(n) > 1 && rows.length) got.set(Number(n), rows);
       st.done = got.size;
       const save = () => idbPut(`${part}~partial`, { at: half?.at && half.total === total ? half.at : Date.now(), total, pages: Object.fromEntries(got) });
@@ -317,6 +323,17 @@
     }
 
     const here = () => location.pathname.startsWith(cfg.path);
+    // kept fresh in the background (cfg.every): one tab at a time and only while it's on screen; the other tabs take up
+    // its copy, so every tab's search and Dock show the newest list
+    if (cfg.every) setInterval(async () => {
+      if (document.hidden || cfg.parts) return;
+      const kept = await idbGet(st.key);
+      if (st.byPart && kept?.rows && kept.at > (st.byPart.get(st.key)?.at || 0)) { st.byPart.set(st.key, { ...kept, rows: index(kept.rows) }); show([st.key]); }
+      const lock = `erpFast.auto.${cfg.path}`; let last = 0; try { last = Number(localStorage.getItem(lock)) || 0; } catch { /* no storage */ }
+      if (st.loading || Date.now() - last < cfg.every || Date.now() - (kept?.at || 0) < cfg.every) return; // a fresh copy (any tab's) waits
+      try { localStorage.setItem(lock, String(Date.now())); } catch { /* no storage */ }
+      load();
+    }, 30000);
     document.addEventListener("input", (e) => {
       if (st.picking || !here() || !(e.target instanceof HTMLInputElement) || !e.target.matches(cfg.input)) return;
       st.input = e.target; st.query = e.target.value; st.sel = 0;
@@ -439,7 +456,7 @@
     // LDN Radius → Pelanggan: all RADIUS customers (no passwords are loaded)
     fastSearch({
       path: "/ldn-radius", api: "/api/admin/ldn-radius/", input: 'input[placeholder*="username PPPoE"]', noun: "customers",
-      key: () => "all", pageSize: 500,
+      key: () => "all", pageSize: 500, every: 5 * 60000, ttl: () => 5 * 60000, // online status changes all day: read again every 5 minutes
       url: (key, p, size) => `/api/admin/ldn-radius/customers?page=${p}&pageSize=${size}`,
       total: (j) => j.total || 0, items: (j) => j.customers || [],
       keep: ["username", "nama", "phone", "address", "desa", "kecamatanErp", "district", "router", "paket", "isolir", "online", "expirasi", "isInactive",
