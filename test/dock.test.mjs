@@ -83,3 +83,13 @@ test("radar: a stopped feed with its count frozen is 'no data', a real collapse 
   assert.equal(r.list.find((x) => x.name === "RO A").since, Date.parse(stop));
   assert.equal(r.alerts.length, 2);
 });
+
+test("customers on a router with no data show unknown, not online", () => {
+  const feedStuck = new Map([["PUNUNG", 1]]);
+  const { state } = load(dock, ["roWord", "stuckSince", "state"], { feedStuck });
+  assert.equal(state({ router: "RO PUNUNG NEW", online: true }), "unk");
+  assert.equal(state({ router: "RO PUNUNG", online: false }), "unk");
+  assert.equal(state({ router: "RO PUNUNG NEW", online: true, isolir: true }), "iso");
+  assert.equal(state({ router: "RO JATIGUNUNG", online: true }), "on");
+  assert.equal(state({ router: "RO JATIGUNUNG", online: false }), "off");
+});

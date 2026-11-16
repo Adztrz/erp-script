@@ -10,5 +10,5 @@
         const d = metres(c, p); if (d <= radius) out.push({ r: x, d, p }); }
       return { c, list: out.sort((a, b) => a.d - b.d) };
     }
-    const state = (r) => (r.isolir ? "iso" : r.online ? "on" : "off");
+    const state = (r) => (r.isolir ? "iso" : stuckSince(r) ? "unk" : r.online ? "on" : "off");
 

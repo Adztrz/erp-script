@@ -8,6 +8,11 @@
     IDB = "erp-fast", IDB_STORE = "ldn";
   const fold = (s) => String(s ?? "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
   const digits = (s) => { let d = String(s ?? "").replace(/\D/g, ""); if (d.startsWith("62")) d = "0" + d.slice(2); return d; };
+  // routers whose session feed stopped (the radar's "no data"): their customers' online flag is frozen, so it's shown
+  // as unknown instead of green or white. Filled by the radar; the RO is matched by its main name word.
+  const feedStuck = new Map();
+  const roWord = (s) => String(s || "").toUpperCase().replace(/^RO[\s-]+/, "").trim().split(/[\s-]/)[0];
+  const stuckSince = (r) => feedStuck.get(roWord(r.router));
   const rupiah = (n) => (Number.isFinite(Number(n)) ? `Rp ${Number(n).toLocaleString("id-ID")}` : "");
 
   // How a word sounds, roughly: old Indonesian spellings made modern (oe→u, dj→j, tj→c, sj→sy, ch→kh, ph→f)
@@ -352,6 +357,7 @@
     .erp-fs li { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; gap: 4px 12px; align-items: center; padding: 8px 10px; border-radius: 6px; cursor: pointer; }
     .erp-fs .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
     .erp-fs .dot.on { background: var(--green); } .erp-fs .dot.iso, .erp-fs .dot.bad { background: var(--red); } .erp-fs .dot.off { background: #efefed; } /* isolir red, offline white */
+    .erp-fs .dot.unk { background: transparent; box-shadow: inset 0 0 0 1.5px #8a8b8a; } /* its router stopped reporting: not known */
     .erp-fs .nm { color: var(--paper); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .erp-fs .nm mark { background: none; color: var(--bone); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: rgba(233,225,220,.4); }
     .erp-fs .us { font: 12px/1.4 "JetBrains Mono", ui-monospace, Menlo, monospace; color: var(--body); }
@@ -440,7 +446,7 @@
         "lat", "lng", "ip", "tglAktif", "ontSerial", "mitra", "customerDocId"], // the Dock shows these, and finds neighbours by lat/lng
       name: (r) => r.nama, id: (r) => r.username, pick: (r) => r.username,
       hay: (r) => [r.username, r.address, r.desa, r.kecamatanErp, r.district, r.router, r.paket], numbers: (r) => [r.phone],
-      dot: (r) => (r.isolir ? "iso" : r.online ? "on" : "off"), sub: (r) => [r.paket, r.desa, r.router, r.phone],
+      dot: (r) => (r.isolir ? "iso" : stuckSince(r) ? "unk" : r.online ? "on" : "off"), sub: (r) => [r.paket, r.desa, r.router, r.phone],
     }),
     // Finance → Invoices: the month the page shows (it follows the month you pick there)
     fastSearch({

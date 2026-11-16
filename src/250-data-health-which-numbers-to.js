@@ -175,7 +175,8 @@
     function cardView(r) {
       const wrap = el("div", "card");
       const back = el("button", "back", "← Back"); back.type = "button"; back.onclick = () => { view.card = null; drawBody(); panel.querySelector("input")?.focus(); };
-      const who = el("div", "who rise"); const pill = el("span", "pill"); pill.append(el("span", `dot ${state(r)}`), r.isolir ? "Isolir" : r.online ? "Online" : "Offline");
+      const who = el("div", "who rise"); const pill = el("span", "pill"); pill.append(el("span", `dot ${state(r)}`), r.isolir ? "Isolir" : stuckSince(r) ? `Unknown since ${hhmm(stuckSince(r))}` : r.online ? "Online" : "Offline");
+      if (!r.isolir && stuckSince(r)) pill.title = `${r.router} stopped reporting sessions at ${hhmm(stuckSince(r))}, so whether this customer is online isn't known (the ERP still says ${r.online ? "online" : "offline"}).`;
       who.append(el("h3", null, r.nama || r.username), pill);
       const facts = el("dl", "facts rise"); facts.style.setProperty("--i", "1");
       const fact = (label, value, opts = {}) => { if (!value) return; const dd = el("dd", opts.mono ? "mono" : null, value);

@@ -51,6 +51,7 @@
       .erp-dock .item svg { width: 16px; height: 16px; color: var(--muted); }
       .erp-dock .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); justify-self: center; }
       .erp-dock .dot.on { background: var(--green); box-shadow: 0 0 0 3px rgba(85,188,130,.15); }
+      .erp-dock .dot.unk { background: transparent; box-shadow: inset 0 0 0 1.5px var(--muted); }
       .erp-dock .dot.iso, .erp-dock .dot.bad { background: var(--red); box-shadow: 0 0 0 3px rgba(241,38,20,.15); }
       .erp-dock .dot.off { background: #efefed; } /* online green, isolir red, offline white, as on the maps */
       .erp-dock .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; padding: 0 6px; }

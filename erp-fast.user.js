@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      3.1
+// @version      3.2
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -1121,6 +1121,11 @@
     IDB = "erp-fast", IDB_STORE = "ldn";
   const fold = (s) => String(s ?? "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
   const digits = (s) => { let d = String(s ?? "").replace(/\D/g, ""); if (d.startsWith("62")) d = "0" + d.slice(2); return d; };
+  // routers whose session feed stopped (the radar's "no data"): their customers' online flag is frozen, so it's shown
+  // as unknown instead of green or white. Filled by the radar; the RO is matched by its main name word.
+  const feedStuck = new Map();
+  const roWord = (s) => String(s || "").toUpperCase().replace(/^RO[\s-]+/, "").trim().split(/[\s-]/)[0];
+  const stuckSince = (r) => feedStuck.get(roWord(r.router));
   const rupiah = (n) => (Number.isFinite(Number(n)) ? `Rp ${Number(n).toLocaleString("id-ID")}` : "");
 
   // How a word sounds, roughly: old Indonesian spellings made modern (oe→u, dj→j, tj→c, sj→sy, ch→kh, ph→f)
@@ -1465,6 +1470,7 @@
     .erp-fs li { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; gap: 4px 12px; align-items: center; padding: 8px 10px; border-radius: 6px; cursor: pointer; }
     .erp-fs .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
     .erp-fs .dot.on { background: var(--green); } .erp-fs .dot.iso, .erp-fs .dot.bad { background: var(--red); } .erp-fs .dot.off { background: #efefed; } /* isolir red, offline white */
+    .erp-fs .dot.unk { background: transparent; box-shadow: inset 0 0 0 1.5px #8a8b8a; } /* its router stopped reporting: not known */
     .erp-fs .nm { color: var(--paper); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .erp-fs .nm mark { background: none; color: var(--bone); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: rgba(233,225,220,.4); }
     .erp-fs .us { font: 12px/1.4 "JetBrains Mono", ui-monospace, Menlo, monospace; color: var(--body); }
@@ -1553,7 +1559,7 @@
         "lat", "lng", "ip", "tglAktif", "ontSerial", "mitra", "customerDocId"], // the Dock shows these, and finds neighbours by lat/lng
       name: (r) => r.nama, id: (r) => r.username, pick: (r) => r.username,
       hay: (r) => [r.username, r.address, r.desa, r.kecamatanErp, r.district, r.router, r.paket], numbers: (r) => [r.phone],
-      dot: (r) => (r.isolir ? "iso" : r.online ? "on" : "off"), sub: (r) => [r.paket, r.desa, r.router, r.phone],
+      dot: (r) => (r.isolir ? "iso" : stuckSince(r) ? "unk" : r.online ? "on" : "off"), sub: (r) => [r.paket, r.desa, r.router, r.phone],
     }),
     // Finance → Invoices: the month the page shows (it follows the month you pick there)
     fastSearch({
@@ -1680,7 +1686,7 @@
         const d = metres(c, p); if (d <= radius) out.push({ r: x, d, p }); }
       return { c, list: out.sort((a, b) => a.d - b.d) };
     }
-    const state = (r) => (r.isolir ? "iso" : r.online ? "on" : "off");
+    const state = (r) => (r.isolir ? "iso" : stuckSince(r) ? "unk" : r.online ? "on" : "off");
 
     // ---- drawing ----
     let fab = null, panel = null, corner = null, view = { q: "", sel: 0, card: null, radius: 300 }, items = [];
@@ -1735,6 +1741,7 @@
       .erp-dock .item svg { width: 16px; height: 16px; color: var(--muted); }
       .erp-dock .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); justify-self: center; }
       .erp-dock .dot.on { background: var(--green); box-shadow: 0 0 0 3px rgba(85,188,130,.15); }
+      .erp-dock .dot.unk { background: transparent; box-shadow: inset 0 0 0 1.5px var(--muted); }
       .erp-dock .dot.iso, .erp-dock .dot.bad { background: var(--red); box-shadow: 0 0 0 3px rgba(241,38,20,.15); }
       .erp-dock .dot.off { background: #efefed; } /* online green, isolir red, offline white, as on the maps */
       .erp-dock .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; padding: 0 6px; }
@@ -2426,6 +2433,7 @@
       }
       const hist = await idbGet("radar");
       radar = hist ? assess(hist) : null;
+      feedStuck.clear(); for (const x of radar?.list || []) if (x.level === "nofeed") feedStuck.set(roWord(x.name), x.since || hist.at);
       if (fetched) incRadar(radar).catch(() => {}); // only the tab that took the reading: one alert, not one per tab
       if (fab) { const a = radar?.alerts ?? []; fab.classList.toggle("alert", a.length > 0); fab.title = a.length ? `Dock (Alt+K): outage on ${a.map((x) => x.name).join(", ")}` : "Dock (Alt+K)"; }
       if (panel && (view.mode === "radar" || (!view.q.trim() && !view.card && !view.mode)) && radar?.at !== radarDrawn) drawBody();
@@ -3783,7 +3791,8 @@
     function cardView(r) {
       const wrap = el("div", "card");
       const back = el("button", "back", "← Back"); back.type = "button"; back.onclick = () => { view.card = null; drawBody(); panel.querySelector("input")?.focus(); };
-      const who = el("div", "who rise"); const pill = el("span", "pill"); pill.append(el("span", `dot ${state(r)}`), r.isolir ? "Isolir" : r.online ? "Online" : "Offline");
+      const who = el("div", "who rise"); const pill = el("span", "pill"); pill.append(el("span", `dot ${state(r)}`), r.isolir ? "Isolir" : stuckSince(r) ? `Unknown since ${hhmm(stuckSince(r))}` : r.online ? "Online" : "Offline");
+      if (!r.isolir && stuckSince(r)) pill.title = `${r.router} stopped reporting sessions at ${hhmm(stuckSince(r))}, so whether this customer is online isn't known (the ERP still says ${r.online ? "online" : "offline"}).`;
       who.append(el("h3", null, r.nama || r.username), pill);
       const facts = el("dl", "facts rise"); facts.style.setProperty("--i", "1");
       const fact = (label, value, opts = {}) => { if (!value) return; const dd = el("dd", opts.mono ? "mono" : null, value);
