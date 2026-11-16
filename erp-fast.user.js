@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      3.2.1
+// @version      3.2.2
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -2745,6 +2745,8 @@
       const inc = (incidents || []).find((x) => x.id === id), wrap = el("div", "card");
       const back = el("button", "back", "← Back"); back.type = "button"; back.onclick = () => { view.mode = null; view.inc = null; drawBody(); }; wrap.append(back);
       if (!inc) { wrap.append(el("p", "note", "This incident isn't kept any more.")); return wrap; }
+      // who's down comes from the drop log, which another tab may have read: take its newest copy (once a minute)
+      if (Date.now() - (view.incDropsRead || 0) > 60000) { view.incDropsRead = Date.now(); idbGet("drops").then((d) => { if (d && d.at !== drops?.at) { drops = d; if (view.mode === "incident") drawBody(); } }); }
       const who = el("div", "who rise"), pill = el("span", "pill"); pill.append(el("span", `dot ${inc.state === "open" ? "down" : "on"}`), inc.state === "open" ? "Open" : "Recovered");
       who.append(el("h3", null, inc.title), pill); wrap.append(who);
       const facts = el("dl", "facts rise"), fact = (k, v) => { if (v) facts.append(el("dt", null, k), el("dd", null, v)); };

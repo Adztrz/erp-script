@@ -95,6 +95,8 @@
       const inc = (incidents || []).find((x) => x.id === id), wrap = el("div", "card");
       const back = el("button", "back", "← Back"); back.type = "button"; back.onclick = () => { view.mode = null; view.inc = null; drawBody(); }; wrap.append(back);
       if (!inc) { wrap.append(el("p", "note", "This incident isn't kept any more.")); return wrap; }
+      // who's down comes from the drop log, which another tab may have read: take its newest copy (once a minute)
+      if (Date.now() - (view.incDropsRead || 0) > 60000) { view.incDropsRead = Date.now(); idbGet("drops").then((d) => { if (d && d.at !== drops?.at) { drops = d; if (view.mode === "incident") drawBody(); } }); }
       const who = el("div", "who rise"), pill = el("span", "pill"); pill.append(el("span", `dot ${inc.state === "open" ? "down" : "on"}`), inc.state === "open" ? "Open" : "Recovered");
       who.append(el("h3", null, inc.title), pill); wrap.append(who);
       const facts = el("dl", "facts rise"), fact = (k, v) => { if (v) facts.append(el("dt", null, k), el("dd", null, v)); };
