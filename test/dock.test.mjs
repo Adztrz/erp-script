@@ -131,4 +131,5 @@ test("bulk lunas: a pasted name and village finds the customer there, the villag
   const two = byName("Sutini Sumberagung");
   assert.deepEqual(two.map((h) => h.r.username), ["sutini0904", "sutini0612"]); // both fit; the village's code first
   assert.equal(byName("Jarmo")[0].vil, ""); // no village named: every Jarmo
+  assert.equal(best[0].score, 4); // sounds like the name (2), the village's code (1), the username spells the name (1)
 });

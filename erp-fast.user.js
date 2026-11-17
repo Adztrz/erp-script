@@ -2193,6 +2193,7 @@
           if (!hit) { score = -1; break; } score += hit; }
         if (score < 0) continue;
         if (code && codeOf(r.username) === code) score += 1;
+        if (sound(String(r.username).toLowerCase().match(/^[a-z]+/)?.[0] || "") === sound(name.join(""))) score += 1; // aprin0904 for "Aprin"
         if (r.isInactive) score -= 2;
         out.push({ r, score });
       }
