@@ -95,7 +95,7 @@
       if (crew && (crew.field.length || crew.ka.length)) {
         const box = el("div", "techs rise"); box.style.cssText = "margin-top:10px"; box.style.setProperty("--i", "1");
         for (const t of [...crew.field, ...crew.ka]) { const row = el("div", "team"), kind = teamKind(t.name);
-          row.append(el("span", `tag k-${kind}`, kind === "area" ? "KA" : "Field"), el("b", null, titleCase(t.name)), el("span", "sub", t.members.map((m) => (m.lead ? `${titleCase(m.n)} (lead)` : titleCase(m.n))).join(", ") || "no members"));
+          row.append(el("span", `tag k-${kind}`, kind === "area" ? "KA" : "Field"), el("b", null, titleCase(t.name).replace(/^Ka /, "KA ")), el("span", "sub", t.members.map((m) => (m.lead ? `${titleCase(m.n)} (lead)` : titleCase(m.n))).join(", ") || "no members"));
           box.append(row); }
         wrap.append(box);
       }
