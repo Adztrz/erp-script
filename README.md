@@ -106,6 +106,7 @@ Every Dock map (Nearby, a router's offline customers, a PON port) reads as a bri
 
 An outage becomes one **incident** with its own record, shown at the top of the Dock while it's open:
 
+- **Outage history** (Tools, or type "history" / "riwayat"): the incidents this browser recorded (kept 90 days; 7 before Dock 3.6) for the last 7, 30 or 90 days. Router incidents that start within 15 minutes of each other count as one outage, placed with the network map at the top of the branch (or at the router above two or more failing branches). It shows outages and data stops, total time, where they start (how many times, total and longest, how many routers each took with it, when last), the time of day they start, the recent ones (each opens its incident) and the PON ports that keep failing.
 - **Router incidents** open when the Outage radar sees a router well below its usual level, and close by themselves when it's back. Deeper drops (dropping → down) are logged.
 - **PON incidents** open when 3 or more customers of one PON port (and a quarter of the port) go down in the same drop-log reading, and close when 80% of them are back online.
 - **Desktop alerts:** switch them on once (*Desktop alerts for new incidents*). The ERP tab that took the reading sends one alert per new incident and per recovery, even with the Dock closed; clicking it opens the incident.

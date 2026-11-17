@@ -130,6 +130,7 @@
       else if (view.mode === "map") parts.push(...mapView());
       else if (view.mode === "incident") parts.push(incidentView(view.inc));
       else if (view.mode === "journal") parts.push(...journalView());
+      else if (view.mode === "history") parts.push(...historyView());
       else if (!view.q.trim()) parts.push(...homeView());
       else parts.push(...resultsView(view.q));
       body.replaceChildren(...parts);
@@ -150,7 +151,7 @@
       SHORTCUTS.forEach(([label, path, icon], i) => { const t = el("button", "tile rise"); t.type = "button"; t.style.setProperty("--i", String(i)); t.append(svg(icon), label);
         t.onclick = path === "/customer-map" ? () => { view.mode = "map"; view.mapFull = true; view.card = null; drawBody(); } : () => go(path); g.append(t); }); // Map Terpadu: the Dock's own map
       out.push(g);
-      const e4 = el("div", "eyebrow"); e4.append("Tools"); out.push(e4, radarItem(0), journalItem(1), boardItem(2, "pon"), boardItem(3, "signal"), boardItem(4, "health"), spkToolItem(5, "bulk"), spkToolItem(6, "review")); // Bulk Lunas shows when searched (or a list is pasted)
+      const e4 = el("div", "eyebrow"); e4.append("Tools"); out.push(e4, radarItem(0), historyItem(1), journalItem(2), boardItem(3, "pon"), boardItem(4, "signal"), boardItem(5, "health"), spkToolItem(6, "bulk"), spkToolItem(7, "review")); // Bulk Lunas shows when searched (or a list is pasted)
       const recent = ls.get(RECENT, []).map((u) => customers?.find((r) => r.username === u)).filter(Boolean);
       if (recent.length) { const e3 = el("div", "eyebrow"); e3.append("Recent customers"); out.push(e3, ...recent.slice(0, 5).map(custItem)); }
       if (!customers) out.push(el("p", "note", "To look customers up here, open LDN Radius → Pelanggan once: its fast search keeps the list in this browser."));
@@ -166,10 +167,10 @@
       }
       const tool = /^(bul|lun|bay|tan|pay|mas|mar)/.test(fold(q)), net = /^(rad|out|gan|mat|rou|off|jar|dow|put)/.test(fold(q));
       const sig = /^(sig|sin|red|rx|lem|wea|dbm|red)/.test(fold(q)), pn = /^(pon|odp|spl|olt|lin)/.test(fold(q)), hl = /^(dat|hea|sta|pol|wro|sal|kes)/.test(fold(q));
-      const sb = /^(spk|bul|akt|tar|tia|cek|wor|pla|buat)/.test(fold(q)), rq = /^(rev|app|set|que|ver|lap|qc|per)/.test(fold(q));
+      const hs = /^(his|riw|sej|ula|rep|ser)/.test(fold(q)), sb = /^(spk|bul|akt|tar|tia|cek|wor|pla|buat)/.test(fold(q)), rq = /^(rev|app|set|que|ver|lap|qc|per)/.test(fold(q));
       if (sb || rq) { const e = el("div", "eyebrow"); e.append("SPK tools"); out.push(e); if (sb) out.push(spkToolItem(0, "bulk")); if (rq) out.push(spkToolItem(1, "review")); }
-      if (tool || net || sig || pn || hl) { const e = el("div", "eyebrow"); e.append("Tools"); out.push(e); if (net) out.push(radarItem(0)); if (pn) out.push(boardItem(1, "pon")); if (sig) out.push(boardItem(2, "signal")); if (hl) out.push(boardItem(3, "health")); if (tool) out.push(toolItem(4)); }
-      if (!cs.length && !ps.length && !tool && !net && !sig && !pn && !hl && !sb && !rq && !snLike(q)) out.push(el("p", "note", customers ? "Nothing matches all of those words." : "No customer list yet: open LDN Radius → Pelanggan once."));
+      if (tool || net || sig || pn || hl || hs) { const e = el("div", "eyebrow"); e.append("Tools"); out.push(e); if (net) out.push(radarItem(0)); if (net || hs) out.push(historyItem(0)); if (pn) out.push(boardItem(1, "pon")); if (sig) out.push(boardItem(2, "signal")); if (hl) out.push(boardItem(3, "health")); if (tool) out.push(toolItem(4)); }
+      if (!cs.length && !ps.length && !tool && !net && !sig && !pn && !hl && !sb && !rq && !hs && !snLike(q)) out.push(el("p", "note", customers ? "Nothing matches all of those words." : "No customer list yet: open LDN Radius → Pelanggan once."));
       return out;
     }
     function cardView(r) {

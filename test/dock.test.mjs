@@ -158,3 +158,16 @@ test("topology: routers that fail together are traced to where it starts", () =>
   // nothing on the map failing: no faults
   assert.equal(run({ "RO HUB": "ok", "RO LONE": "ok" }).f.length, 0);
 });
+
+test("outage history: routers failing within 15 minutes are one event, placed at the top of the branch", () => {
+  const map = "RO CORE > RO HUB, RO NORTH\nRO HUB > RO ALPHA, RO BETA\nRO ALPHA > RO ALPHA SATU";
+  const { histEvents } = load(dock, ["TOPO", "topoKey", "topology", "topoState", "topoName", "HIST_GAP", "histEvents"], { ls: { get: () => map }, topoMemo: null }, ["histEvents"]);
+  const t0 = Date.now() - 86400000, m = 60000;
+  const inc = (name, start, mins, level = "down") => ({ kind: "router", key: name, title: `Router ${name}`, start: t0 + start * m, end: t0 + (start + mins) * m, state: "recovered", level, peak: 100, log: [] });
+  const { events } = histEvents([
+    inc("RO ALPHA", 0, 60), inc("RO ALPHA SATU", 5, 50),       // one branch: one event at ALPHA
+    inc("RO ALPHA", 300, 20, "nofeed"), inc("RO BETA", 310, 20, "nofeed"), // two branches of HUB together: at HUB
+    inc("RO NORTH", 600, 30), inc("RO LAIN", 900, 10),          // on its own; one not on the map
+  ], t0 - m);
+  assert.deepEqual(events.map((e) => [e.where.join("+"), e.behind, e.level]), [["RO ALPHA", 1, "down"], ["RO HUB", 1, "nofeed"], ["RO NORTH", 0, "down"], ["RO LAIN", 0, "down"]]);
+});

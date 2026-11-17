@@ -2,8 +2,8 @@
     // An outage becomes one incident with its own record: a router well below its usual level (the radar), or a PON
     // port where several customers went down in the same drop-log reading. The tab that took the reading opens,
     // updates and closes them (so one desktop alert, not one per tab); each keeps a timeline of what happened and what
-    // was done, which the shift journal turns into Jurnal Piket entries. Kept 7 days, in this browser.
-    const INC_KEEP = 7 * 86400000, NOTIFY = "erpDock.notify";
+    // was done, which the shift journal turns into Jurnal Piket entries. Kept 90 days, in this browser (Outage history).
+    const INC_KEEP = 90 * 86400000, NOTIFY = "erpDock.notify";
     let incidents = null;
     const incList = async () => (incidents = (await idbGet("incidents")) || []);
     const incSave = (l) => { incidents = l.filter((x) => x.state === "open" || (x.end || x.start) > Date.now() - INC_KEEP); idbPut("incidents", incidents); };

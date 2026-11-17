@@ -253,6 +253,8 @@
       .erp-dock .rrow .n small { display: block; font-size: 11px; color: var(--muted); }
       .erp-dock .trow { grid-template-columns: 18px minmax(0, 1fr) auto; padding-top: 5px; padding-bottom: 5px; } .erp-dock .trow:disabled { opacity: .55; cursor: default; }
       .erp-dock .trow .n { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; } .erp-dock .topoedit textarea { width: 100%; margin: 8px 0; }
+      .erp-dock .hbars { display: grid; grid-template-columns: repeat(24, 1fr); gap: 2px; height: 56px; margin: 4px 10px 0; align-items: end; }
+      .erp-dock .hbars .hb { height: 100%; display: flex; align-items: end; background: rgba(255,255,255,.03); border-radius: 2px; } .erp-dock .hbars i { display: block; width: 100%; min-height: 1px; background: #ff6a5c; border-radius: 2px; opacity: .8; }
       .erp-dock .rrow .crew { color: var(--paper); opacity: .72; white-space: normal; } /* wraps: the KA is at the end */ .erp-dock .ralert span.crew { margin-top: 2px; opacity: .85; }
       .erp-dock .rrow .n small.late { color: #ff6a5c; } .erp-dock .rrow .n small.warn { color: #e0b252; }
       .erp-dock .dot.drop { background: #e0b252; } .erp-dock .dot.down { background: var(--red); box-shadow: 0 0 0 3px rgba(241,38,20,.18); } .erp-dock .dot.ok { background: var(--green); }
