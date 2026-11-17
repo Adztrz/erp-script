@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      3.4.3
+// @version      3.4.4
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -1934,7 +1934,7 @@
       .erp-dock .mrow .x { grid-column: 2 / 4; display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 12px; color: var(--muted); }
       .erp-dock .mrow .x label { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; } .erp-dock .mrow .x input { width: 13px; height: 13px; }
       .erp-dock .late, .erp-dock .brow .late { color: #ff6a5c; } .erp-dock .good, .erp-dock .brow .good { color: var(--green); } .erp-dock .warn, .erp-dock .brow .warn, .erp-dock .brow .h .warn { color: #e0b252; }
-      .erp-dock .picks { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; } .erp-dock .picks .btn { height: 28px; font: 12px "JetBrains Mono", ui-monospace, monospace; }
+      .erp-dock .picks { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; } .erp-dock .picks .btn { min-height: 28px; height: auto; font: 12px "JetBrains Mono", ui-monospace, monospace; } .erp-dock .picks .who { font: 12px Inter, system-ui, sans-serif; color: var(--muted); }
       .erp-dock .bform { display: grid; gap: 8px; margin-top: 10px; } .erp-dock .bform:empty { display: none; }
       .erp-dock .bpay { position: sticky; bottom: -10px; display: grid; gap: 8px; margin: 10px -6px -10px; padding: 10px 12px 12px; border-top: 1px solid var(--hair); background: var(--card); }
       .erp-dock .sum { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; } .erp-dock .sum b { color: var(--paper); font-weight: 500; }
@@ -2164,11 +2164,53 @@
       await radius(bulk.rows.flatMap((r) => r.invs));
       bulk.phase = "review"; bulkDraw();
     }
+    // "Djumangat Kebondalem": a name and a village, read the way the customer search reads it. The village (the last word
+    // or two, when they name one) narrows to its customers; each name word must match the name, exactly, by its start or
+    // by sound (Djumangat = Jumangat). Usernames in a village mostly end in its code (Kebondalem 0904), which breaks ties;
+    // the code alone isn't enough, since two villages can share one (0904 is also Mangunharjo).
+    let villages = null;
+    function villageIndex() {
+      if (villages?.rows === customers) return villages;
+      const by = new Map(), codes = new Map();
+      for (const r of customers) { const k = vkey(r.desa || ""); if (!k) continue; (by.get(k) || by.set(k, []).get(k)).push(r);
+        const c = codeOf(r.username); if (c) { const m = codes.get(k) || codes.set(k, new Map()).get(k); m.set(c, (m.get(c) || 0) + 1); } }
+      const code = new Map(); for (const [k, m] of codes) { const [c, n] = [...m].sort((a, b) => b[1] - a[1])[0]; if (n >= by.get(k).length / 2) code.set(k, c); }
+      return (villages = { rows: customers, by, code });
+    }
+    const codeOf = (u) => String(u || "").toLowerCase().match(/(\d{3,})[a-z]?$/)?.[1] || "";
+    function nameLookup(q) {
+      if (!customers) return [];
+      const words = fold(q).split(" ").filter((w) => w && !/^\d+$/.test(w)), vi = villageIndex(); if (!words.length) return [];
+      let vil = "", name = words;
+      for (const n of [2, 1]) { const k = words.slice(-n).join(""); if (words.length > n && vi.by.has(k)) { vil = k; name = words.slice(0, -n); break; } }
+      const code = vil ? vi.code.get(vil) : "", pool = vil ? vi.by.get(vil) : customers;
+      const out = [];
+      for (const r of pool) {
+        const mine = r._name.split(" "); let score = 0;
+        for (const w of name) { const sw = sound(w);
+          const hit = mine.includes(w) ? 3 : mine.some((x) => w.length >= 3 && (x.startsWith(w) || (x.length >= 4 && w.startsWith(x)))) || mine.some((x) => sound(x) === sw) ? 2
+            : w.length >= 4 && fuzzyHit(sw, mine.map(sound), w.length >= 9 ? 2 : 1) ? 1 : 0;
+          if (!hit) { score = -1; break; } score += hit; }
+        if (score < 0) continue;
+        if (code && codeOf(r.username) === code) score += 1;
+        if (r.isInactive) score -= 2;
+        out.push({ r, score });
+      }
+      return out.sort((a, b) => b.score - a.score || (a.r._name < b.r._name ? -1 : 1)).map((x) => ({ ...x, vil, top: name.length * 3 }));
+    }
+    const about = (u) => { const r = customers?.find((x) => String(x.username).toLowerCase() === String(u).toLowerCase()); return r ? `${titleCase(r.nama || "")}${r.desa && !fold(r.nama).includes(fold(r.desa)) ? ` · ${titleCase(r.desa)}` : ""}` : ""; };
     async function lookup(row) {
       row.state = "looking"; row.err = "";
       try {
         // every month of that customer in one request (with month=all the server ignores the year); ~3 s each
         const q = row.pick || row.token, low = q.toLowerCase();
+        if (!row.pick && /\s/.test(q.trim()) && customers) {
+          const hits = nameLookup(q);
+          // one clear best (a better score than the next, every name word matching well): taken, but left unticked
+          if (hits.length && (hits.length === 1 || hits[0].score > hits[1].score) && hits[0].score >= hits[0].top - 1 && (hits[0].vil || hits.length === 1)) {
+            row.pick = hits[0].r.username; row.guess = true; return await lookup(row); }
+          if (hits.length) { row.state = "pick"; row.cands = hits.slice(0, 6).map((h) => h.r.username); return; }
+        }
         const get = (text) => api(`/api/finance/invoices/list?month=all&year=${new Date().getFullYear()}&page=1&pageSize=200&q=${encodeURIComponent(text)}`).then((j) => j.invoices || []);
         const all = [...new Map((await get(q)).map((v) => [v.invoiceNumber, v])).values()];
         const mine = all.filter((v) => String(v.radiusUsername || "").toLowerCase() === low);
@@ -2376,7 +2418,7 @@
         const h = el("div", "h");
         if (r.state === "found") {
           h.append(el("b", null, r.name || r.user), el("span", `mono${r.guess ? " warn" : ""}`, r.user.toLowerCase() !== r.token.toLowerCase() ? `${r.token} → ${r.user}` : r.user)); box.append(h);
-          if (r.guess && r.invs.length) box.append(el("div", "sub warn", "Not the exact username you pasted: tick it if this is the right customer"));
+          if (r.guess && r.invs.length) box.append(el("div", "sub warn", /\s/.test(r.token.trim()) ? "Found by name and village: tick it if this is the right customer" : "Not the exact username you pasted: tick it if this is the right customer"));
           box.append(el("div", "sub", [r.where, r.paidTo ? `paid to ${r.paidTo}` : "nothing paid yet"].filter(Boolean).join(" · ")));
           if (!r.invs.length) box.append(el("div", "sub good", "Nothing unpaid"));
           box.append(...monthRows(r, ri, busy, bulk, bulkDraw));
@@ -2385,10 +2427,10 @@
           if (r.state === "error") box.append(el("div", "sub late", r.err));
           if (r.state === "dupe") box.append(el("div", "sub", "Same customer as a line above: shown once"));
           if (r.state === "none") box.append(el("div", "sub", "No invoice has this username or anything close. Check the spelling."));
-          if (r.state === "pick") box.append(el("div", "sub", "No exact username: is it one of these?"));
+          if (r.state === "pick") box.append(el("div", "sub", /\s/.test(r.token.trim()) ? "More than one customer fits: which one?" : "No exact username: is it one of these?"));
           if (r.state === "pick" || r.state === "error") {
             const p = el("div", "picks");
-            for (const c of r.state === "pick" ? r.cands : [r.pick || r.token]) { const b = el("button", "btn", c); b.type = "button"; b.disabled = busy;
+            for (const c of r.state === "pick" ? r.cands : [r.pick || r.token]) { const b = el("button", "btn", c), who = r.state === "pick" ? about(c) : ""; if (who) b.append(el("span", "who", ` · ${who}`)); b.type = "button"; b.disabled = busy;
               b.onclick = async () => { r.pick = c; r.guess = false; await lookup(r); await radius(r.invs); bulkDraw(); }; p.append(b); }
             box.append(p);
           }

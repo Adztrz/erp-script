@@ -49,11 +49,53 @@
       await radius(bulk.rows.flatMap((r) => r.invs));
       bulk.phase = "review"; bulkDraw();
     }
+    // "Djumangat Kebondalem": a name and a village, read the way the customer search reads it. The village (the last word
+    // or two, when they name one) narrows to its customers; each name word must match the name, exactly, by its start or
+    // by sound (Djumangat = Jumangat). Usernames in a village mostly end in its code (Kebondalem 0904), which breaks ties;
+    // the code alone isn't enough, since two villages can share one (0904 is also Mangunharjo).
+    let villages = null;
+    function villageIndex() {
+      if (villages?.rows === customers) return villages;
+      const by = new Map(), codes = new Map();
+      for (const r of customers) { const k = vkey(r.desa || ""); if (!k) continue; (by.get(k) || by.set(k, []).get(k)).push(r);
+        const c = codeOf(r.username); if (c) { const m = codes.get(k) || codes.set(k, new Map()).get(k); m.set(c, (m.get(c) || 0) + 1); } }
+      const code = new Map(); for (const [k, m] of codes) { const [c, n] = [...m].sort((a, b) => b[1] - a[1])[0]; if (n >= by.get(k).length / 2) code.set(k, c); }
+      return (villages = { rows: customers, by, code });
+    }
+    const codeOf = (u) => String(u || "").toLowerCase().match(/(\d{3,})[a-z]?$/)?.[1] || "";
+    function nameLookup(q) {
+      if (!customers) return [];
+      const words = fold(q).split(" ").filter((w) => w && !/^\d+$/.test(w)), vi = villageIndex(); if (!words.length) return [];
+      let vil = "", name = words;
+      for (const n of [2, 1]) { const k = words.slice(-n).join(""); if (words.length > n && vi.by.has(k)) { vil = k; name = words.slice(0, -n); break; } }
+      const code = vil ? vi.code.get(vil) : "", pool = vil ? vi.by.get(vil) : customers;
+      const out = [];
+      for (const r of pool) {
+        const mine = r._name.split(" "); let score = 0;
+        for (const w of name) { const sw = sound(w);
+          const hit = mine.includes(w) ? 3 : mine.some((x) => w.length >= 3 && (x.startsWith(w) || (x.length >= 4 && w.startsWith(x)))) || mine.some((x) => sound(x) === sw) ? 2
+            : w.length >= 4 && fuzzyHit(sw, mine.map(sound), w.length >= 9 ? 2 : 1) ? 1 : 0;
+          if (!hit) { score = -1; break; } score += hit; }
+        if (score < 0) continue;
+        if (code && codeOf(r.username) === code) score += 1;
+        if (r.isInactive) score -= 2;
+        out.push({ r, score });
+      }
+      return out.sort((a, b) => b.score - a.score || (a.r._name < b.r._name ? -1 : 1)).map((x) => ({ ...x, vil, top: name.length * 3 }));
+    }
+    const about = (u) => { const r = customers?.find((x) => String(x.username).toLowerCase() === String(u).toLowerCase()); return r ? `${titleCase(r.nama || "")}${r.desa && !fold(r.nama).includes(fold(r.desa)) ? ` · ${titleCase(r.desa)}` : ""}` : ""; };
     async function lookup(row) {
       row.state = "looking"; row.err = "";
       try {
         // every month of that customer in one request (with month=all the server ignores the year); ~3 s each
         const q = row.pick || row.token, low = q.toLowerCase();
+        if (!row.pick && /\s/.test(q.trim()) && customers) {
+          const hits = nameLookup(q);
+          // one clear best (a better score than the next, every name word matching well): taken, but left unticked
+          if (hits.length && (hits.length === 1 || hits[0].score > hits[1].score) && hits[0].score >= hits[0].top - 1 && (hits[0].vil || hits.length === 1)) {
+            row.pick = hits[0].r.username; row.guess = true; return await lookup(row); }
+          if (hits.length) { row.state = "pick"; row.cands = hits.slice(0, 6).map((h) => h.r.username); return; }
+        }
         const get = (text) => api(`/api/finance/invoices/list?month=all&year=${new Date().getFullYear()}&page=1&pageSize=200&q=${encodeURIComponent(text)}`).then((j) => j.invoices || []);
         const all = [...new Map((await get(q)).map((v) => [v.invoiceNumber, v])).values()];
         const mine = all.filter((v) => String(v.radiusUsername || "").toLowerCase() === low);

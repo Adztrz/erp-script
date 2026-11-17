@@ -75,7 +75,7 @@
         const h = el("div", "h");
         if (r.state === "found") {
           h.append(el("b", null, r.name || r.user), el("span", `mono${r.guess ? " warn" : ""}`, r.user.toLowerCase() !== r.token.toLowerCase() ? `${r.token} → ${r.user}` : r.user)); box.append(h);
-          if (r.guess && r.invs.length) box.append(el("div", "sub warn", "Not the exact username you pasted: tick it if this is the right customer"));
+          if (r.guess && r.invs.length) box.append(el("div", "sub warn", /\s/.test(r.token.trim()) ? "Found by name and village: tick it if this is the right customer" : "Not the exact username you pasted: tick it if this is the right customer"));
           box.append(el("div", "sub", [r.where, r.paidTo ? `paid to ${r.paidTo}` : "nothing paid yet"].filter(Boolean).join(" · ")));
           if (!r.invs.length) box.append(el("div", "sub good", "Nothing unpaid"));
           box.append(...monthRows(r, ri, busy, bulk, bulkDraw));
@@ -84,10 +84,10 @@
           if (r.state === "error") box.append(el("div", "sub late", r.err));
           if (r.state === "dupe") box.append(el("div", "sub", "Same customer as a line above: shown once"));
           if (r.state === "none") box.append(el("div", "sub", "No invoice has this username or anything close. Check the spelling."));
-          if (r.state === "pick") box.append(el("div", "sub", "No exact username: is it one of these?"));
+          if (r.state === "pick") box.append(el("div", "sub", /\s/.test(r.token.trim()) ? "More than one customer fits: which one?" : "No exact username: is it one of these?"));
           if (r.state === "pick" || r.state === "error") {
             const p = el("div", "picks");
-            for (const c of r.state === "pick" ? r.cands : [r.pick || r.token]) { const b = el("button", "btn", c); b.type = "button"; b.disabled = busy;
+            for (const c of r.state === "pick" ? r.cands : [r.pick || r.token]) { const b = el("button", "btn", c), who = r.state === "pick" ? about(c) : ""; if (who) b.append(el("span", "who", ` · ${who}`)); b.type = "button"; b.disabled = busy;
               b.onclick = async () => { r.pick = c; r.guess = false; await lookup(r); await radius(r.invs); bulkDraw(); }; p.append(b); }
             box.append(p);
           }

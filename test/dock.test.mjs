@@ -118,3 +118,17 @@ test("radar: a router's crew is the field teams and KA covering most of its cust
   assert.equal(crewLine(crew), "Tim Karang 1 (Andi), Tim Karang 2 (Cahyo) · KA Dedi Kurnia");
   assert.equal(crewOf("RO NONE"), null);
 });
+
+test("bulk lunas: a pasted name and village finds the customer there, the village code breaking ties", () => {
+  const rows = [["darmo0904", "DJARMO KARANGREJO", "Karangrejo"], ["jarmo0904", "JARMO SUMBERAGUNG", "Sumberagung"], ["jarmo0511", "JARMO WETAN", "Wetan"],
+    ["sutini0904", "SUTINI SUMBERAGUNG", "Sumberagung"], ["sutini0612", "SUTINI ASIH SUMBERAGUNG", "Sumberagung"], ["budi0904", "BUDI SUMBERAGUNG", "Sumberagung"]];
+  const { fold } = load(dock, ["fold"]);
+  const customers = rows.map(([username, nama, desa]) => ({ username, nama, desa, _name: fold(nama) }));
+  const { nameLookup: byName } = load(dock, ["codeOf", "villageIndex", "nameLookup", "sound", "vkey"], { customers, fold, villages: null, fuzzyHit: () => false }, ["nameLookup"]);
+  const best = byName("Djarmo Sumberagung");
+  assert.equal(best[0].r.username, "jarmo0904"); // the Jarmo in that village, not darmo0904 elsewhere
+  assert.equal(best.length, 1);
+  const two = byName("Sutini Sumberagung");
+  assert.deepEqual(two.map((h) => h.r.username), ["sutini0904", "sutini0612"]); // both fit; the village's code first
+  assert.equal(byName("Jarmo")[0].vil, ""); // no village named: every Jarmo
+});
