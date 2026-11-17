@@ -46,10 +46,13 @@
     }
     function radarView() {
       if (view.nas) return [routerView(view.nas)];
+      if (view.topoEdit) return [topoEditor(() => { view.topoEdit = false; drawBody(); })];
       const out = [], head = el("div", "rhead"), e = el("div", "eyebrow"); e.style.margin = "10px 6px 6px"; e.append("Outage radar");
       const tools = el("div", "tools"), again = el("button", "btn", "Check now"); again.type = "button";
       again.onclick = async () => { again.disabled = true; again.textContent = "Checking…"; await radarTick(true); drawBody(); };
-      tools.append(radar?.at ? `checked ${ago(radar.at)}` : "", again); head.append(e, tools); out.push(head);
+      const mapBtn = el("button", "btn", topology().names.size ? "Topology" : "Add topology"); mapBtn.type = "button"; mapBtn.title = "The links between routers, so an outage is traced to where it starts";
+      mapBtn.onclick = () => { view.topoEdit = true; drawBody(); };
+      tools.append(radar?.at ? `checked ${ago(radar.at)}` : "", mapBtn, again); head.append(e, tools); out.push(head);
       if (radarOff) { out.push(el("p", "note late", radarOff)); if (!radar) return out; }
       if (!radar) { out.push(el("p", "note ld", "Reading the routers…")); radarTick(true); return out; }
       radarDrawn = radar.at;
@@ -57,7 +60,18 @@
       if (radar.wide) out.push(el("div", "ralert", "Most routers dropped at once: more likely the central link or the RADIUS server than one area."));
       const stuck = radar.alerts.filter((x) => x.level === "nofeed");
       if (stuck.length > 1 && new Set(stuck.map((x) => x.since)).size === 1) out.push(el("div", "ralert drop", `${stuck.length} routers stopped reporting at the same moment (${hhmm(stuck[0].since)}): more likely the RADIUS accounting link or the ERP's reader than ${stuck.length} outages.`));
+      // with the map: one card per fault, and the routers behind it aren't repeated as alerts of their own
+      const tf = topoFaults(radar), covered = new Set();
+      for (const f of tf?.faults || []) {
+        const t = faultText(tf, f), b = el("button", `ralert item${[f.x, ...f.behind.map((k) => tf.at.get(k))].some((x) => x?.level === "down") ? "" : " drop"}`); b.type = "button";
+        b.append(el("b", null, t.head), el("span", null, t.body));
+        for (const k of f.behind) { const x = tf.at.get(k); if (x) covered.add(x.ip); }
+        if (f.x && topoBad(f.x)) covered.add(f.x.ip);
+        const crew = crewLine(crewOf(areaOf(f.x?.name || tf.at.get(f.heads[0])?.name || "")?.router)); if (crew) b.append(el("span", "crew", crew));
+        const go = f.x || tf.at.get(f.heads[0]); if (go) b.onclick = () => { view.nas = go.ip; drawBody(); }; out.push(b);
+      }
       for (const x of radar.alerts) {
+        if (covered.has(x.ip)) continue;
         const b = el("button", `ralert item${x.level === "down" ? "" : " drop"}`); b.type = "button";
         if (x.level === "nofeed") b.append(el("b", null, `${x.name}: no data since ${x.since ? hhmm(x.since) : "?"}`), el("span", null, `count frozen at ${x.open} (usually ${x.usual}): the ERP stopped hearing from this router, so whether its customers are online isn't known. Check the router, or its OLT's ONT list.`));
         else b.append(el("b", null, `${x.name}: ${x.level === "down" ? "down" : `${x.gap} fewer online`}`), el("span", null, x.healthy ? said(x) : `${said(x)} · its session feed has stopped`));
@@ -66,6 +80,7 @@
       }
       if (!radar.alerts.length && !radar.learning) out.push(el("div", "rok", `All ${radar.list.filter((x) => x.level !== "silent").length} routers at their usual level.`));
       if (radar.learning) out.push(el("p", "note", "Learning each router's usual level from a reading every 5 minutes while an ERP tab is open. Alerts start after about 25 minutes; the lines fill in over a day."));
+      if (tf) { const e3 = el("div", "eyebrow"); e3.append("Network"); out.push(e3, topoTree(tf, (ip) => { view.nas = ip; drawBody(); })); }
       const e2 = el("div", "eyebrow"); e2.append("Routers"); out.push(e2);
       radar.list.forEach((x, i) => {
         const b = el("button", "item rrow rise"); b.type = "button"; b.style.setProperty("--i", String(Math.min(i, 14)));

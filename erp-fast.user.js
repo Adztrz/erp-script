@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      3.4.4
+// @version      3.5
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -1960,6 +1960,8 @@
       .erp-dock .rrow canvas, .erp-dock canvas.spark { width: 72px; height: 22px; margin: 0; }
       .erp-dock .rrow .n { text-align: right; font-size: 13px; color: var(--paper); font-variant-numeric: tabular-nums; }
       .erp-dock .rrow .n small { display: block; font-size: 11px; color: var(--muted); }
+      .erp-dock .trow { grid-template-columns: 18px minmax(0, 1fr) auto; padding-top: 5px; padding-bottom: 5px; } .erp-dock .trow:disabled { opacity: .55; cursor: default; }
+      .erp-dock .trow .n { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; } .erp-dock .topoedit textarea { width: 100%; margin: 8px 0; }
       .erp-dock .rrow .crew { color: var(--paper); opacity: .72; white-space: normal; } /* wraps: the KA is at the end */ .erp-dock .ralert span.crew { margin-top: 2px; opacity: .85; }
       .erp-dock .rrow .n small.late { color: #ff6a5c; } .erp-dock .rrow .n small.warn { color: #e0b252; }
       .erp-dock .dot.drop { background: #e0b252; } .erp-dock .dot.down { background: var(--red); box-shadow: 0 0 0 3px rgba(241,38,20,.18); } .erp-dock .dot.ok { background: var(--green); }
@@ -2164,10 +2166,10 @@
       await radius(bulk.rows.flatMap((r) => r.invs));
       bulk.phase = "review"; bulkDraw();
     }
-    // "Djumangat Kebondalem": a name and a village, read the way the customer search reads it. The village (the last word
+    // "Djarmo Sumberagung": a name and a village, read the way the customer search reads it. The village (the last word
     // or two, when they name one) narrows to its customers; each name word must match the name, exactly, by its start or
-    // by sound (Djumangat = Jumangat). Usernames in a village mostly end in its code (Kebondalem 0904), which breaks ties;
-    // the code alone isn't enough, since two villages can share one (0904 is also Mangunharjo).
+    // by sound (Djarmo = Jarmo). Usernames in a village mostly end in its code (Sumberagung 0904), which breaks ties;
+    // the code alone isn't enough, since two villages can share one.
     let villages = null;
     function villageIndex() {
       if (villages?.rows === customers) return villages;
@@ -2541,6 +2543,107 @@
         return (live = { at: Date.now(), by });
       }).finally(() => { liveLoading = null; }));
     }
+    // ---- Network topology: where an outage starts ----
+    // The links between routers as the NOC's map draws them, kept in this browser only (Outage radar → Topology), one
+    // line per router and what hangs below it: "RO UPSTREAM > RO A, RO B". A name alone on a line is a router with
+    // nothing below it. With the map, routers that fall together are read as one fault: the highest one down and
+    // everything behind it, rather than an alert each. A router the feed doesn't report (an aggregation router with no
+    // customers of its own) still links what's below it; two or more of its branches failing at once points at it.
+    const TOPO = "erpDock.topology";
+    const topoKey = (s) => String(s || "").toUpperCase().replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim().replace(/^RO /, "");
+    let topoMemo = null;
+    function topology() {
+      const text = String(ls.get(TOPO, "") || "");
+      if (topoMemo?.text === text) return topoMemo;
+      const up = new Map(), down = new Map(), names = new Map(), add = (s) => { const k = topoKey(s); if (k && !names.has(k)) names.set(k, s.trim().toUpperCase()); return k; };
+      for (const line of text.split("\n")) {
+        const [a, b] = line.split(">"), p = add(a || ""); if (!p || b == null) continue;
+        for (const c of b.split(",")) { const k = add(c); if (!k || k === p) continue;
+          (up.get(k) || up.set(k, []).get(k)).push(p); const d = down.get(p) || down.set(p, []).get(p); if (!d.includes(k)) d.push(k); }
+      }
+      return (topoMemo = { text, up, down, names });
+    }
+    // each node's reading in the feed: the same name, else the longest name it starts with (RO PUNUNG NEW is PUNUNG),
+    // else the only node starting with the same word (RO PACITAN 2116 is PACITAN KOTA); of several feed routers on one node, the busiest (an old one sits at 0)
+    function topoState(topo, list) {
+      const first = new Map(); for (const k of topo.names.keys()) { const w = k.split(" ")[0]; first.set(w, first.has(w) ? null : k); }
+      const at = new Map();
+      const pre = (k) => [...topo.names.keys()].filter((t) => k.startsWith(`${t} `)).sort((a, b) => b.length - a.length)[0];
+      for (const x of list) { const k = topoKey(x.name), node = topo.names.has(k) ? k : pre(k) || first.get(k.split(" ")[0]);
+        if (node && (!at.has(node) || (x.usual ?? x.open) > (at.get(node).usual ?? at.get(node).open))) at.set(node, x); }
+      return at;
+    }
+    const topoBad = (x) => !!x && (x.level === "down" || x.level === "nofeed" || x.level === "drop");
+    // the faults: each failing router whose upstream is fine heads one, with everything failing behind it; a router the
+    // feed doesn't see, or one that is fine, with two or more failing branches, heads the lot instead
+    function topoFaults(radar) {
+      const topo = topology(); if (!topo.names.size || !radar) return null;
+      const at = topoState(topo, radar.list), bad = (k) => topoBad(at.get(k));
+      const behind = (k, out = []) => { for (const c of topo.down.get(k) || []) { if (bad(c)) out.push(c); behind(c, out); } return out; };
+      const heads = [...topo.names.keys()].filter((k) => bad(k) && !(topo.up.get(k) || []).some(bad));
+      const faults = [], taken = new Set();
+      // shared parents first, deepest first, so a split under a split names the nearer one
+      const depth = (k, seen = new Set()) => { if (seen.has(k)) return 0; seen.add(k); return 1 + Math.max(0, ...(topo.up.get(k) || []).map((p) => depth(p, seen))); };
+      const parents = [...new Set(heads.flatMap((k) => topo.up.get(k) || []))].sort((a, b) => depth(b) - depth(a));
+      for (const p of parents) {
+        const mine = heads.filter((k) => !taken.has(k) && (topo.up.get(k) || []).includes(p));
+        if (mine.length < 2) continue;
+        for (const k of mine) taken.add(k);
+        faults.push({ at: p, x: at.get(p) || null, split: true, heads: mine, behind: mine.flatMap((k) => [k, ...behind(k)]) });
+      }
+      for (const k of heads) if (!taken.has(k)) faults.push({ at: k, x: at.get(k), split: false, heads: [k], behind: behind(k) });
+      for (const f of faults) f.lost = [...(f.x && topoBad(f.x) ? [f.x] : []), ...f.behind.map((k) => at.get(k)).filter(Boolean)].reduce((n, x) => n + Math.max(0, x.gap || 0), 0);
+      return { topo, at, faults: faults.sort((a, b) => b.lost - a.lost) };
+    }
+    const topoName = (topo, k) => topo.names.get(k) || k;
+    // one sentence per fault, for the radar and the copied report
+    function faultText(t, f) {
+      const n = (k) => topoName(t.topo, k), lv = (x) => (x ? { down: "down", nofeed: "no data", drop: "dropping" }[x.level] || "" : "");
+      const list = f.behind.map((k) => `${n(k)} (${lv(t.at.get(k))})`);
+      if (f.split) {
+        const self = !f.x ? "reports no customers of its own" : topoBad(f.x) ? `is ${lv(f.x)} too` : "is fine";
+        return { head: `Likely at ${n(f.at)}: ${f.heads.length} branches below it failing at once`,
+          body: `${n(f.at)} ${self}. Behind it: ${list.join(", ")}. The fault is most likely ${f.x && !topoBad(f.x) ? `on ${n(f.at)}'s ports or links toward them` : `${n(f.at)} itself or its uplink`}.` };
+      }
+      const ups = (t.topo.up.get(f.at) || []).map(n).join(" / ");
+      return { head: `${n(f.at)} ${lv(f.x)}${f.behind.length ? ` and ${f.behind.length} behind it` : ""}`,
+        body: f.behind.length ? `Behind it: ${list.join(", ")}: those follow from ${n(f.at)}, so start there${ups ? ` (or its link from ${ups})` : ""}.`
+          : `Nothing below it on the map is failing${ups ? `; ${ups} upstream is fine` : ""}: the fault is at ${n(f.at)} or on its own customers' side.` };
+    }
+    // the map as an indented list with each router's state, from the top
+    function topoTree(t, open) {
+      const box = el("div", "topo"), seen = new Set();
+      const tops = [...t.topo.names.keys()].filter((k) => !(t.topo.up.get(k) || []).length);
+      const row = (k, d) => {
+        if (seen.has(k)) return; seen.add(k);
+        const x = t.at.get(k), b = el("button", "item trow"); b.type = "button"; b.style.paddingLeft = `${10 + d * 16}px`;
+        const st = !x ? "" : x.level === "nofeed" ? "drop" : x.level === "learning" ? "" : x.level;
+        b.append(el("span", `dot ${st}`), el("span", "t", topoName(t.topo, k)),
+          el("span", "n", !x ? (/^OLT\b/.test(k) ? "OLT" : "no feed") : x.level === "nofeed" ? "no data" : `${x.open}${x.usual != null ? ` / ${x.usual}` : ""}`));
+        if (x) b.onclick = () => open(x.ip); else b.disabled = true;
+        box.append(b);
+        for (const c of t.topo.down.get(k) || []) row(c, d + 1);
+      };
+      for (const k of tops) row(k, 0);
+      return box;
+    }
+    // the editor: paste the map as text; shows which names found a router in the feed
+    function topoEditor(done) {
+      const box = el("div", "card topoedit"), ta = el("textarea", "field"); ta.value = topology().text; ta.rows = 14; ta.spellcheck = false;
+      ta.placeholder = "RO UPSTREAM > RO A, RO B\nRO A > RO C, OLT D\nRO LONE";
+      const said = el("p", "note");
+      const check = () => { const keep = topoMemo, saved = ls.get(TOPO, ""); topoMemo = null; ls.set(TOPO, ta.value);
+        const t = topology(), at = topoState(t, radar?.list || []); ls.set(TOPO, saved); topoMemo = keep;
+        const miss = [...t.names.keys()].filter((k) => !at.has(k) && !/^OLT\b/.test(k));
+        said.textContent = !t.names.size ? "One line per router: the router, then > and the routers and OLTs below it, separated by commas."
+          : `${t.names.size} names, ${at.size} found in the router feed${miss.length ? `. Not in the feed (fine for an aggregation router with no customers): ${miss.map((k) => t.names.get(k)).join(", ")}` : ""}.`; };
+      ta.oninput = check; check();
+      const acts = el("div", "actions"), save = el("button", "btn primary", "Save"), cancel = el("button", "btn", "Cancel"); save.type = cancel.type = "button";
+      save.onclick = () => { ls.set(TOPO, ta.value.trim()); topoMemo = null; done(); }; cancel.onclick = done;
+      acts.append(save, cancel);
+      box.append(el("div", "eyebrow", "Network topology"), el("p", "note", "Kept in this browser only. Each line: a router, then > and what's below it."), ta, said, acts);
+      return box;
+    }
     // ---- Drop log ----
     // The ERP keeps no history of when a customer's line went down (RADIUS only counts sessions, the OLT lists say online
     // or offline). So every 15 minutes one ERP tab reads the live session list (6 MB, ~1 s) and keeps, per customer, the
@@ -2589,10 +2692,13 @@
     }
     function radarView() {
       if (view.nas) return [routerView(view.nas)];
+      if (view.topoEdit) return [topoEditor(() => { view.topoEdit = false; drawBody(); })];
       const out = [], head = el("div", "rhead"), e = el("div", "eyebrow"); e.style.margin = "10px 6px 6px"; e.append("Outage radar");
       const tools = el("div", "tools"), again = el("button", "btn", "Check now"); again.type = "button";
       again.onclick = async () => { again.disabled = true; again.textContent = "Checking…"; await radarTick(true); drawBody(); };
-      tools.append(radar?.at ? `checked ${ago(radar.at)}` : "", again); head.append(e, tools); out.push(head);
+      const mapBtn = el("button", "btn", topology().names.size ? "Topology" : "Add topology"); mapBtn.type = "button"; mapBtn.title = "The links between routers, so an outage is traced to where it starts";
+      mapBtn.onclick = () => { view.topoEdit = true; drawBody(); };
+      tools.append(radar?.at ? `checked ${ago(radar.at)}` : "", mapBtn, again); head.append(e, tools); out.push(head);
       if (radarOff) { out.push(el("p", "note late", radarOff)); if (!radar) return out; }
       if (!radar) { out.push(el("p", "note ld", "Reading the routers…")); radarTick(true); return out; }
       radarDrawn = radar.at;
@@ -2600,7 +2706,18 @@
       if (radar.wide) out.push(el("div", "ralert", "Most routers dropped at once: more likely the central link or the RADIUS server than one area."));
       const stuck = radar.alerts.filter((x) => x.level === "nofeed");
       if (stuck.length > 1 && new Set(stuck.map((x) => x.since)).size === 1) out.push(el("div", "ralert drop", `${stuck.length} routers stopped reporting at the same moment (${hhmm(stuck[0].since)}): more likely the RADIUS accounting link or the ERP's reader than ${stuck.length} outages.`));
+      // with the map: one card per fault, and the routers behind it aren't repeated as alerts of their own
+      const tf = topoFaults(radar), covered = new Set();
+      for (const f of tf?.faults || []) {
+        const t = faultText(tf, f), b = el("button", `ralert item${[f.x, ...f.behind.map((k) => tf.at.get(k))].some((x) => x?.level === "down") ? "" : " drop"}`); b.type = "button";
+        b.append(el("b", null, t.head), el("span", null, t.body));
+        for (const k of f.behind) { const x = tf.at.get(k); if (x) covered.add(x.ip); }
+        if (f.x && topoBad(f.x)) covered.add(f.x.ip);
+        const crew = crewLine(crewOf(areaOf(f.x?.name || tf.at.get(f.heads[0])?.name || "")?.router)); if (crew) b.append(el("span", "crew", crew));
+        const go = f.x || tf.at.get(f.heads[0]); if (go) b.onclick = () => { view.nas = go.ip; drawBody(); }; out.push(b);
+      }
       for (const x of radar.alerts) {
+        if (covered.has(x.ip)) continue;
         const b = el("button", `ralert item${x.level === "down" ? "" : " drop"}`); b.type = "button";
         if (x.level === "nofeed") b.append(el("b", null, `${x.name}: no data since ${x.since ? hhmm(x.since) : "?"}`), el("span", null, `count frozen at ${x.open} (usually ${x.usual}): the ERP stopped hearing from this router, so whether its customers are online isn't known. Check the router, or its OLT's ONT list.`));
         else b.append(el("b", null, `${x.name}: ${x.level === "down" ? "down" : `${x.gap} fewer online`}`), el("span", null, x.healthy ? said(x) : `${said(x)} · its session feed has stopped`));
@@ -2609,6 +2726,7 @@
       }
       if (!radar.alerts.length && !radar.learning) out.push(el("div", "rok", `All ${radar.list.filter((x) => x.level !== "silent").length} routers at their usual level.`));
       if (radar.learning) out.push(el("p", "note", "Learning each router's usual level from a reading every 5 minutes while an ERP tab is open. Alerts start after about 25 minutes; the lines fill in over a day."));
+      if (tf) { const e3 = el("div", "eyebrow"); e3.append("Network"); out.push(e3, topoTree(tf, (ip) => { view.nas = ip; drawBody(); })); }
       const e2 = el("div", "eyebrow"); e2.append("Routers"); out.push(e2);
       radar.list.forEach((x, i) => {
         const b = el("button", "item rrow rise"); b.type = "button"; b.style.setProperty("--i", String(Math.min(i, 14)));

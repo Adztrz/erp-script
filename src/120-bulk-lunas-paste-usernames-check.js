@@ -49,10 +49,10 @@
       await radius(bulk.rows.flatMap((r) => r.invs));
       bulk.phase = "review"; bulkDraw();
     }
-    // "Djumangat Kebondalem": a name and a village, read the way the customer search reads it. The village (the last word
+    // "Djarmo Sumberagung": a name and a village, read the way the customer search reads it. The village (the last word
     // or two, when they name one) narrows to its customers; each name word must match the name, exactly, by its start or
-    // by sound (Djumangat = Jumangat). Usernames in a village mostly end in its code (Kebondalem 0904), which breaks ties;
-    // the code alone isn't enough, since two villages can share one (0904 is also Mangunharjo).
+    // by sound (Djarmo = Jarmo). Usernames in a village mostly end in its code (Sumberagung 0904), which breaks ties;
+    // the code alone isn't enough, since two villages can share one.
     let villages = null;
     function villageIndex() {
       if (villages?.rows === customers) return villages;

@@ -133,3 +133,24 @@ test("bulk lunas: a pasted name and village finds the customer there, the villag
   assert.equal(byName("Jarmo")[0].vil, ""); // no village named: every Jarmo
   assert.equal(best[0].score, 4); // sounds like the name (2), the village's code (1), the username spells the name (1)
 });
+
+test("topology: routers that fail together are traced to where it starts", () => {
+  const map = "RO CORE > RO HUB, RO NORTH, RO EAST\nRO HUB > RO ALPHA, RO BETA, RO GAMMA\nRO ALPHA > RO ALPHA SATU, RO ALPHA DUA, OLT ALPHA\nRO LONE";
+  const names = ["TOPO", "topoKey", "topology", "topoState", "topoBad", "topoFaults", "faultText", "topoName"];
+  const run = (levels) => {
+    const list = Object.entries(levels).map(([name, level], i) => ({ name, ip: `10.0.0.${i}`, level, open: level === "ok" ? 100 : 5, usual: 100, gap: level === "ok" ? 0 : 95 }));
+    const { topoFaults, faultText } = load(dock, names, { ls: { get: () => map }, topoMemo: null }, ["topoFaults", "faultText"]);
+    const t = topoFaults({ list }); return { t, f: t.faults, text: t.faults.map((f) => faultText(t, f).head) };
+  };
+  // a router and its whole branch: one fault, at the top of it
+  let r = run({ "RO HUB": "ok", "RO ALPHA": "down", "RO ALPHA SATU": "down", "RO ALPHA DUA NEW": "down", "RO BETA": "ok", "RO NORTH": "ok" });
+  assert.deepEqual(r.text, ["RO ALPHA down and 2 behind it"]);
+  // two branches of a router that is fine: the fault is on that router's side
+  r = run({ "RO HUB": "ok", "RO ALPHA": "ok", "RO BETA": "down", "RO GAMMA": "drop", "RO NORTH": "ok" });
+  assert.deepEqual(r.text, ["Likely at RO HUB: 2 branches below it failing at once"]);
+  // the core reports nothing (no customers of its own): its failing branches point at it
+  r = run({ "RO HUB": "down", "RO NORTH": "down", "RO EAST": "ok", "RO ALPHA": "down" });
+  assert.equal(r.f.length, 1); assert.equal(r.f[0].at, "CORE"); assert.deepEqual(r.f[0].behind, ["HUB", "ALPHA", "NORTH"]);
+  // nothing on the map failing: no faults
+  assert.equal(run({ "RO HUB": "ok", "RO LONE": "ok" }).f.length, 0);
+});

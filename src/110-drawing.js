@@ -251,6 +251,8 @@
       .erp-dock .rrow canvas, .erp-dock canvas.spark { width: 72px; height: 22px; margin: 0; }
       .erp-dock .rrow .n { text-align: right; font-size: 13px; color: var(--paper); font-variant-numeric: tabular-nums; }
       .erp-dock .rrow .n small { display: block; font-size: 11px; color: var(--muted); }
+      .erp-dock .trow { grid-template-columns: 18px minmax(0, 1fr) auto; padding-top: 5px; padding-bottom: 5px; } .erp-dock .trow:disabled { opacity: .55; cursor: default; }
+      .erp-dock .trow .n { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; } .erp-dock .topoedit textarea { width: 100%; margin: 8px 0; }
       .erp-dock .rrow .crew { color: var(--paper); opacity: .72; white-space: normal; } /* wraps: the KA is at the end */ .erp-dock .ralert span.crew { margin-top: 2px; opacity: .85; }
       .erp-dock .rrow .n small.late { color: #ff6a5c; } .erp-dock .rrow .n small.warn { color: #e0b252; }
       .erp-dock .dot.drop { background: #e0b252; } .erp-dock .dot.down { background: var(--red); box-shadow: 0 0 0 3px rgba(241,38,20,.18); } .erp-dock .dot.ok { background: var(--green); }
