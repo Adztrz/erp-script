@@ -114,9 +114,14 @@
       if (keep && bulk?.el?.contains(was) && was.isConnected) was.focus();
       else if (keep) { input.focus(); input.setSelectionRange(input.value.length, input.value.length); }
     }
+    // a redraw (the radar's minute, an OLT list arriving) rebuilds the maps: each new one keeps the old one's zoom and
+    // place, and a map open full screen stays open and takes the new data instead of closing under you
+    let mapWas = null;
     function drawBody() {
       const body = panel?.querySelector(".scroll"); if (!body) return;
-      dropFull();
+      const was = (mapWas = new Map([...document.querySelectorAll(".erp-dock .map[data-what]")].map((m) => [m.dataset.what, m])));
+      const full = fullMap(); if (full) full.kept = false;
+      queueMicrotask(() => { if (mapWas === was) mapWas = null; if (fullMap() && !fullMap().kept) dropFull(); });
       items = []; const parts = [];
       if (panel.classList.toggle("wide", view.mode === "bulk") !== panel.classList.contains("was-wide")) { panel.classList.toggle("was-wide"); place(); }
       if (view.mode === "bulk") { parts.push(bulkView()); body.replaceChildren(...parts); items = []; return bulkDraw(); }
@@ -232,7 +237,13 @@
     // the same map for a group of customers (a PON port, a router's offline customers): fitted to where they are,
     // isolir red, offline white, online green; a dot shows the name and opens the customer
     function areaMap(pts, label, about = {}) {
-      const box = el("div", "map"); box.setAttribute("role", "group"); box.setAttribute("aria-label", label);
+      const key = about.what || label, old = mapWas?.get(key);
+      if (old?.classList.contains("full")) { // open full screen: it stays, with the new data; this spot is where it goes back to
+        const spot = el("span"); old.fullHome = spot; old.kept = true; old.setAttribute("aria-label", label);
+        old.redraw = () => drawAreaMap(old, pts, about); old.redraw(); spot.redraw = () => old.redraw(); return spot;
+      }
+      const box = el("div", "map"); box.setAttribute("role", "group"); box.setAttribute("aria-label", label); box.dataset.what = key;
+      if (old) { box.zoom = old.zoom; box.ctr = old.ctr; }
       box.redraw = () => drawAreaMap(box, pts, about); setTimeout(box.redraw, 0); return box;
     }
     function drawAreaMap(box, pts, about = {}) {
@@ -282,7 +293,7 @@
       box.scene = scene;
       mapLayers(box, [tiles, ...briefUnder(scene), ...(paint ? [paint] : []), ...dots, ...briefOver(scene), tip, zoom, el("span", "attr", T.attr)]);
       if (bar) box.querySelector(".brief").append(bar);
-      swapTiles(box, tiles, { z, kind: carto ? "carto" : kind, left, top, id: `area:${box.getAttribute("aria-label")}` });
+      swapTiles(box, tiles, { z, kind: carto ? "carto" : kind, left, top, id: `area:${box.dataset.what}` });
     }
     function tileMap(box, r, n, radius, rows) {
       const w = box.clientWidth, h = box.clientHeight; if (!w) return;
