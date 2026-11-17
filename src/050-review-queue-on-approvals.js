@@ -236,7 +236,7 @@
     if (!b) return say(`No ${k === "a" ? "Setujui" : "Tolak"} button on this report.`);
     if (b.disabled) return say(why());
     if (rv.armed?.k !== k || Date.now() - rv.armed.at > 4000) { rv.armed = { k, at: Date.now() }; return say(`Press ${k.toUpperCase()} again to ${k === "a" ? "approve" : "reject"}.`); }
-    rv.armed = null; rv.waiting = { id: queue()[rv.i].id, at: Date.now() }; say("Saving…"); b.click();
+    rv.armed = null; rv.waiting = { id: queue()[rv.i].id, at: Date.now(), from: Date.now() }; say("Saving…"); b.click();
   }
   document.addEventListener("keydown", (e) => {
     if (rv?.autoOn && e.key === "Escape") { e.preventDefault(); e.stopPropagation(); rv.stopAuto = true; autoHud("Stopping after this report…"); return; }
@@ -266,11 +266,13 @@
     if (!rv.waiting) return;
     const { id, at, byHand } = rv.waiting, tr = [...document.querySelectorAll("main table tbody > tr")].find((r) => rowKey(r) === id);
     const r = pageState().reps?.find((x) => x.id === id), decided = (r && r.status !== "Menunggu Verifikasi") || (!tr && !dlg());
-    if (dlg()) { if (byHand) rv.waiting = null; return; } // still open (or reopened): keep waiting for a key decision only
+    // still open (or reopened): keep waiting for a key decision only; the ERP may take over a minute to save, so the
+    // wait for the report to leave Menunggu counts from when its window closed, not from the key press
+    if (dlg()) { if (byHand) rv.waiting = null; else { rv.waiting.at = Date.now(); const s = Math.round((Date.now() - rv.waiting.from) / 1000); if (s >= 8 && s % 5 === 0) say(`Saving… the ERP is still at it (${s} s)`); } return; }
     if (decided) {
       rv.waiting = null; rv.all = rv.all.filter((x) => x.id !== id);
       if (rv.auto) reviewGo(rv.i); else { rv.msg = "Saved."; reviewStop(false); }
-    } else if (Date.now() - at > (byHand ? 6000 : 20000)) {
+    } else if (Date.now() - at > (byHand ? 6000 : 60000)) {
       rv.waiting = null; rv.msg = byHand ? "" : "The decision wasn't confirmed: check that report before going on."; reviewStop(false);
     }
   }, 400);

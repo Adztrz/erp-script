@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      3.2.3
+// @version      3.2.4
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -1072,7 +1072,7 @@
     if (!b) return say(`No ${k === "a" ? "Setujui" : "Tolak"} button on this report.`);
     if (b.disabled) return say(why());
     if (rv.armed?.k !== k || Date.now() - rv.armed.at > 4000) { rv.armed = { k, at: Date.now() }; return say(`Press ${k.toUpperCase()} again to ${k === "a" ? "approve" : "reject"}.`); }
-    rv.armed = null; rv.waiting = { id: queue()[rv.i].id, at: Date.now() }; say("Saving…"); b.click();
+    rv.armed = null; rv.waiting = { id: queue()[rv.i].id, at: Date.now(), from: Date.now() }; say("Saving…"); b.click();
   }
   document.addEventListener("keydown", (e) => {
     if (rv?.autoOn && e.key === "Escape") { e.preventDefault(); e.stopPropagation(); rv.stopAuto = true; autoHud("Stopping after this report…"); return; }
@@ -1102,11 +1102,13 @@
     if (!rv.waiting) return;
     const { id, at, byHand } = rv.waiting, tr = [...document.querySelectorAll("main table tbody > tr")].find((r) => rowKey(r) === id);
     const r = pageState().reps?.find((x) => x.id === id), decided = (r && r.status !== "Menunggu Verifikasi") || (!tr && !dlg());
-    if (dlg()) { if (byHand) rv.waiting = null; return; } // still open (or reopened): keep waiting for a key decision only
+    // still open (or reopened): keep waiting for a key decision only; the ERP may take over a minute to save, so the
+    // wait for the report to leave Menunggu counts from when its window closed, not from the key press
+    if (dlg()) { if (byHand) rv.waiting = null; else { rv.waiting.at = Date.now(); const s = Math.round((Date.now() - rv.waiting.from) / 1000); if (s >= 8 && s % 5 === 0) say(`Saving… the ERP is still at it (${s} s)`); } return; }
     if (decided) {
       rv.waiting = null; rv.all = rv.all.filter((x) => x.id !== id);
       if (rv.auto) reviewGo(rv.i); else { rv.msg = "Saved."; reviewStop(false); }
-    } else if (Date.now() - at > (byHand ? 6000 : 20000)) {
+    } else if (Date.now() - at > (byHand ? 6000 : 60000)) {
       rv.waiting = null; rv.msg = byHand ? "" : "The decision wasn't confirmed: check that report before going on."; reviewStop(false);
     }
   }, 400);
