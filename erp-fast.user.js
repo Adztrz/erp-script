@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      3.6
+// @version      3.6.1
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -3069,7 +3069,7 @@
       if (!incidents) { out.push(el("p", "note ld", "Reading the incident log…")); incList().then(() => view.mode === "history" && drawBody()); return out; }
       const since = Date.now() - days * 86400000, { events, map } = histEvents(incidents, since);
       const first = Math.min(...incidents.map((i) => i.start)), kept = Number.isFinite(first) ? Math.round((Date.now() - first) / 86400000) : 0;
-      if (kept < days) out.push(el("p", "note", `This browser has ${kept ? `${kept} day${kept === 1 ? "" : "s"}` : "no days"} of incidents so far (the log keeps 90 days from Dock 3.6 on, 7 before). It fills in while an ERP tab is open.`));
+      if (kept < days) out.push(el("p", "note", `This browser has ${kept ? `${kept} day${kept === 1 ? "" : "s"}` : "less than a day"} of incidents so far (the log keeps 90 days from Dock 3.6 on, 7 before). It fills in while an ERP tab is open.`));
       if (!map) out.push(el("p", "note warn", "No network map yet (Outage radar → Add topology): each router counts on its own instead of outages being traced to where they start."));
       if (!events.length) { out.push(el("div", "rok", `No router outages recorded in the last ${days} days.`)); }
       else {
