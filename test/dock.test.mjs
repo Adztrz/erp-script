@@ -140,7 +140,7 @@ test("topology: routers that fail together are traced to where it starts", () =>
   const run = (levels) => {
     const list = Object.entries(levels).map(([name, level], i) => ({ name, ip: `10.0.0.${i}`, level, open: level === "ok" ? 100 : 5, usual: 100, gap: level === "ok" ? 0 : 95 }));
     const { topoFaults, faultText } = load(dock, names, { ls: { get: () => map }, topoMemo: null }, ["topoFaults", "faultText"]);
-    const t = topoFaults({ list }); return { t, f: t.faults, text: t.faults.map((f) => faultText(t, f).head) };
+    const t = topoFaults({ list }); return { t, ft: faultText, f: t.faults, text: t.faults.map((f) => faultText(t, f).head) };
   };
   // a router and its whole branch: one fault, at the top of it
   let r = run({ "RO HUB": "ok", "RO ALPHA": "down", "RO ALPHA SATU": "down", "RO ALPHA DUA NEW": "down", "RO BETA": "ok", "RO NORTH": "ok" });
@@ -151,6 +151,10 @@ test("topology: routers that fail together are traced to where it starts", () =>
   // the core reports nothing (no customers of its own): its failing branches point at it
   r = run({ "RO HUB": "down", "RO NORTH": "down", "RO EAST": "ok", "RO ALPHA": "down" });
   assert.equal(r.f.length, 1); assert.equal(r.f[0].at, "CORE"); assert.deepEqual(r.f[0].behind, ["HUB", "ALPHA", "NORTH"]);
+  // a router only dropping doesn't swallow a branch that is down below it: two faults, the deeper one named for its branch
+  r = run({ "RO HUB": "drop", "RO ALPHA": "down", "RO ALPHA SATU": "down", "RO BETA": "ok", "RO NORTH": "ok" });
+  assert.deepEqual(r.f.map((f) => [f.at, f.behind]).sort(), [["ALPHA", ["ALPHA SATU"]], ["HUB", []]]);
+  assert.match(r.ft(r.t, r.f.find((f) => f.at === "ALPHA")).body, /RO HUB upstream is dropping too/);
   // nothing on the map failing: no faults
   assert.equal(run({ "RO HUB": "ok", "RO LONE": "ok" }).f.length, 0);
 });

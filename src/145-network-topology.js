@@ -34,8 +34,11 @@
     function topoFaults(radar) {
       const topo = topology(); if (!topo.names.size || !radar) return null;
       const at = topoState(topo, radar.list), bad = (k) => topoBad(at.get(k));
-      const behind = (k, out = []) => { for (const c of topo.down.get(k) || []) { if (bad(c)) out.push(c); behind(c, out); } return out; };
-      const heads = [...topo.names.keys()].filter((k) => bad(k) && !(topo.up.get(k) || []).some(bad));
+      // only a router that is down (or silent) explains what's behind it; one merely dropping doesn't take in a branch
+      // that is down below it: that branch is its own fault (RO A −15% and RO B under it at 5%: start at B)
+      const severe = (k) => ["down", "nofeed"].includes(at.get(k)?.level);
+      const heads = [...topo.names.keys()].filter((k) => bad(k) && !(topo.up.get(k) || []).some(severe));
+      const behind = (k, out = []) => { for (const c of topo.down.get(k) || []) { if (heads.includes(c)) continue; if (bad(c)) out.push(c); behind(c, out); } return out; };
       const faults = [], taken = new Set();
       // shared parents first, deepest first, so a split under a split names the nearer one
       const depth = (k, seen = new Set()) => { if (seen.has(k)) return 0; seen.add(k); return 1 + Math.max(0, ...(topo.up.get(k) || []).map((p) => depth(p, seen))); };
@@ -47,6 +50,8 @@
         faults.push({ at: p, x: at.get(p) || null, split: true, heads: mine, behind: mine.flatMap((k) => [k, ...behind(k)]) });
       }
       for (const k of heads) if (!taken.has(k)) faults.push({ at: k, x: at.get(k), split: false, heads: [k], behind: behind(k) });
+      const under = (k, p) => (topo.up.get(k) || []).some((u) => u === p || under(u, p));
+      for (const f of faults) f.apart = faults.filter((g) => g !== f && !f.split && under(g.at, f.at)).map((g) => g.at); // branches below with a card of their own
       for (const f of faults) f.lost = [...(f.x && topoBad(f.x) ? [f.x] : []), ...f.behind.map((k) => at.get(k)).filter(Boolean)].reduce((n, x) => n + Math.max(0, x.gap || 0), 0);
       return { topo, at, faults: faults.sort((a, b) => b.lost - a.lost) };
     }
@@ -60,10 +65,11 @@
         return { head: `Likely at ${n(f.at)}: ${f.heads.length} branches below it failing at once`,
           body: `${n(f.at)} ${self}. Behind it: ${list.join(", ")}. The fault is most likely ${f.x && !topoBad(f.x) ? `on ${n(f.at)}'s ports or links toward them` : `${n(f.at)} itself or its uplink`}.` };
       }
-      const ups = (t.topo.up.get(f.at) || []).map(n).join(" / ");
+      const ups = (t.topo.up.get(f.at) || []).map(n).join(" / "), upBad = (t.topo.up.get(f.at) || []).filter((k) => topoBad(t.at.get(k)));
+      const also = upBad.length ? ` ${upBad.map((k) => `${n(k)} upstream is ${lv(t.at.get(k))} too`).join("; ")}.` : "";
       return { head: `${n(f.at)} ${lv(f.x)}${f.behind.length ? ` and ${f.behind.length} behind it` : ""}`,
-        body: f.behind.length ? `Behind it: ${list.join(", ")}: those follow from ${n(f.at)}, so start there${ups ? ` (or its link from ${ups})` : ""}.`
-          : `Nothing below it on the map is failing${ups ? `; ${ups} upstream is fine` : ""}: the fault is at ${n(f.at)} or on its own customers' side.` };
+        body: (f.behind.length ? `Behind it: ${list.join(", ")}: those follow from ${n(f.at)}, so start there${ups ? ` (or its link from ${ups})` : ""}.`
+          : `${f.apart.length ? `Apart from ${f.apart.map(n).join(", ")} (a card of its own), nothing below it is failing` : "Nothing below it on the map is failing"}${ups && !upBad.length ? `; ${ups} upstream is fine` : ""}: the fault is at ${n(f.at)}${ups ? `, its link from ${ups}` : ""} or on its own customers' side.`) + also };
     }
     // the map as an indented list with each router's state, from the top
     function topoTree(t, open) {
