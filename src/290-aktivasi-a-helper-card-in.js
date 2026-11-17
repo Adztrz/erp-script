@@ -22,7 +22,7 @@
     document.addEventListener("pointerdown", (e) => { const tr = e.target.closest?.("tr"); if (tr && location.pathname.startsWith(AQ)) lastRow = tr.textContent; }, true);
     async function loadQueue() {
       if (queue && Date.now() - queueAt < 120e3) return queue;
-      const f = "fields=namaPemohon,dataId,installationData,networkSurvey,shareLokasiGmaps,teknologiKoneksi,jadwalPemasangan,desa,kecamatan,kabupaten";
+      const f = "fields=namaPemohon,dataId,installationData,networkSurvey,shareLokasiGmaps,lokasiLat,lokasiLng,installationLocationCheck,teknologiKoneksi,jadwalPemasangan,desa,kecamatan,kabupaten";
       const parts = await Promise.all(["Menunggu Aktivasi Akun", "Menunggu Aktivasi Account"].map((v) => get(`/api/pg-read/prospectiveCustomers?where=statusVerifikasi%3A${encodeURIComponent(v)}&limit=500&${f}`).then((j) => j.data || []).catch(() => [])));
       queue = parts.flat(); queueAt = Date.now(); return queue;
     }
@@ -54,7 +54,11 @@
       });
       return assets;
     }
-    const where = (c) => { const m = /(-?\d{1,2}\.\d{3,})\s*,\s*(-?\d{2,3}\.\d{3,})/.exec(String(c?.shareLokasiGmaps || "")); return m ? { lat: +m[1], lng: +m[2] } : null; };
+    // the install location: coordinates written in the Maps field, else the record's own lat/lng (kept beside a short
+    // maps.app.goo.gl link, which can't be read from here), else where the registration put it
+    const installAt = (c) => { const m = /(-?\d{1,2}\.\d{3,})\s*,\s*(-?\d{2,3}\.\d{3,})/.exec(String(c?.shareLokasiGmaps || "")); if (m) return { lat: +m[1], lng: +m[2] };
+      const r = c?.installationLocationCheck?.registrationCoord, lat = Number(c?.lokasiLat ?? r?.lat), lng = Number(c?.lokasiLng ?? r?.lng);
+      return lat && lng && Math.abs(lat) <= 90 && Math.abs(lng) <= 180 ? { lat, lng } : null; };
     // the technician's ODP text against the database: exact, then one code containing all of it, then every word found
     function reported(c, list) { return matchText(String(c?.installationData?.odpTerhubung || c?.networkSurvey?.odpTerdekat || ""), list); }
     function matchText(text, list) {
@@ -114,7 +118,7 @@
             (inst.portOdp || c.networkSurvey?.portOdp) && `port ${inst.portOdp || c.networkSurvey?.portOdp}`, inst.redaman && `signal ${inst.redaman} dBm`, inst.modemTerpasang && `modem ${inst.modemTerpasang}`].filter(Boolean);
           body.append(el("p", "facts", facts.length ? facts.join(" · ") : "No installation report yet for this customer."));
         } else body.append(el("p", "facts", "Couldn't tell which customer this is: the suggestions below use nothing from the report."));
-        const port = inst.portOdp || c?.networkSurvey?.portOdp || null, here = where(c);
+        const port = inst.portOdp || c?.networkSurvey?.portOdp || null, here = installAt(c);
         const row = (a, why, p = port, dist = false) => {
           const r = el("div", "opt"), used = `${a.portTerpakai ?? "?"}/${a.kapasitasPort || "?"} used${a.full ? " · FULL" : ""}`;
           const d = dist && here && a.lat != null ? km(metres(here, a)) : "";

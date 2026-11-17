@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      3.2.2
+// @version      3.2.3
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -4486,7 +4486,7 @@
     document.addEventListener("pointerdown", (e) => { const tr = e.target.closest?.("tr"); if (tr && location.pathname.startsWith(AQ)) lastRow = tr.textContent; }, true);
     async function loadQueue() {
       if (queue && Date.now() - queueAt < 120e3) return queue;
-      const f = "fields=namaPemohon,dataId,installationData,networkSurvey,shareLokasiGmaps,teknologiKoneksi,jadwalPemasangan,desa,kecamatan,kabupaten";
+      const f = "fields=namaPemohon,dataId,installationData,networkSurvey,shareLokasiGmaps,lokasiLat,lokasiLng,installationLocationCheck,teknologiKoneksi,jadwalPemasangan,desa,kecamatan,kabupaten";
       const parts = await Promise.all(["Menunggu Aktivasi Akun", "Menunggu Aktivasi Account"].map((v) => get(`/api/pg-read/prospectiveCustomers?where=statusVerifikasi%3A${encodeURIComponent(v)}&limit=500&${f}`).then((j) => j.data || []).catch(() => [])));
       queue = parts.flat(); queueAt = Date.now(); return queue;
     }
@@ -4518,7 +4518,11 @@
       });
       return assets;
     }
-    const where = (c) => { const m = /(-?\d{1,2}\.\d{3,})\s*,\s*(-?\d{2,3}\.\d{3,})/.exec(String(c?.shareLokasiGmaps || "")); return m ? { lat: +m[1], lng: +m[2] } : null; };
+    // the install location: coordinates written in the Maps field, else the record's own lat/lng (kept beside a short
+    // maps.app.goo.gl link, which can't be read from here), else where the registration put it
+    const installAt = (c) => { const m = /(-?\d{1,2}\.\d{3,})\s*,\s*(-?\d{2,3}\.\d{3,})/.exec(String(c?.shareLokasiGmaps || "")); if (m) return { lat: +m[1], lng: +m[2] };
+      const r = c?.installationLocationCheck?.registrationCoord, lat = Number(c?.lokasiLat ?? r?.lat), lng = Number(c?.lokasiLng ?? r?.lng);
+      return lat && lng && Math.abs(lat) <= 90 && Math.abs(lng) <= 180 ? { lat, lng } : null; };
     // the technician's ODP text against the database: exact, then one code containing all of it, then every word found
     function reported(c, list) { return matchText(String(c?.installationData?.odpTerhubung || c?.networkSurvey?.odpTerdekat || ""), list); }
     function matchText(text, list) {
@@ -4578,7 +4582,7 @@
             (inst.portOdp || c.networkSurvey?.portOdp) && `port ${inst.portOdp || c.networkSurvey?.portOdp}`, inst.redaman && `signal ${inst.redaman} dBm`, inst.modemTerpasang && `modem ${inst.modemTerpasang}`].filter(Boolean);
           body.append(el("p", "facts", facts.length ? facts.join(" · ") : "No installation report yet for this customer."));
         } else body.append(el("p", "facts", "Couldn't tell which customer this is: the suggestions below use nothing from the report."));
-        const port = inst.portOdp || c?.networkSurvey?.portOdp || null, here = where(c);
+        const port = inst.portOdp || c?.networkSurvey?.portOdp || null, here = installAt(c);
         const row = (a, why, p = port, dist = false) => {
           const r = el("div", "opt"), used = `${a.portTerpakai ?? "?"}/${a.kapasitasPort || "?"} used${a.full ? " · FULL" : ""}`;
           const d = dist && here && a.lat != null ? km(metres(here, a)) : "";
@@ -4743,9 +4747,9 @@
         // the technician and the location come from the calon pelanggan record of the same name
         loadQueue().then((rows) => findCustomer(rows, a.name.toUpperCase())).then((r) => {
           if (!r) return;
-          const at = where(r);
+          const at = installAt(r);
           const ka = kaOf(r.desa);
-          keep(checks().map((c) => c.user === a.user ? { ...c, base: r.namaPemohon || "", tech: r.installationData?.teknisi || "", desa: r.desa || "", kec: r.kecamatan || "", ka, maps: at ? `https://maps.google.com/?q=${at.lat},${at.lng}` : /^https?:/.test(r.shareLokasiGmaps || "") ? r.shareLokasiGmaps : "" } : c));
+          keep(checks().map((c) => c.user === a.user ? { ...c, base: r.namaPemohon || "", tech: r.installationData?.teknisi || "", desa: r.desa || "", kec: r.kecamatan || "", ka, maps: at ? `${at.lat.toFixed(6)}, ${at.lng.toFixed(6)}` : /^https?:/.test(r.shareLokasiGmaps || "") ? r.shareLokasiGmaps : "" } : c));
           drawChecks();
           if (!ka) loadKa().then(() => { const k = kaOf(r.desa); if (k) { keep(checks().map((c) => c.user === a.user ? { ...c, ka: k } : c)); drawChecks(); } });
         }).catch(() => {});
@@ -4808,7 +4812,7 @@
       const loc = [c.desa && `Desa ${c.desa}`, c.kec && `Kec. ${c.kec}`].filter(Boolean).join(", ");
       const name = String(c.name || c.base || "").trim().toUpperCase().replace(/\s+/g, " ");
       const full = !name || /STARLITE$/.test(name) || !c.desa ? name : `${name} ${String(c.desa).toUpperCase()} STARLITE`;
-      return [["SN Modem", c.sn || "-"], ["Nama", full || "-"], ["Username", c.user], ["Teknisi", c.tech || "-"], ["Lokasi", loc || "-"], ["KA", c.ka || "-"], ["Maps", c.maps]].filter((f) => f[1]);
+      return [["SN Modem", c.sn || "-"], ["Nama", full || "-"], ["Username", c.user], ["Teknisi", c.tech || "-"], ["Lokasi", loc || "-"], ["KA", c.ka || "-"], [/^https?:/.test(c.maps || "") ? "Maps" : "Koordinat", c.maps]].filter((f) => f[1]);
     }
     const note = (c) => fields(c).map(([k, v]) => k === "Maps" ? v : `${k}: ${v}`).join("\n");
     // copy text and say so on the button for a moment

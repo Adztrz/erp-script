@@ -93,3 +93,11 @@ test("customers on a router with no data show unknown, not online", () => {
   assert.equal(state({ router: "RO JATIGUNUNG", online: true }), "on");
   assert.equal(state({ router: "RO JATIGUNUNG", online: false }), "off");
 });
+
+test("activation: the install location's coordinates, also when Maps is a short link", () => {
+  const { installAt: where } = load(dock, ["installAt"]);
+  assert.deepEqual(where({ shareLokasiGmaps: "-8.131233, 111.164841" }), { lat: -8.131233, lng: 111.164841 });
+  assert.deepEqual(where({ shareLokasiGmaps: "https://maps.app.goo.gl/abc", lokasiLat: -8.2055714, lokasiLng: 111.3296527 }), { lat: -8.2055714, lng: 111.3296527 });
+  assert.deepEqual(where({ shareLokasiGmaps: "https://maps.app.goo.gl/abc", installationLocationCheck: { registrationCoord: { lat: -8.1, lng: 111.2 } } }), { lat: -8.1, lng: 111.2 });
+  assert.equal(where({ shareLokasiGmaps: "https://maps.app.goo.gl/abc" }), null);
+});

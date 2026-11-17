@@ -27,9 +27,9 @@
         // the technician and the location come from the calon pelanggan record of the same name
         loadQueue().then((rows) => findCustomer(rows, a.name.toUpperCase())).then((r) => {
           if (!r) return;
-          const at = where(r);
+          const at = installAt(r);
           const ka = kaOf(r.desa);
-          keep(checks().map((c) => c.user === a.user ? { ...c, base: r.namaPemohon || "", tech: r.installationData?.teknisi || "", desa: r.desa || "", kec: r.kecamatan || "", ka, maps: at ? `https://maps.google.com/?q=${at.lat},${at.lng}` : /^https?:/.test(r.shareLokasiGmaps || "") ? r.shareLokasiGmaps : "" } : c));
+          keep(checks().map((c) => c.user === a.user ? { ...c, base: r.namaPemohon || "", tech: r.installationData?.teknisi || "", desa: r.desa || "", kec: r.kecamatan || "", ka, maps: at ? `${at.lat.toFixed(6)}, ${at.lng.toFixed(6)}` : /^https?:/.test(r.shareLokasiGmaps || "") ? r.shareLokasiGmaps : "" } : c));
           drawChecks();
           if (!ka) loadKa().then(() => { const k = kaOf(r.desa); if (k) { keep(checks().map((c) => c.user === a.user ? { ...c, ka: k } : c)); drawChecks(); } });
         }).catch(() => {});
@@ -92,7 +92,7 @@
       const loc = [c.desa && `Desa ${c.desa}`, c.kec && `Kec. ${c.kec}`].filter(Boolean).join(", ");
       const name = String(c.name || c.base || "").trim().toUpperCase().replace(/\s+/g, " ");
       const full = !name || /STARLITE$/.test(name) || !c.desa ? name : `${name} ${String(c.desa).toUpperCase()} STARLITE`;
-      return [["SN Modem", c.sn || "-"], ["Nama", full || "-"], ["Username", c.user], ["Teknisi", c.tech || "-"], ["Lokasi", loc || "-"], ["KA", c.ka || "-"], ["Maps", c.maps]].filter((f) => f[1]);
+      return [["SN Modem", c.sn || "-"], ["Nama", full || "-"], ["Username", c.user], ["Teknisi", c.tech || "-"], ["Lokasi", loc || "-"], ["KA", c.ka || "-"], [/^https?:/.test(c.maps || "") ? "Maps" : "Koordinat", c.maps]].filter((f) => f[1]);
     }
     const note = (c) => fields(c).map(([k, v]) => k === "Maps" ? v : `${k}: ${v}`).join("\n");
     // copy text and say so on the button for a moment
