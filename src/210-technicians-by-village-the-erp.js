@@ -49,7 +49,26 @@
       }
       return { teams: [], how: "" };
     }
-    const titleCase = (x) => String(x).toLowerCase().replace(/(^|\s)\S/g, (c) => c.toUpperCase());
+    // a router's crew: the field teams and the KA covering most of its customers' villages (each at least a quarter of them)
+    const crews = new Map();
+    function crewOf(router) {
+      if (!techMap || !customers || !router) return null;
+      const memo = crews.get(router); if (memo && memo.at === techMap.at && memo.rows === customers) return memo.crew;
+      const n = new Map(); let total = 0;
+      for (const c of customers) { if (c.router !== router || c.isInactive || !c.desa) continue;
+        const l = teamsFor(c.desa); if (l.length) total++; for (const t of l) n.set(t, (n.get(t) || 0) + 1); }
+      const top = (kind) => [...n].filter(([t, k]) => teamKind(t.name) === kind && k >= total / 4).sort((a, b) => b[1] - a[1]).map(([t]) => t);
+      const crew = total ? { field: top("field"), ka: top("area") } : null;
+      crews.set(router, { at: techMap.at, rows: customers, crew }); return crew;
+    }
+    // "Tim Bandar 1 (Hendri), Tim Bandar 2 (Suparlin) · KA Nur Suhudi"
+    function crewLine(crew) {
+      if (!crew) return "";
+      const f = crew.field.slice(0, 2).map((t) => titleCase(t.name)).join(", ") + (crew.field.length > 2 ? ` +${crew.field.length - 2}` : "");
+      const ka = crew.ka.slice(0, 2).map((t) => `KA ${t.members.map((m) => titleCase(m.n)).join(" / ") || titleCase(t.name.replace(/^KA\s+/i, ""))}`).join(", ");
+      return [f, ka].filter(Boolean).join(" · ");
+    }
+    const titleCase = (x) => String(x).toLowerCase().replace(/(^|[\s(])[^\s(]/g, (c) => c.toUpperCase()); // "Tim Bandar 1 (Hendri)"
     function techBox(r) {
       const box = el("div", "techs rise"); box.style.setProperty("--i", "2");
       const fill = () => {

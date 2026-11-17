@@ -61,6 +61,7 @@
         const b = el("button", `ralert item${x.level === "down" ? "" : " drop"}`); b.type = "button";
         if (x.level === "nofeed") b.append(el("b", null, `${x.name}: no data since ${x.since ? hhmm(x.since) : "?"}`), el("span", null, `count frozen at ${x.open} (usually ${x.usual}): the ERP stopped hearing from this router, so whether its customers are online isn't known. Check the router, or its OLT's ONT list.`));
         else b.append(el("b", null, `${x.name}: ${x.level === "down" ? "down" : `${x.gap} fewer online`}`), el("span", null, x.healthy ? said(x) : `${said(x)} · its session feed has stopped`));
+        const crew = crewLine(crewOf(areaOf(x.name)?.router)); if (crew) b.append(el("span", "crew", crew));
         b.onclick = () => { view.nas = x.ip; drawBody(); }; out.push(b);
       }
       if (!radar.alerts.length && !radar.learning) out.push(el("div", "rok", `All ${radar.list.filter((x) => x.level !== "silent").length} routers at their usual level.`));
@@ -74,10 +75,12 @@
         const dark = x.level === "silent" && (area?.active ?? 0) >= 20; // nothing reported, yet customers on file: the feed or the router
         n.append(el("small", x.level === "down" ? "late" : x.level === "drop" || x.level === "nofeed" || dark ? "warn" : null, dark ? "no sessions: check" : x.level === "nofeed" ? "no data" : x.level === "silent" ? "no sessions" : x.usual == null ? "learning" : x.gap > 0 ? `−${x.gap} vs ${x.usual}` : `usual ${x.usual}`));
         b.append(el("span", `dot ${x.level === "learning" ? "" : x.level === "nofeed" ? "drop" : x.level}`), el("span", "t", x.name), cv, n, el("span", "s", [area?.district, area ? `${area.active} active customers` : ""].filter(Boolean).join(" · ") || " "));
+        const crew = crewLine(crewOf(area?.router)); if (crew) b.append(el("span", "s crew", crew));
         b.onclick = () => { view.nas = x.ip; drawBody(); };
         out.push(b); spark(cv, x.series, x.usual);
       });
       if (!areas) areaNames().then(() => view.mode === "radar" && !view.nas && drawBody());
+      if (!techMap) techIndex().then(() => view.mode === "radar" && drawBody()).catch(() => {}); // the crew lines come in after
       return out;
     }
     function routerView(ip) {
@@ -88,6 +91,14 @@
       const who = el("div", "who rise"), pill = el("span", "pill");
       pill.append(el("span", `dot ${x.level === "nofeed" ? "drop" : x.level}`), { down: "Down", drop: "Dropping", nofeed: "No data", ok: "Normal", learning: "Learning", silent: "No sessions" }[x.level]);
       who.append(el("h3", null, x.name), pill); wrap.append(who);
+      const crew = crewOf(areaOf(x.name)?.router);
+      if (crew && (crew.field.length || crew.ka.length)) {
+        const box = el("div", "techs rise"); box.style.cssText = "margin-top:10px"; box.style.setProperty("--i", "1");
+        for (const t of [...crew.field, ...crew.ka]) { const row = el("div", "team"), kind = teamKind(t.name);
+          row.append(el("span", `tag k-${kind}`, kind === "area" ? "KA" : "Field"), el("b", null, titleCase(t.name)), el("span", "sub", t.members.map((m) => (m.lead ? `${titleCase(m.n)} (lead)` : titleCase(m.n))).join(", ") || "no members"));
+          box.append(row); }
+        wrap.append(box);
+      }
       const stats = el("div", "stats rise"); stats.style.cssText = "margin-top:12px;padding:0"; stats.style.setProperty("--i", "1");
       const stat = (v, l, cls = "") => { const d = el("div", `stat ${cls}`); d.append(el("b", null, String(v)), el("span", null, l)); stats.append(d); return d; };
       stat(x.open, "online now", x.level === "down" || x.level === "drop" ? "bad" : "on"); stat(x.usual ?? "–", "usually"); const back15 = stat("…", "reconnected ≤15 min");

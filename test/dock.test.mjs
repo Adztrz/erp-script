@@ -101,3 +101,19 @@ test("activation: the install location's coordinates, also when Maps is a short 
   assert.deepEqual(where({ shareLokasiGmaps: "https://maps.app.goo.gl/abc", installationLocationCheck: { registrationCoord: { lat: -8.1, lng: 111.2 } } }), { lat: -8.1, lng: 111.2 });
   assert.equal(where({ shareLokasiGmaps: "https://maps.app.goo.gl/abc" }), null);
 });
+
+test("radar: a router's crew is the field teams and KA covering most of its customers", () => {
+  const field1 = { name: "TIM KARANG 1 (ANDI)", members: [{ n: "ANDI WIJAYA", lead: true }, { n: "BUDI SANTOSO" }] };
+  const field2 = { name: "TIM KARANG 2 (CAHYO)", members: [{ n: "CAHYO PRATAMA" }] };
+  const ka = { name: "KA KARANG MULYO", members: [{ n: "DEDI KURNIA" }] }, other = { name: "TIM KOTA 1", members: [{ n: "EKO" }] };
+  const map = { karang: [field1, ka], sumber: [field2, ka], kota: [other] };
+  const customers = [...Array(40)].map((_, i) => ({ router: "RO KARANG", desa: i < 25 ? "Karang" : i < 36 ? "Sumber" : "Kota" }))
+    .concat([{ router: "RO KARANG", desa: "Kota", isInactive: true }, { router: "RO LAIN", desa: "Kota" }]);
+  const { crewOf, crewLine } = load(dock, ["crews", "crewOf", "crewLine", "teamKind", "titleCase"],
+    { techMap: { at: 1 }, customers, teamsFor: (d) => map[d.toLowerCase()] || [] }, ["crewOf", "crewLine"]);
+  const crew = crewOf("RO KARANG");
+  assert.deepEqual(crew.field.map((t) => t.name), ["TIM KARANG 1 (ANDI)", "TIM KARANG 2 (CAHYO)"]); // TIM KOTA 1 has 4 of 40: under a quarter
+  assert.deepEqual(crew.ka.map((t) => t.name), ["KA KARANG MULYO"]);
+  assert.equal(crewLine(crew), "Tim Karang 1 (Andi), Tim Karang 2 (Cahyo) · KA Dedi Kurnia");
+  assert.equal(crewOf("RO NONE"), null);
+});

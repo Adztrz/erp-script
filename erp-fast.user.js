@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      3.3
+// @version      3.4
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -1960,6 +1960,7 @@
       .erp-dock .rrow canvas, .erp-dock canvas.spark { width: 72px; height: 22px; margin: 0; }
       .erp-dock .rrow .n { text-align: right; font-size: 13px; color: var(--paper); font-variant-numeric: tabular-nums; }
       .erp-dock .rrow .n small { display: block; font-size: 11px; color: var(--muted); }
+      .erp-dock .rrow .crew { color: var(--paper); opacity: .72; } .erp-dock .ralert span.crew { margin-top: 2px; opacity: .85; }
       .erp-dock .rrow .n small.late { color: #ff6a5c; } .erp-dock .rrow .n small.warn { color: #e0b252; }
       .erp-dock .dot.drop { background: #e0b252; } .erp-dock .dot.down { background: var(--red); box-shadow: 0 0 0 3px rgba(241,38,20,.18); } .erp-dock .dot.ok { background: var(--green); }
       .erp-dock .dot.silent { background: transparent; box-shadow: inset 0 0 0 1px var(--muted); }
@@ -2560,6 +2561,7 @@
         const b = el("button", `ralert item${x.level === "down" ? "" : " drop"}`); b.type = "button";
         if (x.level === "nofeed") b.append(el("b", null, `${x.name}: no data since ${x.since ? hhmm(x.since) : "?"}`), el("span", null, `count frozen at ${x.open} (usually ${x.usual}): the ERP stopped hearing from this router, so whether its customers are online isn't known. Check the router, or its OLT's ONT list.`));
         else b.append(el("b", null, `${x.name}: ${x.level === "down" ? "down" : `${x.gap} fewer online`}`), el("span", null, x.healthy ? said(x) : `${said(x)} · its session feed has stopped`));
+        const crew = crewLine(crewOf(areaOf(x.name)?.router)); if (crew) b.append(el("span", "crew", crew));
         b.onclick = () => { view.nas = x.ip; drawBody(); }; out.push(b);
       }
       if (!radar.alerts.length && !radar.learning) out.push(el("div", "rok", `All ${radar.list.filter((x) => x.level !== "silent").length} routers at their usual level.`));
@@ -2573,10 +2575,12 @@
         const dark = x.level === "silent" && (area?.active ?? 0) >= 20; // nothing reported, yet customers on file: the feed or the router
         n.append(el("small", x.level === "down" ? "late" : x.level === "drop" || x.level === "nofeed" || dark ? "warn" : null, dark ? "no sessions: check" : x.level === "nofeed" ? "no data" : x.level === "silent" ? "no sessions" : x.usual == null ? "learning" : x.gap > 0 ? `−${x.gap} vs ${x.usual}` : `usual ${x.usual}`));
         b.append(el("span", `dot ${x.level === "learning" ? "" : x.level === "nofeed" ? "drop" : x.level}`), el("span", "t", x.name), cv, n, el("span", "s", [area?.district, area ? `${area.active} active customers` : ""].filter(Boolean).join(" · ") || " "));
+        const crew = crewLine(crewOf(area?.router)); if (crew) b.append(el("span", "s crew", crew));
         b.onclick = () => { view.nas = x.ip; drawBody(); };
         out.push(b); spark(cv, x.series, x.usual);
       });
       if (!areas) areaNames().then(() => view.mode === "radar" && !view.nas && drawBody());
+      if (!techMap) techIndex().then(() => view.mode === "radar" && drawBody()).catch(() => {}); // the crew lines come in after
       return out;
     }
     function routerView(ip) {
@@ -2587,6 +2591,14 @@
       const who = el("div", "who rise"), pill = el("span", "pill");
       pill.append(el("span", `dot ${x.level === "nofeed" ? "drop" : x.level}`), { down: "Down", drop: "Dropping", nofeed: "No data", ok: "Normal", learning: "Learning", silent: "No sessions" }[x.level]);
       who.append(el("h3", null, x.name), pill); wrap.append(who);
+      const crew = crewOf(areaOf(x.name)?.router);
+      if (crew && (crew.field.length || crew.ka.length)) {
+        const box = el("div", "techs rise"); box.style.cssText = "margin-top:10px"; box.style.setProperty("--i", "1");
+        for (const t of [...crew.field, ...crew.ka]) { const row = el("div", "team"), kind = teamKind(t.name);
+          row.append(el("span", `tag k-${kind}`, kind === "area" ? "KA" : "Field"), el("b", null, titleCase(t.name)), el("span", "sub", t.members.map((m) => (m.lead ? `${titleCase(m.n)} (lead)` : titleCase(m.n))).join(", ") || "no members"));
+          box.append(row); }
+        wrap.append(box);
+      }
       const stats = el("div", "stats rise"); stats.style.cssText = "margin-top:12px;padding:0"; stats.style.setProperty("--i", "1");
       const stat = (v, l, cls = "") => { const d = el("div", `stat ${cls}`); d.append(el("b", null, String(v)), el("span", null, l)); stats.append(d); return d; };
       stat(x.open, "online now", x.level === "down" || x.level === "drop" ? "bad" : "on"); stat(x.usual ?? "–", "usually"); const back15 = stat("…", "reconnected ≤15 min");
@@ -3399,7 +3411,26 @@
       }
       return { teams: [], how: "" };
     }
-    const titleCase = (x) => String(x).toLowerCase().replace(/(^|\s)\S/g, (c) => c.toUpperCase());
+    // a router's crew: the field teams and the KA covering most of its customers' villages (each at least a quarter of them)
+    const crews = new Map();
+    function crewOf(router) {
+      if (!techMap || !customers || !router) return null;
+      const memo = crews.get(router); if (memo && memo.at === techMap.at && memo.rows === customers) return memo.crew;
+      const n = new Map(); let total = 0;
+      for (const c of customers) { if (c.router !== router || c.isInactive || !c.desa) continue;
+        const l = teamsFor(c.desa); if (l.length) total++; for (const t of l) n.set(t, (n.get(t) || 0) + 1); }
+      const top = (kind) => [...n].filter(([t, k]) => teamKind(t.name) === kind && k >= total / 4).sort((a, b) => b[1] - a[1]).map(([t]) => t);
+      const crew = total ? { field: top("field"), ka: top("area") } : null;
+      crews.set(router, { at: techMap.at, rows: customers, crew }); return crew;
+    }
+    // "Tim Bandar 1 (Hendri), Tim Bandar 2 (Suparlin) · KA Nur Suhudi"
+    function crewLine(crew) {
+      if (!crew) return "";
+      const f = crew.field.slice(0, 2).map((t) => titleCase(t.name)).join(", ") + (crew.field.length > 2 ? ` +${crew.field.length - 2}` : "");
+      const ka = crew.ka.slice(0, 2).map((t) => `KA ${t.members.map((m) => titleCase(m.n)).join(" / ") || titleCase(t.name.replace(/^KA\s+/i, ""))}`).join(", ");
+      return [f, ka].filter(Boolean).join(" · ");
+    }
+    const titleCase = (x) => String(x).toLowerCase().replace(/(^|[\s(])[^\s(]/g, (c) => c.toUpperCase()); // "Tim Bandar 1 (Hendri)"
     function techBox(r) {
       const box = el("div", "techs rise"); box.style.setProperty("--i", "2");
       const fill = () => {
