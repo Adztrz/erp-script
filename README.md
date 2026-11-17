@@ -54,6 +54,7 @@ In Technical → Antrean Aktivasi, the ⚡ activation form stays exactly as the 
 - **FAT from the technician:** paste what they sent (`pakai fat jimat 4c ya pak, port 3`). It finds the FAT in the database despite chat words and loose spelling, reads the port, and **Use** fills both.
 - **FAT/ODP from the report:** matched to the database even when typed loosely (`\FAT LDN NW15`, `FAT 8BBLH`).
 - **Nearest FATs/ODPs with free ports** (folded, as a cross-check): measured from the install point, with distance and ports in use. **Use** fills the form's FAT and port fields.
+- **OLT:** the form won't activate without one. The helper suggests it from the 25 nearest customers whose modem is on an OLT list (or the same village when there's no install point): each OLT with how many of them, the nearest one's distance and their usual PON. If the modem's SN is already on an OLT list, that OLT is shown instead. **Use** picks it in *Pindai Modem di OLT* and presses its Scan.
 - **Nama Pelanggan:** the name as the ERP lists customers, name + village + STARLITE (`BUDI SANTOSO SUKOREJO STARLITE`). **Use** puts it in the form.
 - **Username ideas:** always name + village code, in the ERP's own style (`budisantoso0601`). When the plain name is taken, the village name goes in instead of the form's extra number (`budisukor0601` rather than `budis06012`). Each idea is checked against RADIUS as free or taken; **Use** puts one in the form.
 - **Checklist:** name, FAT, port, OLT or modem, serial, and username, updated live.

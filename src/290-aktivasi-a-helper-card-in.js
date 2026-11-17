@@ -87,6 +87,39 @@
       if (sel.value) { set(sel, ""); await wait(150); }
       [...dlg.querySelectorAll("button")].find((b) => /^Scan OLT/.test(b.textContent.trim()))?.click();
     }
+    // OLT: which OLT the customers around the install point are on (their modems in the OLTs' lists, by PPPoE), or the
+    // one the modem itself is already listed on. The Dock's kept OLT lists are used when under 12 hours old, else read.
+    let oltRows = null;
+    async function oltLists() {
+      if (oltRows && Date.now() - oltRows.at < 600e3) return oltRows.rows;
+      const kept = await idbGet("onts");
+      if (kept?.rows?.length && Date.now() - kept.at < 12 * 3600e3) { oltRows = { at: Date.now(), rows: kept.rows }; return kept.rows; }
+      const pr = (await get("/api/olt/profiles")).data || [], rows = [];
+      for (let i = 0; i < pr.length; i += 6) await Promise.all(pr.slice(i, i + 6).map((p) => get(`/api/olt/profiles/${p.id}/onts?cached=1`).then((j) => {
+        for (const o of j.data || []) rows.push({ sn: norm(o.serialNumber), pid: p.id, olt: p.name, pon: [o.frame, o.slot, o.port].filter((x) => x != null).join("/"), pppoe: o.pppoeUsername || "" }); }).catch(() => {})));
+      oltRows = { at: Date.now(), rows }; return rows;
+    }
+    async function oltGuess(c, here, sn) {
+      const rows = await oltLists(), bySn = sn && rows.find((o) => norm(o.sn) === norm(sn));
+      if (bySn) return { sn: bySn };
+      const byUser = new Map(rows.filter((o) => o.pppoe).map((o) => [o.pppoe.toLowerCase(), o])), cust = (await idbGet("all"))?.rows || [];
+      const desa = String(c?.desa || "").trim().toLowerCase();
+      // the 25 nearest customers within 3 km whose modem is on an OLT list; without an install point, the same village
+      let near = [];
+      if (here) near = cust.map((x) => { const lat = Number(x.lat), lng = Number(x.lng); return lat && lng ? [x, metres(here, { lat, lng })] : null; })
+        .filter((z) => z && z[1] < 3000 && byUser.has(String(z[0].username).toLowerCase())).sort((a, b) => a[1] - b[1]).slice(0, 25);
+      if (!near.length && desa) near = cust.filter((x) => String(x.desa || "").trim().toLowerCase() === desa && byUser.has(String(x.username).toLowerCase())).map((x) => [x, null]);
+      const votes = new Map();
+      for (const [x, d] of near) { const o = byUser.get(String(x.username).toLowerCase()), v = votes.get(o.pid) || { pid: o.pid, olt: o.olt, n: 0, w: 0, close: Infinity, pons: new Map() };
+        v.n++; v.w += d == null ? 1 : 1 / (1 + d / 200); if (d != null) v.close = Math.min(v.close, d); v.pons.set(o.pon, (v.pons.get(o.pon) || 0) + 1); votes.set(o.pid, v); }
+      return { noList: !cust.length, near: near.length, byPlace: !!here && near[0]?.[1] != null, list: [...votes.values()].sort((a, b) => b.w - a.w).slice(0, 3) };
+    }
+    async function useOlt(dlg, pid) {
+      const sel = [...dlg.querySelectorAll("select")].find((x) => /^Semua OLT/.test(x.options[0]?.textContent || "")); if (!sel || ![...sel.options].some((o) => o.value === pid)) return false;
+      set(sel, pid); await wait(200);
+      [...dlg.querySelectorAll("button")].find((b) => /^Scan OLT/.test(b.textContent.trim()))?.click();
+      return true;
+    }
     // what the form still needs, read straight from it
     function needs(dlg) {
       const fatBtn = dlg.querySelector('[aria-label="Pilih FAT / ODP pelanggan dari database"]'), fat = fatBtn && !/^(Pilih FAT|Memuat)/.test(fatBtn.textContent.trim());
@@ -201,6 +234,22 @@
           else { const r = el("div", "opt"); r.append(el("span", "code", want), el("span", "sub", `adds the village (${c.desa}${c.kecamatan ? `, Kec. ${c.kecamatan}` : ""}) and STARLITE`));
             const b = el("button", null, "Use"); b.type = "button"; b.onclick = () => { set(nin, want); b.textContent = "Filled"; setTimeout(() => (b.textContent = "Use"), 1500); }; r.append(b); nm.append(r); }
         } else nm.append(el("p", "sub", "No village on record for this customer."));
-        body.append(nm, fat, un);
+        // OLT: the form won't activate without one; suggested from the neighbours' modems
+        const ob = el("div", "blk"); ob.append(el("h4", null, "OLT"), el("p", "ld", "Looking at the OLTs of the customers around the install point…"));
+        const snNow = dlg.querySelector('input[placeholder^="Contoh: ZICG"]')?.value.trim() || "";
+        oltGuess(c, here, snNow).then((g) => {
+          ob.replaceChildren(el("h4", null, "OLT"));
+          const orow = (pid, name, why) => { const r = el("div", "opt"); r.append(el("span", "code", name), el("span", "sub", why));
+            const b = el("button", null, "Use"); b.type = "button"; b.title = "Pick this OLT in Pindai Modem di OLT and press its Scan";
+            b.onclick = async () => { b.disabled = true; const ok = await useOlt(dlg, pid); b.textContent = ok ? "Scanning" : "Not in the form's list"; setTimeout(() => { b.disabled = false; b.textContent = "Use"; }, 2500); };
+            r.append(b); ob.append(r); };
+          if (g.sn) return orow(g.sn.pid, g.sn.olt, `modem ${snNow} is already on this OLT's list${g.sn.pon ? `, PON ${g.sn.pon}` : ""}`);
+          if (g.noList) return ob.append(el("p", "sub", "Needs the customer list to see the neighbours' OLTs: open LDN Radius → Pelanggan once."));
+          if (!g.list.length) return ob.append(el("p", "sub", here || c?.desa ? "No customer near the install point has a modem on an OLT list." : "No install point or village on record to go by."));
+          ob.append(el("p", "sub", g.byPlace ? `From the ${g.near} nearest customers with a modem on an OLT list:` : `From ${g.near} customers in ${c.desa} (no install point on record):`));
+          for (const v of g.list) { const pon = [...v.pons].sort((a, b) => b[1] - a[1])[0];
+            orow(v.pid, v.olt, [`${v.n} of ${g.near}`, Number.isFinite(v.close) && `nearest ${km(Math.round(v.close))}`, pon && `mostly PON ${pon[0]} (${pon[1]})`].filter(Boolean).join(" · ")); }
+        }).catch((e) => ob.replaceChildren(el("h4", null, "OLT"), el("p", "warn", `Couldn't read the OLT lists: ${e.message}`)));
+        body.append(nm, fat, ob, un);
       } catch (e) { body.replaceChildren(el("p", "warn", `Helper not loaded: ${e.message}`)); }
     }
