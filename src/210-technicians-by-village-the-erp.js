@@ -56,8 +56,11 @@
       const memo = crews.get(router); if (memo && memo.at === techMap.at && memo.rows === customers) return memo.crew;
       const n = new Map(); let total = 0;
       for (const c of customers) { if (c.router !== router || c.isInactive || !c.desa) continue;
-        const l = teamsFor(c.desa); if (l.length) total++; for (const t of l) n.set(t, (n.get(t) || 0) + 1); }
-      const top = (kind) => [...n].filter(([t, k]) => teamKind(t.name) === kind && k >= total / 4).sort((a, b) => b[1] - a[1]).map(([t]) => t);
+        const l = teamsFor(c.desa); if (l.length) total++;
+        for (const t of l) { if (t.name === "Tanpa tim") continue; // individually placed: no team to name
+          const e = n.get(t.name) || { t: { name: t.name, members: [] }, k: 0 }; e.k++; n.set(t.name, e);
+          for (const m of t.members) if (!e.t.members.some((x) => x.n === m.n)) e.t.members.push(m); } }
+      const top = (kind) => [...n.values()].filter((e) => teamKind(e.t.name) === kind && e.k >= total / 4).sort((a, b) => b.k - a.k).map((e) => e.t);
       const crew = total ? { field: top("field"), ka: top("area") } : null;
       crews.set(router, { at: techMap.at, rows: customers, crew }); return crew;
     }
@@ -65,7 +68,7 @@
     function crewLine(crew) {
       if (!crew) return "";
       const f = crew.field.slice(0, 2).map((t) => titleCase(t.name)).join(", ") + (crew.field.length > 2 ? ` +${crew.field.length - 2}` : "");
-      const ka = crew.ka.slice(0, 2).map((t) => `KA ${t.members.map((m) => titleCase(m.n)).join(" / ") || titleCase(t.name.replace(/^KA\s+/i, ""))}`).join(", ");
+      const ka = [...new Set(crew.ka.map((t) => `KA ${t.members.map((m) => titleCase(m.n)).join(" / ") || titleCase(t.name.replace(/^KA\s+/i, ""))}`))].slice(0, 2).join(", ");
       return [f, ka].filter(Boolean).join(" · ");
     }
     const titleCase = (x) => String(x).toLowerCase().replace(/(^|[\s(])[^\s(]/g, (c) => c.toUpperCase()); // "Tim Bandar 1 (Hendri)"

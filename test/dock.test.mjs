@@ -106,13 +106,14 @@ test("radar: a router's crew is the field teams and KA covering most of its cust
   const field1 = { name: "TIM KARANG 1 (ANDI)", members: [{ n: "ANDI WIJAYA", lead: true }, { n: "BUDI SANTOSO" }] };
   const field2 = { name: "TIM KARANG 2 (CAHYO)", members: [{ n: "CAHYO PRATAMA" }] };
   const ka = { name: "KA KARANG MULYO", members: [{ n: "DEDI KURNIA" }] }, other = { name: "TIM KOTA 1", members: [{ n: "EKO" }] };
-  const map = { karang: [field1, ka], sumber: [field2, ka], kota: [other] };
-  const customers = [...Array(40)].map((_, i) => ({ router: "RO KARANG", desa: i < 25 ? "Karang" : i < 36 ? "Sumber" : "Kota" }))
+  const copy = (t) => ({ ...t, members: [...t.members] }); // every village has its own copy of a team, as in techIndex
+  const map = { karang: [field1, ka], sumber: [field2, copy(ka)], kota: [other], wetan: [copy(field1)], kulon: [copy(field1)], lor: [{ name: "Tanpa tim", members: [{ n: "FAJAR" }] }] };
+  const customers = [...Array(40)].map((_, i) => ({ router: "RO KARANG", desa: i < 8 ? "Karang" : i < 16 ? "Wetan" : i < 25 ? "Kulon" : i < 36 ? "Sumber" : i < 38 ? "Kota" : "Lor" }))
     .concat([{ router: "RO KARANG", desa: "Kota", isInactive: true }, { router: "RO LAIN", desa: "Kota" }]);
   const { crewOf, crewLine } = load(dock, ["crews", "crewOf", "crewLine", "teamKind", "titleCase"],
     { techMap: { at: 1 }, customers, teamsFor: (d) => map[d.toLowerCase()] || [] }, ["crewOf", "crewLine"]);
   const crew = crewOf("RO KARANG");
-  assert.deepEqual(crew.field.map((t) => t.name), ["TIM KARANG 1 (ANDI)", "TIM KARANG 2 (CAHYO)"]); // TIM KOTA 1 has 4 of 40: under a quarter
+  assert.deepEqual(crew.field.map((t) => t.name), ["TIM KARANG 1 (ANDI)", "TIM KARANG 2 (CAHYO)"]); // TIM KARANG 1 counted over its three villages; TIM KOTA 1 has 2 of 40
   assert.deepEqual(crew.ka.map((t) => t.name), ["KA KARANG MULYO"]);
   assert.equal(crewLine(crew), "Tim Karang 1 (Andi), Tim Karang 2 (Cahyo) · KA Dedi Kurnia");
   assert.equal(crewOf("RO NONE"), null);
