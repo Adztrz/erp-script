@@ -171,3 +171,15 @@ test("outage history: routers failing within 15 minutes are one event, placed at
   ], t0 - m);
   assert.deepEqual(events.map((e) => [e.where.join("+"), e.behind, e.level]), [["RO ALPHA", 1, "down"], ["RO HUB", 1, "nofeed"], ["RO NORTH", 0, "down"], ["RO LAIN", 0, "down"]]);
 });
+
+test("map redaman: all with dB on, only redaman tinggi with it off, and not twice", () => {
+  const store = {}, ls = { get: (k, d) => (k in store ? store[k] : d), set: (k, v) => { store[k] = v; } };
+  const el = (tag, cls, text) => ({ cls, text, style: {} });
+  const ont = { a: { st: "online", rx: -21.4 }, b: { st: "online", rx: -27.1 }, c: { st: "online", rx: -29.6 }, d: { st: "offline", rx: -30 }, e: { st: "online", rx: -31 } };
+  const env = { ls, el, modemOf: (c) => ({ ont: ont[c.u] }), usable: (o) => o.st === "online" && o.rx < 0 && o.rx > -40 };
+  const { rxTags } = load(dock, ["RXON", "sigLevel", "rxTags"], env, ["rxTags"]);
+  const list = ["a", "b", "c", "d", "e"].map((u, i) => [{ u }, i * 10, 5]), named = new Set([list[4][0]]);
+  assert.deepEqual(rxTags(list, named).map((t) => t.text), ["-29,6"]); // off: redaman tinggi only, minus the one already named
+  ls.set("erpDock.mapRx", true);
+  assert.deepEqual(rxTags(list, named).map((t) => [t.text, t.cls]), [["-21,4", "mrx good"], ["-27,1", "mrx warn"], ["-29,6", "mrx crit"]]);
+});

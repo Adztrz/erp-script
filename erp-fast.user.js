@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      3.6.2
+// @version      3.7
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -1869,6 +1869,9 @@
       .erp-dock .map .brief .lv.high { background: var(--red); color: #fff; } .erp-dock .map .brief .lv.mid { background: #e0b252; } .erp-dock .map .brief .lv.low { background: #a3a4a3; } .erp-dock .map .brief .lv.ok { background: var(--green); }
       .erp-dock .map .brief .bs, .erp-dock .map .brief .bf { margin-top: 2px; font-size: 11px; color: var(--body); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .erp-dock .map .brief .bf { color: #ff8a7a; font-weight: 500; }
       .erp-dock .map .zoom button.bm { font-size: 10px; font-weight: 600; }
+      .erp-dock .map .zoom button.bm.on { background: var(--paper); color: #07090b; }
+      .erp-dock .map .mrx { position: absolute; z-index: 1; transform: translate(9px, -50%); padding: 0 4px; border-radius: 3px; background: rgba(9,11,12,.82); color: var(--body); font: 500 10px/14px Inter, system-ui, sans-serif; font-variant-numeric: tabular-nums; white-space: nowrap; pointer-events: none; }
+      .erp-dock .map .mrx.warn { color: #e0b252; } .erp-dock .map .mrx.crit { background: #e0b252; color: #07090b; font-weight: 600; }
       .erp-dock .map .foot { position: absolute; z-index: 3; left: 8px; right: 8px; bottom: 16px; padding: 5px 8px; border-radius: 6px; background: rgba(9,11,12,.88); pointer-events: none; font-size: 11px; color: var(--bone); }
       .erp-dock .map .scale { display: flex; align-items: center; gap: 6px; } .erp-dock .map .scale i { height: 6px; border: 1.5px solid var(--bone); border-top: 0; }
       /* north arrow beside the scale: the map never rotates, so up is always north (U = utara) */
@@ -4210,13 +4213,14 @@
       const zoom = el("div", "zoom"), full = box.classList.contains("full"), fs = el("button", null, full ? "⤡" : "⤢"); fs.type = "button"; fs.title = full ? "Back (F or Esc)" : "Full screen (F)"; fs.onclick = () => toggleFull(box); zoom.append(fs);
       for (const [t, dz, label] of [["+", 1, "Zoom in"], ["−", -1, "Zoom out"]]) { const bt = el("button", null, t); bt.type = "button"; bt.setAttribute("aria-label", label);
         bt.disabled = (dz > 0 && z >= T.max) || (dz < 0 && z <= 8); bt.onclick = () => { box.zoom = (box.zoom || 0) + dz; box.redraw(); }; zoom.append(bt); }
-      zoom.append(recentre(box), baseButton(box, kind), shareButton(box));
+      zoom.append(recentre(box), rxButton(box), baseButton(box, kind), shareButton(box));
       box.classList.toggle("sat", kind === "sat"); box.classList.toggle("carto", carto);
       const mpp = 156543.03392 * Math.cos(mid.lat * Math.PI / 180) / 2 ** z;
       const bar = replayBar(box);
       const scene = briefScene({ pts: kinds, at: (p) => { const [x, y] = proj(p, z); return [x - left, y - top]; }, mpp, w, h, about: { ...about, replay: rp, bar: !!bar } });
       box.scene = scene;
-      mapLayers(box, [tiles, ...briefUnder(scene), ...(paint ? [paint] : []), ...dots, ...briefOver(scene), tip, zoom, el("span", "attr", T.attr)]);
+      const tags = rxTags(near.map(([z0, [px, py]]) => [z0.c, px - left, py - top]), new Set(scene.labels.map((l) => l.c)));
+      mapLayers(box, [tiles, ...briefUnder(scene), ...(paint ? [paint] : []), ...dots, ...tags, ...briefOver(scene), tip, zoom, el("span", "attr", T.attr)]);
       if (bar) box.querySelector(".brief").append(bar);
       swapTiles(box, tiles, { z, kind: carto ? "carto" : kind, left, top, id: `area:${box.dataset.what}` });
     }
@@ -4261,14 +4265,15 @@
       fs.setAttribute("aria-label", full ? "Leave full screen" : "Full screen"); fs.onclick = () => toggleFull(box); zoom.append(fs);
       for (const [t, dz, label] of [["+", 1, "Zoom in"], ["−", -1, "Zoom out"]]) { const b = el("button", null, t); b.type = "button"; b.setAttribute("aria-label", label);
         b.disabled = (dz > 0 && z >= T.max) || (dz < 0 && z <= 12); b.onclick = () => { view.zoom = (view.zoom || 0) + dz; tileMap(box, r, n, radius, rows); }; zoom.append(b); }
-      zoom.append(recentre(box), baseButton(box, kind), shareButton(box));
+      zoom.append(recentre(box), rxButton(box), baseButton(box, kind), shareButton(box));
       box.classList.toggle("sat", kind === "sat"); box.classList.toggle("carto", !!carto);
       const at = (p) => { const [x, y] = world(p); return [x - left, y - top]; };
       const scene = briefScene({ pts: [{ c: r, p: n.c, k: health(r), me: true }, ...n.list.map((x) => ({ c: x.r, p: x.p, k: x.k, t: x.t, u: x.u }))], at, mpp, w, h,
         rings: [[hx, hy, radius / 2 / mpp, `${radius / 2} m`], [hx, hy, radius / mpp, radius < 1000 ? `${radius} m` : "1 km"]],
         me: [hx, hy, r.nama || r.username], about: { what: `Radius ${radius < 1000 ? `${radius} m` : "1 km"} dari ${r.nama || r.username}`, near: r } });
       box.scene = scene;
-      mapLayers(box, [tiles, ring(0.5, "half"), ring(1, ""), ...briefUnder(scene), ...dots, me, ...briefOver(scene), tip, zoom, el("span", "attr", T.attr)]);
+      const tags = rxTags(n.list.map((x) => { const [px, py] = world(x.p); return [x.r, px - left, py - top]; }), new Set(scene.labels.map((l) => l.c)));
+      mapLayers(box, [tiles, ring(0.5, "half"), ring(1, ""), ...briefUnder(scene), ...dots, ...tags, me, ...briefOver(scene), tip, zoom, el("span", "attr", T.attr)]);
       swapTiles(box, tiles, { z, kind: carto ? "carto" : kind, left, top, id: `near:${r.username}` });
     }
     // Drag a map to pan it: the picture follows the pointer, and every ~100 px (and on release) the tiles are drawn
@@ -4500,7 +4505,7 @@
         const [x, y] = at(z.p); if (!inView([x, y])) continue;
         const text = `${shortName(z.c)} · ${detail(z)}`, tw = text.length * 6.3 + 12, th = 18;
         const r = [[x + 9, y - th / 2], [x - 9 - tw, y - th / 2], [x - tw / 2, y - 12 - th], [x - tw / 2, y + 12]].map(([a, b]) => [a, b, a + tw, b + th]).find(free);
-        if (r) { used.push(r); labels.push({ x: r[0], y: r[1], w: tw, text, k: z.k }); }
+        if (r) { used.push(r); labels.push({ x: r[0], y: r[1], w: tw, text, k: z.k, c: z.c }); }
       }
       // villages (where 3+ of the map's customers live), named at their middle with the field team that covers them
       const vg = new Map();
@@ -4629,6 +4634,21 @@
         else dot(x0 + 4, ly - 4, k, 4);
         g.fillStyle = "#e9e1dc"; g.fillText(l, x0 + 13, ly); } });
       return cv;
+    }
+    // each online modem's redaman by its dot: the dB button shows them all (kept in this browser); redaman tinggi (below
+    // −28 dBm) shows either way, unless its name label already says it. Past 600 in view only those, until you zoom in.
+    const RXON = "erpDock.mapRx";
+    function rxTags(list, named = new Set()) { // [customer, x, y] on the map
+      const all = !!ls.get(RXON, false), out = []; let n = 0;
+      for (const [c, x, y] of list) { const o = modemOf(c).ont; if (!o || !usable(o)) continue; const crit = o.rx < -28;
+        if (crit ? named.has(c) : !all || n++ >= 600) continue;
+        const t = el("span", `mrx ${sigLevel(o.rx)}`, o.rx.toFixed(1).replace(".", ",")); t.style.left = `${x}px`; t.style.top = `${y}px`; out.push(t); }
+      return out;
+    }
+    function rxButton(box) {
+      const on = !!ls.get(RXON, false), b = el("button", `bm${on ? " on" : ""}`, "dB"); b.type = "button"; b.setAttribute("aria-pressed", String(on));
+      b.title = on ? "Hide the redaman (redaman tinggi stays)" : "Show every modem's redaman"; b.setAttribute("aria-label", "Redaman on the map");
+      b.onclick = () => { ls.set(RXON, !on); box.redraw(); }; return b;
     }
     function baseButton(box, kind) {
       const b = el("button", "bm", kind === "sat" ? "Map" : "Sat"); b.type = "button"; b.title = kind === "sat" ? "Street map" : "Satellite";

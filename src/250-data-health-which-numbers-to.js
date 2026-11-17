@@ -285,13 +285,14 @@
       const zoom = el("div", "zoom"), full = box.classList.contains("full"), fs = el("button", null, full ? "⤡" : "⤢"); fs.type = "button"; fs.title = full ? "Back (F or Esc)" : "Full screen (F)"; fs.onclick = () => toggleFull(box); zoom.append(fs);
       for (const [t, dz, label] of [["+", 1, "Zoom in"], ["−", -1, "Zoom out"]]) { const bt = el("button", null, t); bt.type = "button"; bt.setAttribute("aria-label", label);
         bt.disabled = (dz > 0 && z >= T.max) || (dz < 0 && z <= 8); bt.onclick = () => { box.zoom = (box.zoom || 0) + dz; box.redraw(); }; zoom.append(bt); }
-      zoom.append(recentre(box), baseButton(box, kind), shareButton(box));
+      zoom.append(recentre(box), rxButton(box), baseButton(box, kind), shareButton(box));
       box.classList.toggle("sat", kind === "sat"); box.classList.toggle("carto", carto);
       const mpp = 156543.03392 * Math.cos(mid.lat * Math.PI / 180) / 2 ** z;
       const bar = replayBar(box);
       const scene = briefScene({ pts: kinds, at: (p) => { const [x, y] = proj(p, z); return [x - left, y - top]; }, mpp, w, h, about: { ...about, replay: rp, bar: !!bar } });
       box.scene = scene;
-      mapLayers(box, [tiles, ...briefUnder(scene), ...(paint ? [paint] : []), ...dots, ...briefOver(scene), tip, zoom, el("span", "attr", T.attr)]);
+      const tags = rxTags(near.map(([z0, [px, py]]) => [z0.c, px - left, py - top]), new Set(scene.labels.map((l) => l.c)));
+      mapLayers(box, [tiles, ...briefUnder(scene), ...(paint ? [paint] : []), ...dots, ...tags, ...briefOver(scene), tip, zoom, el("span", "attr", T.attr)]);
       if (bar) box.querySelector(".brief").append(bar);
       swapTiles(box, tiles, { z, kind: carto ? "carto" : kind, left, top, id: `area:${box.dataset.what}` });
     }
@@ -336,14 +337,15 @@
       fs.setAttribute("aria-label", full ? "Leave full screen" : "Full screen"); fs.onclick = () => toggleFull(box); zoom.append(fs);
       for (const [t, dz, label] of [["+", 1, "Zoom in"], ["−", -1, "Zoom out"]]) { const b = el("button", null, t); b.type = "button"; b.setAttribute("aria-label", label);
         b.disabled = (dz > 0 && z >= T.max) || (dz < 0 && z <= 12); b.onclick = () => { view.zoom = (view.zoom || 0) + dz; tileMap(box, r, n, radius, rows); }; zoom.append(b); }
-      zoom.append(recentre(box), baseButton(box, kind), shareButton(box));
+      zoom.append(recentre(box), rxButton(box), baseButton(box, kind), shareButton(box));
       box.classList.toggle("sat", kind === "sat"); box.classList.toggle("carto", !!carto);
       const at = (p) => { const [x, y] = world(p); return [x - left, y - top]; };
       const scene = briefScene({ pts: [{ c: r, p: n.c, k: health(r), me: true }, ...n.list.map((x) => ({ c: x.r, p: x.p, k: x.k, t: x.t, u: x.u }))], at, mpp, w, h,
         rings: [[hx, hy, radius / 2 / mpp, `${radius / 2} m`], [hx, hy, radius / mpp, radius < 1000 ? `${radius} m` : "1 km"]],
         me: [hx, hy, r.nama || r.username], about: { what: `Radius ${radius < 1000 ? `${radius} m` : "1 km"} dari ${r.nama || r.username}`, near: r } });
       box.scene = scene;
-      mapLayers(box, [tiles, ring(0.5, "half"), ring(1, ""), ...briefUnder(scene), ...dots, me, ...briefOver(scene), tip, zoom, el("span", "attr", T.attr)]);
+      const tags = rxTags(n.list.map((x) => { const [px, py] = world(x.p); return [x.r, px - left, py - top]; }), new Set(scene.labels.map((l) => l.c)));
+      mapLayers(box, [tiles, ring(0.5, "half"), ring(1, ""), ...briefUnder(scene), ...dots, ...tags, me, ...briefOver(scene), tip, zoom, el("span", "attr", T.attr)]);
       swapTiles(box, tiles, { z, kind: carto ? "carto" : kind, left, top, id: `near:${r.username}` });
     }
     // Drag a map to pan it: the picture follows the pointer, and every ~100 px (and on release) the tiles are drawn

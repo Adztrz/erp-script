@@ -160,6 +160,9 @@
       .erp-dock .map .brief .lv.high { background: var(--red); color: #fff; } .erp-dock .map .brief .lv.mid { background: #e0b252; } .erp-dock .map .brief .lv.low { background: #a3a4a3; } .erp-dock .map .brief .lv.ok { background: var(--green); }
       .erp-dock .map .brief .bs, .erp-dock .map .brief .bf { margin-top: 2px; font-size: 11px; color: var(--body); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .erp-dock .map .brief .bf { color: #ff8a7a; font-weight: 500; }
       .erp-dock .map .zoom button.bm { font-size: 10px; font-weight: 600; }
+      .erp-dock .map .zoom button.bm.on { background: var(--paper); color: #07090b; }
+      .erp-dock .map .mrx { position: absolute; z-index: 1; transform: translate(9px, -50%); padding: 0 4px; border-radius: 3px; background: rgba(9,11,12,.82); color: var(--body); font: 500 10px/14px Inter, system-ui, sans-serif; font-variant-numeric: tabular-nums; white-space: nowrap; pointer-events: none; }
+      .erp-dock .map .mrx.warn { color: #e0b252; } .erp-dock .map .mrx.crit { background: #e0b252; color: #07090b; font-weight: 600; }
       .erp-dock .map .foot { position: absolute; z-index: 3; left: 8px; right: 8px; bottom: 16px; padding: 5px 8px; border-radius: 6px; background: rgba(9,11,12,.88); pointer-events: none; font-size: 11px; color: var(--bone); }
       .erp-dock .map .scale { display: flex; align-items: center; gap: 6px; } .erp-dock .map .scale i { height: 6px; border: 1.5px solid var(--bone); border-top: 0; }
       /* north arrow beside the scale: the map never rotates, so up is always north (U = utara) */

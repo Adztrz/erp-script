@@ -131,7 +131,7 @@
         const [x, y] = at(z.p); if (!inView([x, y])) continue;
         const text = `${shortName(z.c)} · ${detail(z)}`, tw = text.length * 6.3 + 12, th = 18;
         const r = [[x + 9, y - th / 2], [x - 9 - tw, y - th / 2], [x - tw / 2, y - 12 - th], [x - tw / 2, y + 12]].map(([a, b]) => [a, b, a + tw, b + th]).find(free);
-        if (r) { used.push(r); labels.push({ x: r[0], y: r[1], w: tw, text, k: z.k }); }
+        if (r) { used.push(r); labels.push({ x: r[0], y: r[1], w: tw, text, k: z.k, c: z.c }); }
       }
       // villages (where 3+ of the map's customers live), named at their middle with the field team that covers them
       const vg = new Map();
@@ -260,6 +260,21 @@
         else dot(x0 + 4, ly - 4, k, 4);
         g.fillStyle = "#e9e1dc"; g.fillText(l, x0 + 13, ly); } });
       return cv;
+    }
+    // each online modem's redaman by its dot: the dB button shows them all (kept in this browser); redaman tinggi (below
+    // −28 dBm) shows either way, unless its name label already says it. Past 600 in view only those, until you zoom in.
+    const RXON = "erpDock.mapRx";
+    function rxTags(list, named = new Set()) { // [customer, x, y] on the map
+      const all = !!ls.get(RXON, false), out = []; let n = 0;
+      for (const [c, x, y] of list) { const o = modemOf(c).ont; if (!o || !usable(o)) continue; const crit = o.rx < -28;
+        if (crit ? named.has(c) : !all || n++ >= 600) continue;
+        const t = el("span", `mrx ${sigLevel(o.rx)}`, o.rx.toFixed(1).replace(".", ",")); t.style.left = `${x}px`; t.style.top = `${y}px`; out.push(t); }
+      return out;
+    }
+    function rxButton(box) {
+      const on = !!ls.get(RXON, false), b = el("button", `bm${on ? " on" : ""}`, "dB"); b.type = "button"; b.setAttribute("aria-pressed", String(on));
+      b.title = on ? "Hide the redaman (redaman tinggi stays)" : "Show every modem's redaman"; b.setAttribute("aria-label", "Redaman on the map");
+      b.onclick = () => { ls.set(RXON, !on); box.redraw(); }; return b;
     }
     function baseButton(box, kind) {
       const b = el("button", "bm", kind === "sat" ? "Map" : "Sat"); b.type = "button"; b.title = kind === "sat" ? "Street map" : "Satellite";
