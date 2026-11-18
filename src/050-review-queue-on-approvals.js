@@ -5,9 +5,10 @@
   // Before it starts it sets aside reports you may not decide and those whose photos are still on the technician's phone
   // (address offline://, which the ERP shows as "Masih di HP"), and puts the rest in an order that keeps alike work together:
   // Lengkap first, then by type, technician and time reported.
-  // Pick & approve does the same for the reports you tick: each is opened, given the window's Centang Semua and Setujui,
-  // and checked to have left Menunggu before the next. A report whose Setujui stays locked is skipped and left for you;
-  // anything unexpected (the window not closing, a question, an unconfirmed save) stops the run.
+  // Pick & approve does the same for the reports you tick: each is opened and given the window's Centang Semua, and once
+  // its Setujui is open, the save that Setujui makes is started; three run at once (never two of one SPK) while the next
+  // reports are checked, and each is seen to leave Menunggu. A report whose Setujui stays locked or waits for photos is
+  // skipped and left for you; anything unexpected (the save not found, an unconfirmed save) stops new ones.
   let rv = null; // { list, i, run, type, auto, aside, armed: { k, at }, msg, waiting }
   const reviewOpen = () => !!document.getElementById("erp-review");
   const fiberOf = (el) => el && el[Object.keys(el).find((k) => k.startsWith("__reactFiber"))];
@@ -115,7 +116,7 @@
       list.append(row);
     }
     p.append(list);
-    p.append(mk("p", "hint", "Each ticked report opens in the ERP's window and gets Centang Semua and Setujui, as if you pressed them, so only tick what you're sure of. One whose Setujui stays locked is skipped and left for you. Esc stops."));
+    p.append(mk("p", "hint", "Each ticked report opens in the ERP's window and gets Centang Semua and the save its Setujui makes, as if you pressed them, so only tick what you're sure of. Three save at once (never two of one SPK) while the next ones are checked. One whose Setujui stays locked or waits for photos is skipped and left for you. Esc stops starting new ones."));
     if (rv.msg) p.append(mk("p", "note", rv.msg));
     const foot = mk("div", "ft");
     const go = btn("", () => {
@@ -130,78 +131,92 @@
     foot.append(btn("Reload list", () => { const b = reviewBuild(); Object.assign(rv, { all: b.items, aside: b.aside, known: b.known, i: 0, msg: "" }); reviewDraw(); }));
     p.append(foot);
   }
+  const rowOf = (id) => [...document.querySelectorAll("main table tbody > tr")].find((r) => rowKey(r) === id);
   const decided = (id) => {
-    const tr = [...document.querySelectorAll("main table tbody > tr")].find((r) => rowKey(r) === id), r = pageState().reps?.find((x) => x.id === id);
-    return (r && r.status !== "Menunggu Verifikasi") || (!tr && !dlg());
+    const tr = rowOf(id), r = pageState().reps?.find((x) => x.id === id);
+    return (r && r.status !== "Menunggu Verifikasi") || (!!tr && !/^Menunggu/.test(tr.cells[0]?.textContent.trim() || "")) || (!tr && !dlg());
   };
+  // a prop of a React component above this element: the review window's own onSave, the function its Setujui calls
+  const propUp = (el, name) => { let f = fiberOf(el); for (let i = 0; i < 80 && f; i++, f = f.return) if (typeof f.memoizedProps?.[name] === "function") return f.memoizedProps[name]; return null; };
   const sec = (ms) => `${(ms / 1000).toFixed(1)} s`;
-  const timing = (t) => `ERP save ${sec(t.save)} (its server ${sec(t.server)}, who-may-decide check ${sec(t.check)}) · queue ${sec(t.queue)}`;
   function autoHud(text) {
     let h = document.getElementById("erp-review-hud");
     if (!h) { h = document.createElement("div"); h.id = "erp-review-hud"; h.setAttribute("role", "status"); document.body.append(h); }
     h.textContent = text;
   }
-  // one report: open, tick, approve, and see it leave Menunggu. "ok", a reason it was skipped, or "!reason" to stop the run
-  async function autoOne(id) {
-    if (dlg()) { dlgBtn(/^Tutup$/)?.click(); await until(() => !dlg(), 3000); }
-    const tr = [...document.querySelectorAll("main table tbody > tr")].find((r) => rowKey(r) === id);
-    if (!tr || !/^Menunggu/.test(tr.cells[0]?.textContent.trim() || "")) return "already decided";
-    const t0 = performance.now();
-    [...tr.querySelectorAll("button")].pop()?.click();
-    if (!await until(() => dlg(), 8000)) return "!The report didn't open";
-    await sleep(900); // the window fills in its checks and photos
-    const d = dlg(), ok = () => dlgBtn(/^Setujui/, /tanpa/i);
-    for (const c of [...d.querySelectorAll("button")].filter((b) => /^Centang Semua$/.test(b.textContent.trim()))) {
-      if (ok() && !ok().disabled) break;
-      c.click(); await sleep(300);
+  const shut = async () => { if (dlg()) { dlgBtn(/^Tutup$/)?.click(); await until(() => !dlg(), 3000); } };
+  // one report in the ERP's window: open it, Centang Semua, and see Setujui open for it. Gives the window's save (the
+  // one its Setujui calls), a reason it was skipped, or "!reason" to stop. A save finishing elsewhere closes the
+  // window, so it's opened again.
+  async function autoCheck(id) {
+    for (let tries = 0; tries < 3; tries++) {
+      await shut();
+      const tr = rowOf(id);
+      if (!tr || !/^Menunggu/.test(tr.cells[0]?.textContent.trim() || "")) return "already decided";
+      [...tr.querySelectorAll("button")].pop()?.click();
+      if (!await until(() => dlg(), 8000)) return "!The report didn't open";
+      await sleep(900); // the window fills in its checks and photos
+      const d = dlg(); if (!d) continue;
+      const unticked = () => /Tombol Setujui terbuka/.test(d.textContent);
+      for (const c of [...d.querySelectorAll("button")].filter((b) => /^Centang Semua$/.test(b.textContent.trim()))) { if (!unticked()) break; c.click(); await sleep(300); }
+      if (dlg() !== d) continue;
+      // Setujui as the window labels it: "… hasil QC" or "… & Cairkan Insentif" saves; "… tanpa foto ini" and "Foto belum
+      // sampai" wait for photos, so those are left for you
+      const b = [...d.querySelectorAll("button")].find((x) => /^Setujui (hasil QC|& Cairkan)/.test(x.textContent.trim()));
+      const why = unticked() ? "checks left unticked" : !b ? (/tanpa foto|Foto belum sampai|belum sampai server/i.test(d.textContent) ? "photos not on the server yet" : "no Setujui button") : "";
+      const save = b && propUp(b, "onSave");
+      await shut();
+      if (why) return `${why}: open it yourself`;
+      if (!save) return "!The ERP's save wasn't found on its window: the page has changed, use One by one";
+      return { save };
     }
-    const b = ok();
-    if (!b) return "no Setujui button: open it yourself";
-    if (b.disabled) { const why = /Tombol Setujui terbuka[^.—]*/.exec(d.textContent)?.[0]; dlgBtn(/^Tutup$/)?.click(); return `${why ? "checks left unticked" : "Setujui stays locked"}: open it yourself`; }
-    if (rv.stopAuto) { dlgBtn(/^Tutup$/)?.click(); return "stopped"; }
-    const t1 = performance.now(); b.click();
-    // the ERP can take well over a minute when it's busy: wait while its Setujui still spins (or is held disabled);
-    // a window left open with nothing saving any more for 5 s means it stopped on an error
-    const busy = () => { const x = ok(); return !x || x.disabled || !!x.querySelector(".animate-spin, svg[class*='spin']"); };
-    let idleSince = 0;
-    const closed = await until(() => {
-      if (dlg() !== d) return true;
-      const sec = Math.round((performance.now() - t1) / 1000);
-      if (sec >= 8) autoHud(`${rv.hudBase} · the ERP is still saving (${sec} s)…`);
-      if (busy()) idleSince = 0; else idleSince ||= performance.now();
-      return idleSince && performance.now() - idleSince > 5000;
-    }, 300000);
-    if (dlg() === d) return closed ? "!The ERP stopped without saving: look at the open window" : "!The ERP was still saving after 5 minutes: look at the open window";
-    const t2 = performance.now();
-    if (dlg()) return "!The ERP asked something: answer it, then start again";
-    const ok2 = await until(() => decided(id), 60000), t3 = performance.now();
-    // where the time went: the ERP's save (its server's verdict and its who-may-decide check, read off the browser's
-    // own request timings) against the queue's own waits (opening and filling the window, seeing the report leave Menunggu)
-    const calls = performance.getEntriesByType("resource").filter((e) => e.startTime >= t1 && e.startTime < t2);
-    const took = (re) => calls.filter((e) => re.test(e.name)).reduce((n, e) => n + e.duration, 0);
-    rv.times.push({ save: t2 - t1, server: took(/\/approvals\/titik-putus/), check: took(/\/approvals\/hak-putus/), queue: (t1 - t0) + (t3 - t2) });
-    return ok2 ? "ok" : "!The approval wasn't confirmed: check this report";
+    return "!The window kept closing";
   }
-  async function autoRun() {
-    const ids = queue().filter((x) => rv.sel.has(x.id)).map((x) => x.id);
-    rv.autoOn = true; rv.stopAuto = false; rv.msg = ""; reviewDraw();
-    const p = document.getElementById("erp-review"); if (p) p.style.display = "none";
-    let ok = 0, skipped = 0, why = ""; rv.times = [];
-    try { performance.setResourceTimingBufferSize(Math.max(5000, performance.getEntriesByType("resource").length + 2000)); } catch {} // room for the timings below
-    for (const [n, id] of ids.entries()) {
-      if (rv.stopAuto) break;
-      const last = rv.times.at(-1);
-      rv.hudBase = `Approving ${n + 1} of ${ids.length} · ${ok} approved${skipped ? `, ${skipped} skipped` : ""}`;
-      autoHud(`${rv.hudBase}${last ? ` · last one: ${timing(last)}` : ""} · Esc stops`);
-      const r = await autoOne(id);
-      rv.res[id] = r;
-      if (r === "ok") { ok++; rv.sel.delete(id); rv.all = rv.all.filter((x) => x.id !== id); }
-      else if (r.startsWith("!")) { why = r.slice(1); break; }
-      else if (r !== "stopped") skipped++;
+  // the save itself: what Setujui calls, with the note it gives ("Sesuai standar."). The ERP answers with a reason when it
+  // refuses; otherwise the report is seen to leave Menunggu.
+  async function autoSave(id, { save }) {
+    const t = performance.now();
+    const r = await Promise.race([Promise.resolve().then(() => save(id, "approve", "Sesuai standar.")), sleep(300000).then(() => "\u0000late")]);
+    if (r === "\u0000late") return "!The ERP was still saving after 5 minutes: check this report";
+    if (typeof r === "string") return String(r).replace(/\s+/g, " ").trim().slice(0, 160) || "the ERP refused it";
+    const ok = await until(() => decided(id), 60000);
+    rv.times.push(performance.now() - t);
+    return ok ? "ok" : "!The approval wasn't confirmed: check this report";
+  }
+  // Several at once: reports are checked in the window one after another, and each one's save runs while the next are
+  // checked; up to `atOnce` saves together, never two of one SPK (approving one also settles its teammates' reports and
+  // the SPK). A "!" result stops new ones; the saves already running finish.
+  async function runAll(ids, { check, save, spkOf, atOnce, stopped, done }) {
+    const pending = [...ids], live = new Map(), busy = new Set(); let halt = "";
+    while (!halt && !stopped() && (pending.length || live.size)) {
+      const k = live.size < atOnce ? pending.findIndex((id) => !busy.has(spkOf(id))) : -1;
+      if (k < 0) { await Promise.race(live.values()); continue; }
+      const id = pending.splice(k, 1)[0], c = await check(id);
+      if (typeof c === "string") { done(id, c); if (c.startsWith("!")) halt = c.slice(1); continue; }
+      const spk = spkOf(id); busy.add(spk);
+      live.set(id, (async () => { let r; try { r = await save(id, c); } catch (e) { r = `!${e?.message || e}`; } done(id, r); if (r.startsWith("!")) halt ||= r.slice(1); })()
+        .finally(() => { live.delete(id); busy.delete(spk); }));
     }
+    await Promise.all(live.values());
+    return halt;
+  }
+  const AT_ONCE = 3;
+  async function autoRun() {
+    const ids = queue().filter((x) => rv.sel.has(x.id)).map((x) => x.id), reps = new Map((pageState().reps || []).map((r) => [r.id, r]));
+    rv.autoOn = true; rv.stopAuto = false; rv.msg = ""; rv.times = []; reviewDraw();
+    const p = document.getElementById("erp-review"); if (p) p.style.display = "none";
+    let ok = 0, skipped = 0, n = 0; const t0 = performance.now();
+    const show = () => autoHud(`Approving ${ids.length}, ${AT_ONCE} at a time · ${ok} approved${skipped ? `, ${skipped} skipped` : ""} · ${n - ok - skipped} saving · Esc stops`);
+    show();
+    const why = await runAll(ids, {
+      atOnce: AT_ONCE, stopped: () => rv.stopAuto, spkOf: (id) => reps.get(id)?.spkId || reps.get(id)?.workOrderId || id,
+      check: async (id) => { const c = await autoCheck(id); if (typeof c !== "string") { n++; show(); } return c; },
+      save: autoSave,
+      done: (id, r) => { rv.res[id] = r; if (r === "ok") { ok++; rv.sel.delete(id); rv.all = rv.all.filter((x) => x.id !== id); } else if (!r.startsWith("!") && r !== "stopped") skipped++; show(); },
+    });
     rv.autoOn = false;
     rv.msg = `${ok} approved${skipped ? `, ${skipped} skipped (marked in the list)` : ""}.${why ? ` Stopped: ${why}.` : rv.stopAuto ? " Stopped." : ""}`;
-    if (rv.times.length) { const avg = (k) => rv.times.reduce((n, t) => n + t[k], 0) / rv.times.length; rv.msg += ` Each took ${timing({ save: avg("save"), server: avg("server"), check: avg("check"), queue: avg("queue") })} on average.`; }
+    if (ok) rv.msg += ` ${sec(performance.now() - t0)} in all; each save took ${sec(rv.times.reduce((a, b) => a + b, 0) / Math.max(1, rv.times.length))} on average.`;
     document.getElementById("erp-review-hud")?.remove(); reviewDraw();
   }
   function hud() {
@@ -239,7 +254,7 @@
     rv.armed = null; rv.waiting = { id: queue()[rv.i].id, at: Date.now(), from: Date.now() }; say("Saving…"); b.click();
   }
   document.addEventListener("keydown", (e) => {
-    if (rv?.autoOn && e.key === "Escape") { e.preventDefault(); e.stopPropagation(); rv.stopAuto = true; autoHud("Stopping after this report…"); return; }
+    if (rv?.autoOn && e.key === "Escape") { e.preventDefault(); e.stopPropagation(); rv.stopAuto = true; autoHud("Stopping: the saves already started finish…"); return; }
     if (!rv?.run || !dlg() || e.ctrlKey || e.metaKey || e.altKey) return;
     const d = dlg(), typing = e.target.closest?.("input, textarea, select, [contenteditable='true']");
     // Enter in the note goes back to the keys

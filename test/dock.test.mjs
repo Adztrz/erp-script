@@ -235,3 +235,23 @@ test("bulk SPK from a map: each FAT from the FDT its number names, else the near
   assert.match(nearest.text, /FDT AB 1 [^\n]* ke:\n\* FAT AB 1\.1[^\n]*\n\* FAT AB 1\.1[^\n]*\n\* FAT AB 2\.4/); // 2.4 is nearer FDT AB 1
   assert.throws(() => mapRoutes(pts.filter((p) => p.name.startsWith("FAT")), false), /needs both/);
 });
+
+test("approvals: three save at once, never two of one SPK, and a stop lets the running ones finish", async () => {
+  const bridgeDock = dock; const { runAll } = load(bridgeDock, ["runAll"]);
+  const spk = { a: 1, b: 1, c: 2, d: 3, e: 4, f: 5 }, live = new Set(), log = []; let most = 0;
+  const halt = await runAll(Object.keys(spk), {
+    atOnce: 3, stopped: () => false, spkOf: (id) => spk[id],
+    check: async (id) => (id === "e" ? "photos not on the server yet: open it yourself" : {}),
+    save: async (id) => { assert.ok(![...live].some((x) => spk[x] === spk[id]), `${id} saved alongside its SPK`); live.add(id); most = Math.max(most, live.size);
+      await new Promise((ok) => setTimeout(ok, id === "a" ? 30 : 10)); live.delete(id); return id === "f" ? "Tidak diizinkan" : "ok"; },
+    done: (id, r) => log.push([id, r]),
+  });
+  assert.equal(halt, ""); assert.equal(most, 3);
+  assert.deepEqual(Object.fromEntries(log), { a: "ok", b: "ok", c: "ok", d: "ok", e: "photos not on the server yet: open it yourself", f: "Tidak diizinkan" });
+  let stop = false; const started = [];
+  await runAll(["p", "q", "r", "s"], { atOnce: 2, stopped: () => stop, spkOf: (id) => id, check: async () => ({}), done: () => {},
+    save: async (id) => { started.push(id); stop = true; await new Promise((ok) => setTimeout(ok, 5)); return "ok"; } });
+  assert.deepEqual(started, ["p"]); // stopped after the first started: no new ones, the running one finished
+  const bad = await runAll(["x", "y"], { atOnce: 2, stopped: () => false, spkOf: (id) => id, check: async (id) => (id === "x" ? "!The report didn't open" : {}), save: async () => "ok", done: () => {} });
+  assert.equal(bad, "The report didn't open");
+});
