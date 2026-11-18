@@ -1,7 +1,8 @@
 // ==UserScript==
 // @name         ERP — router bridge for the Dock's Remote
 // @namespace    adztrz
-// @version      1.1
+// @icon         https://raw.githubusercontent.com/Adztrz/erp-script/main/icons/bridge.png
+// @version      1.1.1
 // @description  Lets the ERP Dock's Remote open a customer's modem page without the ERP: a temporary port on the RO itself (RouterOS 7 REST), only for your own IP, removed by the router after 30 minutes. Router logins stay in Tampermonkey's storage, which the ERP page can't read.
 // @match        https://*/*
 // @run-at       document-start
