@@ -38,7 +38,7 @@
           const newest = ch.length ? row.invs.indexOf(ch[ch.length - 1]) : -1, skipped = st.skipOlder ? open.filter((v) => !v.on && row.invs.indexOf(v) < newest).length : 0;
           if (st.phase === "paying") { const s = el("button", "btn wide", `Paying ${Math.min(st.done + 1, st.total)} of ${st.total}…`); s.type = "button"; s.disabled = true; parts.push(s); }
           else { const btn = armButton(st, ch.length ? `Mark ${what} Lunas · ${rupiah(total)}${skipped ? ` · skip ${skipped} older` : ""}${rc ? " · recharge" : ""}` : "Tick a month to pay",
-              `Click again: ${what} paid by ${st.method}, ${rupiah(total)}${skipped ? `, ${skipped} older left unpaid` : ""}`, () => (st.override = skipped > 0, payQueue(ch.map((v) => [row, v]), st, redraw, st.defaultNote)), redraw, `c${row.user}pay`);
+              `Click again: ${what} paid by ${st.method}, ${rupiah(total)}${skipped ? `, ${skipped} older left unpaid` : ""}`, () => payQueue(ch.map((v) => [row, v]), st, redraw, st.defaultNote), redraw, `c${row.user}pay`);
             btn.style.marginTop = "10px"; parts.push(btn);
             const why = el("p", "note warn"); why.hidden = true; parts.push(why);
             // skipping needs the reason first; checked as you type, without redrawing the note you're typing in
@@ -102,9 +102,17 @@
         const found = bulk.rows.filter((r) => r.state === "found").length, open = bulk.rows.length - found - bulk.rows.filter((r) => r.state === "dupe").length;
         const sum = el("div", "sum"); sum.append(el("span", null, `${found} of ${bulk.rows.length} found${open ? ` · ${open} need a look` : ""}`), el("b", null, `${ch.length} invoices · ${rupiah(total)}`));
         fields.push(...payFields(bulk, busy, "", bulkDraw)); parts.push(sum);
+        if (bulk.rows.some((r) => r.state === "found" && r.invs.filter((v) => !v.result?.ok).length > 1) || bulk.skipOlder) {
+          const role = myRole(), may = !role || SKIP_ROLES.includes(role), sk = el("label", "skipold"), cb = el("input"); cb.type = "checkbox"; cb.checked = !!bulk.skipOlder;
+          cb.disabled = busy || !may; cb.dataset.k = "skip";
+          cb.onchange = () => { bulk.skipOlder = cb.checked; bulk.armed = 0; for (const r of bulk.rows) if (r.state === "found") latestOnly(r, cb.checked); bulkDraw(); };
+          const t = el("span"); t.append(el("b", null, "Latest month only"), el("span", "sub", may ? "Ticks each customer's newest month alone; you can still tick others yourself. The older months stay unpaid; the note must say why (10+ letters) and the ERP logs it as [OVERRIDE tertua-dulu]."
+            : "Only a finance manager or admin can skip older months."));
+          sk.append(cb, t); fields.push(sk);
+        }
         if (bulk.phase === "paying") {
           const bar = el("div", "bar"), i = el("i"); i.style.width = `${(bulk.done / bulk.total) * 100}%`; bar.append(i);
-          const stop = el("button", "btn wide", bulk.stop ? "Stopping after this one…" : `Paying ${bulk.done + 1} of ${bulk.total} · Stop`); stop.type = "button"; stop.disabled = bulk.stop;
+          const stop = el("button", "btn wide", bulk.stop ? "Stopping after the ones in progress…" : `Paying… ${bulk.done} of ${bulk.total} done · Stop`); stop.type = "button"; stop.disabled = bulk.stop;
           stop.onclick = () => { bulk.stop = true; bulkDraw(); }; stop.dataset.k = "pay";
           parts.push(bar, stop, el("div", "sub", "Keep this tab open until it's done."));
         } else {
@@ -112,10 +120,14 @@
             const all = bulk.rows.flatMap((r) => r.invs.filter((v) => v.result)), ok = all.filter((v) => v.result.ok).length;
             parts.push(el("div", `sum ${ok === all.length ? "good" : "warn"}`, `${ok} marked Lunas${all.length - ok ? ` · ${all.length - ok} not: see the red lines` : ""}`));
           }
-          const btn = armButton(bulk, ch.length ? `Mark ${ch.length} Lunas · ${rupiah(total)}${recharges ? ` · ${recharges} recharge` : ""}` : "Tick the months to pay",
-            `Click again: mark ${ch.length} paid (${people} customers, ${rupiah(total)})`, pay, bulkDraw, "pay");
-          btn.disabled = !ch.length;
-          parts.push(btn);
+          const skipped = bulk.skipOlder ? bulk.rows.filter((r) => r.state === "found").reduce((n, r) => n + skippedOf(r), 0) : 0;
+          const btn = armButton(bulk, ch.length ? `Mark ${ch.length} Lunas · ${rupiah(total)}${skipped ? ` · skip ${skipped} older` : ""}${recharges ? ` · ${recharges} recharge` : ""}` : "Tick the months to pay",
+            `Click again: mark ${ch.length} paid (${people} customers, ${rupiah(total)})${skipped ? `, ${skipped} older left unpaid` : ""}`, pay, bulkDraw, "pay");
+          const why = el("p", "note warn"); why.hidden = true;
+          parts.push(btn, why);
+          // skipping needs the reason first; checked as you type, without redrawing the note you're typing in
+          (bulk.onNote = () => { const short = !!skipped && bulk.note.trim().length < 10; btn.disabled = !ch.length || short;
+            why.hidden = !short; why.textContent = `Write in Note why the older months are skipped (${bulk.note.trim().length}/10 letters), e.g. "pelanggan di luar kota".`; })();
         }
       }
       form.replaceChildren(...fields); foot.replaceChildren(...parts); foot.hidden = !parts.length;

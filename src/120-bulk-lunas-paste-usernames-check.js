@@ -1,6 +1,8 @@
     // ---- Bulk Lunas: paste usernames, check each one's unpaid months, mark them paid ----
-    // The same request as the ERP's own Tandai Lunas Manual: one invoice at a time, oldest first, with its RADIUS recharge
-    // and the server's oldest-first rule. Nothing is sent until you press the button twice.
+    // The same request as the ERP's own Tandai Lunas Manual: one invoice per request with its RADIUS recharge, under the
+    // server's oldest-first rule. Three customers are paid at once; one customer's months go one after another, oldest
+    // first. "Latest month only" ticks each customer's newest month and skips the older ones (the ERP's own override,
+    // with a note). Nothing is sent until you press the button twice.
     const METHODS = ["Tunai", "Transfer Bank", "Setor Reseller", "Setor Teknisi"];
     const UNPAID = new Set(["Belum Lunas", "Jatuh Tempo"]);
     const todayIso = () => { const d = new Date(); return new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
@@ -125,7 +127,7 @@
         row.paidTo = [...mine].reverse().find((v) => v.status === "Lunas")?.period || "";
         row.invs = mine.filter((v) => UNPAID.has(v.status)).map((v, i) => ({ no: v.invoiceNumber, period: v.period, amount: Number(v.amount) || 0, status: v.status,
           hutang: v.dihutangiSampai || "", on: i === 0 && !row.guess, recharge: false, radius: null, result: null }));
-        row.state = "found";
+        row.state = "found"; if (bulk?.skipOlder && bulk.rows.includes(row)) latestOnly(row, true);
       } catch (e) { row.state = "error"; row.err = e.message; }
       finally { bulkDraw(); }
     }
@@ -147,35 +149,50 @@
     // 10+ letters and logs it as [OVERRIDE tertua-dulu]; only finance manager / admin / super admin may.
     const SKIP_ROLES = ["super_admin", "admin", "finance_manager"];
     const myRole = () => { try { return String(JSON.parse(localStorage.getItem("user") || "{}").role || ""); } catch { return ""; } };
+    // the default ticks: the oldest month, or with "latest month only" the newest one alone (a guessed customer stays unticked)
+    function latestOnly(row, on) {
+      const open = row.invs.filter((v) => !v.result?.ok); if (row.guess || !open.length) return;
+      for (const v of open) v.on = on ? v === open[open.length - 1] : v === open[0];
+    }
+    // months left unpaid below a ticked one: those need the override and a note
+    const skippedOf = (row) => { const top = row.invs.map((v) => v.on && !v.result?.ok).lastIndexOf(true); return row.invs.filter((v, j) => j < top && !v.on && !v.result?.ok).length; };
     const chosen = () => bulk.rows.filter((r) => r.state === "found").flatMap((r) => r.invs.filter((v) => v.on && !v.result?.ok).map((v) => [r, v]));
     const pay = () => payQueue(chosen(), bulk, bulkDraw, "Bulk Lunas (Dock)");
-    // pays a list of [row, invoice], one request each in order; st holds the method, date, note and progress
+    // pays a list of [row, invoice], one request each; three customers at a time, each customer's months in order (the
+    // server pays oldest first). st holds the method, date, note and progress. A month with an unpaid older one left
+    // out goes with the ERP's override, only when st.skipOlder is on.
+    const PAY_AT_ONCE = 3;
     async function payQueue(queue, st, redraw, defaultNote) {
       if (!queue.length) return;
       st.phase = "paying"; st.stop = false; st.armed = 0; st.done = 0; st.total = queue.length; redraw();
+      const groups = [...queue.reduce((m, [row, v]) => (m.get(row) || m.set(row, []).get(row)).push(v) && m, new Map())];
       payingNow++;
-      try { for (const [row, v] of queue) {
-        if (st.stop) break;
-        v.result = { busy: true }; redraw();
-        try {
-          const j = await api("/api/finance/invoices/bulk-mark-paid", { invoiceNumbers: [v.no], paymentMethod: st.method, notes: st.note.trim() || defaultNote,
-            paymentDate: st.date || undefined, rechargeMap: v.recharge ? { [v.no]: true } : {}, ...(st.override ? { lunasiWalauAdaTertua: true } : {}) });
-          const sum = j.summary || {}, older = (j.tertuaDulu || [])[0], waiting = (j.results || []).find((x) => x?.belumDiproses), failed = (j.rechargeGagal || [])[0];
-          const skip = (j.results || []).find((x) => x?.status === "skip" || x?.status === "error");
-          if (sum.marked) row.paidTo = v.period || row.paidTo;
-          v.result = sum.marked ? { ok: true, text: sum.recharged ? "Lunas · recharged" : "Lunas", warn: failed ? `RADIUS recharge failed: ${failed.reason}` : "" }
-            : older ? { text: `Skipped: ${older.reason}` } : waiting ? { text: "Not processed yet (server restarting): try again" } : { text: `Skipped${skip?.reason ? `: ${skip.reason}` : ""}` };
-        } catch (e) {
-          // the request failed, but the server may have saved it anyway (a deploy restarting it mid-request):
-          // ask the ERP what the invoice says now, so a retry can't pay it twice
-          v.result = { busy: true }; redraw();
-          const now = await settled(v.no);
-          if (now === "Lunas") { row.paidTo = v.period || row.paidTo; v.result = { ok: true, text: "Lunas (saved, though the answer was lost)" }; }
-          else v.result = { text: `${e.message || "Failed"} · ${now ? `checked: still ${now}, safe to try again` : "couldn't check: look at the invoice before trying again"}` };
-        }
-        st.done++; redraw();
-      } } finally { payingNow--; }
+      try { await Promise.all(Array.from({ length: Math.min(PAY_AT_ONCE, groups.length) }, async () => {
+        for (let g; (g = groups.shift()) && !st.stop;) { const [row, invs] = g;
+          for (const v of invs) { if (st.stop) break; const ok = await payOne(row, v, st, redraw, defaultNote); st.done++; redraw(); if (!ok) break; } } // a month that didn't go: the newer ones would be refused
+      })); } finally { payingNow--; }
       st.phase = "done"; redraw();
+    }
+    async function payOne(row, v, st, redraw, defaultNote) {
+      v.result = { busy: true }; redraw();
+      const over = !!st.skipOlder && row.invs.slice(0, row.invs.indexOf(v)).some((x) => !x.on && !x.result?.ok);
+      try {
+        const j = await api("/api/finance/invoices/bulk-mark-paid", { invoiceNumbers: [v.no], paymentMethod: st.method, notes: st.note.trim() || defaultNote,
+          paymentDate: st.date || undefined, rechargeMap: v.recharge ? { [v.no]: true } : {}, ...(over ? { lunasiWalauAdaTertua: true } : {}) });
+        const sum = j.summary || {}, older = (j.tertuaDulu || [])[0], waiting = (j.results || []).find((x) => x?.belumDiproses), failed = (j.rechargeGagal || [])[0];
+        const skip = (j.results || []).find((x) => x?.status === "skip" || x?.status === "error");
+        if (sum.marked) row.paidTo = v.period || row.paidTo;
+        v.result = sum.marked ? { ok: true, text: sum.recharged ? "Lunas · recharged" : "Lunas", warn: failed ? `RADIUS recharge failed: ${failed.reason}` : "" }
+          : older ? { text: `Skipped: ${older.reason}` } : waiting ? { text: "Not processed yet (server restarting): try again" } : { text: `Skipped${skip?.reason ? `: ${skip.reason}` : ""}` };
+      } catch (e) {
+        // the request failed, but the server may have saved it anyway (a deploy restarting it mid-request):
+        // ask the ERP what the invoice says now, so a retry can't pay it twice
+        v.result = { busy: true }; redraw();
+        const now = await settled(v.no);
+        if (now === "Lunas") { row.paidTo = v.period || row.paidTo; v.result = { ok: true, text: "Lunas (saved, though the answer was lost)" }; }
+        else v.result = { text: `${e.message || "Failed"} · ${now ? `checked: still ${now}, safe to try again` : "couldn't check: look at the invoice before trying again"}` };
+      }
+      return !!v.result.ok;
     }
     // an invoice's status straight from the ERP, retried a few times while the server comes back
     async function settled(no) {

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
-// @version      3.7
+// @version      3.8
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -2121,8 +2121,10 @@
     }
 
     // ---- Bulk Lunas: paste usernames, check each one's unpaid months, mark them paid ----
-    // The same request as the ERP's own Tandai Lunas Manual: one invoice at a time, oldest first, with its RADIUS recharge
-    // and the server's oldest-first rule. Nothing is sent until you press the button twice.
+    // The same request as the ERP's own Tandai Lunas Manual: one invoice per request with its RADIUS recharge, under the
+    // server's oldest-first rule. Three customers are paid at once; one customer's months go one after another, oldest
+    // first. "Latest month only" ticks each customer's newest month and skips the older ones (the ERP's own override,
+    // with a note). Nothing is sent until you press the button twice.
     const METHODS = ["Tunai", "Transfer Bank", "Setor Reseller", "Setor Teknisi"];
     const UNPAID = new Set(["Belum Lunas", "Jatuh Tempo"]);
     const todayIso = () => { const d = new Date(); return new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
@@ -2247,7 +2249,7 @@
         row.paidTo = [...mine].reverse().find((v) => v.status === "Lunas")?.period || "";
         row.invs = mine.filter((v) => UNPAID.has(v.status)).map((v, i) => ({ no: v.invoiceNumber, period: v.period, amount: Number(v.amount) || 0, status: v.status,
           hutang: v.dihutangiSampai || "", on: i === 0 && !row.guess, recharge: false, radius: null, result: null }));
-        row.state = "found";
+        row.state = "found"; if (bulk?.skipOlder && bulk.rows.includes(row)) latestOnly(row, true);
       } catch (e) { row.state = "error"; row.err = e.message; }
       finally { bulkDraw(); }
     }
@@ -2269,35 +2271,50 @@
     // 10+ letters and logs it as [OVERRIDE tertua-dulu]; only finance manager / admin / super admin may.
     const SKIP_ROLES = ["super_admin", "admin", "finance_manager"];
     const myRole = () => { try { return String(JSON.parse(localStorage.getItem("user") || "{}").role || ""); } catch { return ""; } };
+    // the default ticks: the oldest month, or with "latest month only" the newest one alone (a guessed customer stays unticked)
+    function latestOnly(row, on) {
+      const open = row.invs.filter((v) => !v.result?.ok); if (row.guess || !open.length) return;
+      for (const v of open) v.on = on ? v === open[open.length - 1] : v === open[0];
+    }
+    // months left unpaid below a ticked one: those need the override and a note
+    const skippedOf = (row) => { const top = row.invs.map((v) => v.on && !v.result?.ok).lastIndexOf(true); return row.invs.filter((v, j) => j < top && !v.on && !v.result?.ok).length; };
     const chosen = () => bulk.rows.filter((r) => r.state === "found").flatMap((r) => r.invs.filter((v) => v.on && !v.result?.ok).map((v) => [r, v]));
     const pay = () => payQueue(chosen(), bulk, bulkDraw, "Bulk Lunas (Dock)");
-    // pays a list of [row, invoice], one request each in order; st holds the method, date, note and progress
+    // pays a list of [row, invoice], one request each; three customers at a time, each customer's months in order (the
+    // server pays oldest first). st holds the method, date, note and progress. A month with an unpaid older one left
+    // out goes with the ERP's override, only when st.skipOlder is on.
+    const PAY_AT_ONCE = 3;
     async function payQueue(queue, st, redraw, defaultNote) {
       if (!queue.length) return;
       st.phase = "paying"; st.stop = false; st.armed = 0; st.done = 0; st.total = queue.length; redraw();
+      const groups = [...queue.reduce((m, [row, v]) => (m.get(row) || m.set(row, []).get(row)).push(v) && m, new Map())];
       payingNow++;
-      try { for (const [row, v] of queue) {
-        if (st.stop) break;
-        v.result = { busy: true }; redraw();
-        try {
-          const j = await api("/api/finance/invoices/bulk-mark-paid", { invoiceNumbers: [v.no], paymentMethod: st.method, notes: st.note.trim() || defaultNote,
-            paymentDate: st.date || undefined, rechargeMap: v.recharge ? { [v.no]: true } : {}, ...(st.override ? { lunasiWalauAdaTertua: true } : {}) });
-          const sum = j.summary || {}, older = (j.tertuaDulu || [])[0], waiting = (j.results || []).find((x) => x?.belumDiproses), failed = (j.rechargeGagal || [])[0];
-          const skip = (j.results || []).find((x) => x?.status === "skip" || x?.status === "error");
-          if (sum.marked) row.paidTo = v.period || row.paidTo;
-          v.result = sum.marked ? { ok: true, text: sum.recharged ? "Lunas · recharged" : "Lunas", warn: failed ? `RADIUS recharge failed: ${failed.reason}` : "" }
-            : older ? { text: `Skipped: ${older.reason}` } : waiting ? { text: "Not processed yet (server restarting): try again" } : { text: `Skipped${skip?.reason ? `: ${skip.reason}` : ""}` };
-        } catch (e) {
-          // the request failed, but the server may have saved it anyway (a deploy restarting it mid-request):
-          // ask the ERP what the invoice says now, so a retry can't pay it twice
-          v.result = { busy: true }; redraw();
-          const now = await settled(v.no);
-          if (now === "Lunas") { row.paidTo = v.period || row.paidTo; v.result = { ok: true, text: "Lunas (saved, though the answer was lost)" }; }
-          else v.result = { text: `${e.message || "Failed"} · ${now ? `checked: still ${now}, safe to try again` : "couldn't check: look at the invoice before trying again"}` };
-        }
-        st.done++; redraw();
-      } } finally { payingNow--; }
+      try { await Promise.all(Array.from({ length: Math.min(PAY_AT_ONCE, groups.length) }, async () => {
+        for (let g; (g = groups.shift()) && !st.stop;) { const [row, invs] = g;
+          for (const v of invs) { if (st.stop) break; const ok = await payOne(row, v, st, redraw, defaultNote); st.done++; redraw(); if (!ok) break; } } // a month that didn't go: the newer ones would be refused
+      })); } finally { payingNow--; }
       st.phase = "done"; redraw();
+    }
+    async function payOne(row, v, st, redraw, defaultNote) {
+      v.result = { busy: true }; redraw();
+      const over = !!st.skipOlder && row.invs.slice(0, row.invs.indexOf(v)).some((x) => !x.on && !x.result?.ok);
+      try {
+        const j = await api("/api/finance/invoices/bulk-mark-paid", { invoiceNumbers: [v.no], paymentMethod: st.method, notes: st.note.trim() || defaultNote,
+          paymentDate: st.date || undefined, rechargeMap: v.recharge ? { [v.no]: true } : {}, ...(over ? { lunasiWalauAdaTertua: true } : {}) });
+        const sum = j.summary || {}, older = (j.tertuaDulu || [])[0], waiting = (j.results || []).find((x) => x?.belumDiproses), failed = (j.rechargeGagal || [])[0];
+        const skip = (j.results || []).find((x) => x?.status === "skip" || x?.status === "error");
+        if (sum.marked) row.paidTo = v.period || row.paidTo;
+        v.result = sum.marked ? { ok: true, text: sum.recharged ? "Lunas · recharged" : "Lunas", warn: failed ? `RADIUS recharge failed: ${failed.reason}` : "" }
+          : older ? { text: `Skipped: ${older.reason}` } : waiting ? { text: "Not processed yet (server restarting): try again" } : { text: `Skipped${skip?.reason ? `: ${skip.reason}` : ""}` };
+      } catch (e) {
+        // the request failed, but the server may have saved it anyway (a deploy restarting it mid-request):
+        // ask the ERP what the invoice says now, so a retry can't pay it twice
+        v.result = { busy: true }; redraw();
+        const now = await settled(v.no);
+        if (now === "Lunas") { row.paidTo = v.period || row.paidTo; v.result = { ok: true, text: "Lunas (saved, though the answer was lost)" }; }
+        else v.result = { text: `${e.message || "Failed"} · ${now ? `checked: still ${now}, safe to try again` : "couldn't check: look at the invoice before trying again"}` };
+      }
+      return !!v.result.ok;
     }
     // an invoice's status straight from the ERP, retried a few times while the server comes back
     async function settled(no) {
@@ -2389,7 +2406,7 @@
           const newest = ch.length ? row.invs.indexOf(ch[ch.length - 1]) : -1, skipped = st.skipOlder ? open.filter((v) => !v.on && row.invs.indexOf(v) < newest).length : 0;
           if (st.phase === "paying") { const s = el("button", "btn wide", `Paying ${Math.min(st.done + 1, st.total)} of ${st.total}…`); s.type = "button"; s.disabled = true; parts.push(s); }
           else { const btn = armButton(st, ch.length ? `Mark ${what} Lunas · ${rupiah(total)}${skipped ? ` · skip ${skipped} older` : ""}${rc ? " · recharge" : ""}` : "Tick a month to pay",
-              `Click again: ${what} paid by ${st.method}, ${rupiah(total)}${skipped ? `, ${skipped} older left unpaid` : ""}`, () => (st.override = skipped > 0, payQueue(ch.map((v) => [row, v]), st, redraw, st.defaultNote)), redraw, `c${row.user}pay`);
+              `Click again: ${what} paid by ${st.method}, ${rupiah(total)}${skipped ? `, ${skipped} older left unpaid` : ""}`, () => payQueue(ch.map((v) => [row, v]), st, redraw, st.defaultNote), redraw, `c${row.user}pay`);
             btn.style.marginTop = "10px"; parts.push(btn);
             const why = el("p", "note warn"); why.hidden = true; parts.push(why);
             // skipping needs the reason first; checked as you type, without redrawing the note you're typing in
@@ -2453,9 +2470,17 @@
         const found = bulk.rows.filter((r) => r.state === "found").length, open = bulk.rows.length - found - bulk.rows.filter((r) => r.state === "dupe").length;
         const sum = el("div", "sum"); sum.append(el("span", null, `${found} of ${bulk.rows.length} found${open ? ` · ${open} need a look` : ""}`), el("b", null, `${ch.length} invoices · ${rupiah(total)}`));
         fields.push(...payFields(bulk, busy, "", bulkDraw)); parts.push(sum);
+        if (bulk.rows.some((r) => r.state === "found" && r.invs.filter((v) => !v.result?.ok).length > 1) || bulk.skipOlder) {
+          const role = myRole(), may = !role || SKIP_ROLES.includes(role), sk = el("label", "skipold"), cb = el("input"); cb.type = "checkbox"; cb.checked = !!bulk.skipOlder;
+          cb.disabled = busy || !may; cb.dataset.k = "skip";
+          cb.onchange = () => { bulk.skipOlder = cb.checked; bulk.armed = 0; for (const r of bulk.rows) if (r.state === "found") latestOnly(r, cb.checked); bulkDraw(); };
+          const t = el("span"); t.append(el("b", null, "Latest month only"), el("span", "sub", may ? "Ticks each customer's newest month alone; you can still tick others yourself. The older months stay unpaid; the note must say why (10+ letters) and the ERP logs it as [OVERRIDE tertua-dulu]."
+            : "Only a finance manager or admin can skip older months."));
+          sk.append(cb, t); fields.push(sk);
+        }
         if (bulk.phase === "paying") {
           const bar = el("div", "bar"), i = el("i"); i.style.width = `${(bulk.done / bulk.total) * 100}%`; bar.append(i);
-          const stop = el("button", "btn wide", bulk.stop ? "Stopping after this one…" : `Paying ${bulk.done + 1} of ${bulk.total} · Stop`); stop.type = "button"; stop.disabled = bulk.stop;
+          const stop = el("button", "btn wide", bulk.stop ? "Stopping after the ones in progress…" : `Paying… ${bulk.done} of ${bulk.total} done · Stop`); stop.type = "button"; stop.disabled = bulk.stop;
           stop.onclick = () => { bulk.stop = true; bulkDraw(); }; stop.dataset.k = "pay";
           parts.push(bar, stop, el("div", "sub", "Keep this tab open until it's done."));
         } else {
@@ -2463,10 +2488,14 @@
             const all = bulk.rows.flatMap((r) => r.invs.filter((v) => v.result)), ok = all.filter((v) => v.result.ok).length;
             parts.push(el("div", `sum ${ok === all.length ? "good" : "warn"}`, `${ok} marked Lunas${all.length - ok ? ` · ${all.length - ok} not: see the red lines` : ""}`));
           }
-          const btn = armButton(bulk, ch.length ? `Mark ${ch.length} Lunas · ${rupiah(total)}${recharges ? ` · ${recharges} recharge` : ""}` : "Tick the months to pay",
-            `Click again: mark ${ch.length} paid (${people} customers, ${rupiah(total)})`, pay, bulkDraw, "pay");
-          btn.disabled = !ch.length;
-          parts.push(btn);
+          const skipped = bulk.skipOlder ? bulk.rows.filter((r) => r.state === "found").reduce((n, r) => n + skippedOf(r), 0) : 0;
+          const btn = armButton(bulk, ch.length ? `Mark ${ch.length} Lunas · ${rupiah(total)}${skipped ? ` · skip ${skipped} older` : ""}${recharges ? ` · ${recharges} recharge` : ""}` : "Tick the months to pay",
+            `Click again: mark ${ch.length} paid (${people} customers, ${rupiah(total)})${skipped ? `, ${skipped} older left unpaid` : ""}`, pay, bulkDraw, "pay");
+          const why = el("p", "note warn"); why.hidden = true;
+          parts.push(btn, why);
+          // skipping needs the reason first; checked as you type, without redrawing the note you're typing in
+          (bulk.onNote = () => { const short = !!skipped && bulk.note.trim().length < 10; btn.disabled = !ch.length || short;
+            why.hidden = !short; why.textContent = `Write in Note why the older months are skipped (${bulk.note.trim().length}/10 letters), e.g. "pelanggan di luar kota".`; })();
         }
       }
       form.replaceChildren(...fields); foot.replaceChildren(...parts); foot.hidden = !parts.length;

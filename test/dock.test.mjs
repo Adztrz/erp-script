@@ -12,7 +12,7 @@ const dock = readFileSync("erp-fast.user.js", "utf8"), bridge = readFileSync("er
 
 // a named function or const from a script's source: `function name(…) {…}` to its closing brace, or `const name = …;`
 function take(src, name) {
-  const m = new RegExp(`(^|\\n)\\s*(function ${name}\\(|const ${name} = )`).exec(src); if (!m) throw new Error(`${name} not found`);
+  const m = new RegExp(`(^|\\n)\\s*((?:async )?function ${name}\\(|const ${name} = )`).exec(src); if (!m) throw new Error(`${name} not found`);
   const start = m.index + m[1].length;
   if (m[2].startsWith("const") && !/=>\s*\{/.test(src.slice(start, src.indexOf("\n", start)))) return src.slice(start, src.indexOf("\n", start)).replace(/;\s*\/\/.*$/, ";");
   let i = src.indexOf("{", src.indexOf(m[2].startsWith("const") ? "=>" : ")", start)), depth = 0;
@@ -182,4 +182,19 @@ test("map redaman: all with dB on, only redaman tinggi with it off, and not twic
   assert.deepEqual(rxTags(list, named).map((t) => t.text), ["-29,6"]); // off: redaman tinggi only, minus the one already named
   ls.set("erpDock.mapRx", true);
   assert.deepEqual(rxTags(list, named).map((t) => [t.text, t.cls]), [["-21,4", "mrx good"], ["-27,1", "mrx warn"], ["-29,6", "mrx crit"]]);
+});
+
+test("bulk lunas: three customers at once, each one's months in order, override only for skipped older months", async () => {
+  const calls = [], live = new Set(); let most = 0;
+  const api = async (path, body) => { const no = body.invoiceNumbers[0], who = no.split("-")[0];
+    assert.ok(!live.has(who), `${who} paid two months at once`); live.add(who); most = Math.max(most, live.size);
+    await new Promise((ok) => setTimeout(ok, 5)); live.delete(who); calls.push([no, !!body.lunasiWalauAdaTertua]); return { summary: { marked: 1 } }; };
+  const { payQueue } = load(dock, ["PAY_AT_ONCE", "payQueue", "payOne"], { api, settled: async () => null, payingNow: 0 }, ["payQueue"]);
+  const row = (u, n, ticks) => ({ user: u, invs: Array.from({ length: n }, (_, i) => ({ no: `${u}-${i}`, period: `m${i}`, on: ticks.includes(i), recharge: false, result: null })) });
+  const rows = [row("a", 3, [0, 1, 2]), row("b", 2, [1]), row("c", 1, [0]), row("d", 2, [0, 1]), row("e", 1, [0])];
+  const st = { method: "Tunai", note: "di luar kota", date: "", skipOlder: true };
+  await payQueue(rows.flatMap((r) => r.invs.filter((v) => v.on).map((v) => [r, v])), st, () => {}, "x");
+  assert.equal(most, 3); assert.equal(st.done, 8); assert.equal(st.phase, "done");
+  assert.deepEqual(calls.filter(([n]) => n.startsWith("a")).map(([n]) => n), ["a-0", "a-1", "a-2"]);
+  assert.deepEqual(calls.filter(([, o]) => o).map(([n]) => n), ["b-1"]); // only b left an older month unpaid
 });
