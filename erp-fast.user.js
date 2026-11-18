@@ -2,7 +2,7 @@
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/erp-script/main/icons/dock.png
-// @version      3.8.1
+// @version      3.8.2
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -4224,22 +4224,40 @@
         const img = el("img"); img.src = T.url(tx, ty, z); img.alt = ""; img.draggable = false; img.style.left = `${tx * 256 - left}px`; img.style.top = `${ty * 256 - top}px`; tiles.append(img); }
       const tip = el("span", "tip"); tip.hidden = true;
       waitForBrief(box);
-      // only dots within the view and its tile margin are made; past 1500 of them, the online ones are painted on one
-      // canvas (no name on hover) and only the others are buttons, so the whole network stays quick to draw and drag
+      // only dots within the view and its tile margin are made. Past 250 buttons the page spent 50-90 ms laying them out
+      // on every zoom or drag (Map Terpadu has 1000+ customers down at any time), so then they're painted on one canvas
+      // and found under the pointer instead: the same name on hover, the same click to open. Customers down for under
+      // 30 minutes stay buttons (their ring pulses). Past 1500 in view the online ones are small dots without a name.
       const M = 260, near = [...kinds].sort((a, c) => RANK[a.k] - RANK[c.k]).map((z0) => [z0, proj(z0.p, z)])
         .filter(([, [px, py]]) => px - left > -M && py - top > -M && px - left < w + M && py - top < h + M);
-      const many = near.length > 1500;
-      let paint = null;
-      if (many) { const dpr = devicePixelRatio || 1; paint = el("canvas", "bgdots"); paint.width = (w + 2 * M) * dpr; paint.height = (h + 2 * M) * dpr;
+      const many = near.length > 1500, fresh = (z0) => z0.t && Date.now() - z0.t < FRESH;
+      const heavy = near.filter(([z0]) => !(many && z0.k === "on")).length > 250, painted = heavy ? near.filter(([z0]) => !fresh(z0)) : many ? near.filter(([z0]) => z0.k === "on") : [];
+      const nameOf = (z0) => `${z0.c.nama || z0.c.username} · ${KIND[z0.k][0].toLowerCase()}${z0.t ? ` ${lama(Date.now() - z0.t)}` : ""}${z0.u ? " · tidak stabil" : ""}`;
+      const open = (z0) => { view.card = z0.c; view.sel = 0; remember(z0.c); draw(); };
+      let paint = null; box.hit = box.hover = null;
+      if (painted.length) { const dpr = devicePixelRatio || 1; paint = el("canvas", "bgdots"); paint.width = (w + 2 * M) * dpr; paint.height = (h + 2 * M) * dpr;
         Object.assign(paint.style, { left: `${-M}px`, top: `${-M}px`, width: `${w + 2 * M}px`, height: `${h + 2 * M}px` });
-        const g = paint.getContext("2d"); g.scale(dpr, dpr); g.fillStyle = "#55bc82"; g.strokeStyle = "rgba(7,9,11,.85)"; g.lineWidth = 1;
-        for (const [z0, [px, py]] of near) if (z0.k === "on") { g.beginPath(); g.arc(px - left + M, py - top + M, 3, 0, 7); g.fill(); g.stroke(); } }
-      const dots = near.filter(([z0]) => !(many && z0.k === "on")).map(([z0, [px, py]]) => { // problems drawn last, on top
-        const d = el("button", `mdot ${z0.k}${z0.u ? " unst" : ""}${z0.t && Date.now() - z0.t < FRESH ? " fresh" : ""}`); d.type = "button"; d.tabIndex = -1; d.style.left = `${px - left}px`; d.style.top = `${py - top}px`;
-        const name = `${z0.c.nama || z0.c.username} · ${KIND[z0.k][0].toLowerCase()}${z0.t ? ` ${lama(Date.now() - z0.t)}` : ""}${z0.u ? " · tidak stabil" : ""}`; d.setAttribute("aria-label", name);
+        const g = paint.getContext("2d"); g.scale(dpr, dpr);
+        for (const [z0, [px, py]] of painted) paintDot(g, px - left + M, py - top + M, z0.k, z0.k === "on" ? (many ? 3 : 5) : 6.5, z0.u);
+        if (heavy) { // found by the pointer: the nearest painted dot within 9 px, through 16 px cells; small online dots aren't
+          const cells = new Map(), key = (x, y) => `${Math.floor(x / 16)},${Math.floor(y / 16)}`;
+          for (const d of painted) { if (many && d[0].k === "on") continue; const x = d[1][0] - left, y = d[1][1] - top, k = key(x, y); (cells.get(k) || cells.set(k, []).get(k)).push([x, y, d[0]]); }
+          const at = (e) => { const r = box.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top; let best = null, bd = 81;
+            for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (const d of cells.get(key(x + i * 16, y + j * 16)) || []) { const q = (d[0] - x) ** 2 + (d[1] - y) ** 2; if (q <= bd) { bd = q; best = d; } }
+            return best; };
+          const ring = el("span", "mdot hl"); ring.hidden = true; ring.style.pointerEvents = "none";
+          box.hover = (e) => { const d = e && !e.target.closest?.(".zoom, .brief, .foot, .sharesheet, button") ? at(e) : null; box.style.cursor = d ? "pointer" : "";
+            ring.hidden = tip.hidden = !d; if (!d) return;
+            ring.className = `mdot hl ${d[2].k}`; ring.style.left = tip.style.left = `${d[0]}px`; ring.style.top = tip.style.top = `${d[1]}px`;
+            tip.textContent = nameOf(d[2]); tip.classList.toggle("low", d[1] < 34); };
+          box.hit = (e) => { const d = at(e); if (d) open(d[2]); return !!d; };
+          paint.ring = ring; } }
+      const dots = near.filter((d) => !painted.includes(d)).map(([z0, [px, py]]) => { // problems drawn last, on top
+        const d = el("button", `mdot ${z0.k}${z0.u ? " unst" : ""}${fresh(z0) ? " fresh" : ""}`); d.type = "button"; d.tabIndex = -1; d.style.left = `${px - left}px`; d.style.top = `${py - top}px`;
+        const name = nameOf(z0); d.setAttribute("aria-label", name);
         d.onmouseenter = () => { tip.textContent = name; tip.style.left = d.style.left; tip.style.top = d.style.top; tip.classList.toggle("low", py - top < 34); tip.hidden = false; d.classList.add("hl"); };
         d.onmouseleave = () => { tip.hidden = true; d.classList.remove("hl"); };
-        d.onclick = () => { view.card = z0.c; view.sel = 0; remember(z0.c); draw(); }; return d; });
+        d.onclick = () => open(z0); return d; });
       const zoom = el("div", "zoom"), full = box.classList.contains("full"), fs = el("button", null, full ? "⤡" : "⤢"); fs.type = "button"; fs.title = full ? "Back (F or Esc)" : "Full screen (F)"; fs.onclick = () => toggleFull(box); zoom.append(fs);
       for (const [t, dz, label] of [["+", 1, "Zoom in"], ["−", -1, "Zoom out"]]) { const bt = el("button", null, t); bt.type = "button"; bt.setAttribute("aria-label", label);
         bt.disabled = (dz > 0 && z >= T.max) || (dz < 0 && z <= 8); bt.onclick = () => { box.zoom = (box.zoom || 0) + dz; box.redraw(); }; zoom.append(bt); }
@@ -4250,7 +4268,7 @@
       const scene = briefScene({ pts: kinds, at: (p) => { const [x, y] = proj(p, z); return [x - left, y - top]; }, mpp, w, h, about: { ...about, replay: rp, bar: !!bar } });
       box.scene = scene;
       const tags = rxTags(near.map(([z0, [px, py]]) => [z0.c, px - left, py - top]), new Set(scene.labels.map((l) => l.c)));
-      mapLayers(box, [tiles, ...briefUnder(scene), ...(paint ? [paint] : []), ...dots, ...tags, ...briefOver(scene), tip, zoom, el("span", "attr", T.attr)]);
+      mapLayers(box, [tiles, ...briefUnder(scene), ...(paint ? [paint] : []), ...(paint?.ring ? [paint.ring] : []), ...dots, ...tags, ...briefOver(scene), tip, zoom, el("span", "attr", T.attr)]);
       if (bar) box.querySelector(".brief").append(bar);
       swapTiles(box, tiles, { z, kind: carto ? "carto" : kind, left, top, id: `area:${box.dataset.what}` });
     }
@@ -4327,7 +4345,7 @@
         start = { x: e.clientX, y: e.clientY }; moved = false;
       });
       box.addEventListener("pointermove", (e) => {
-        if (!start) return;
+        if (!start) { box.hover?.(e); return; }
         const dx = e.clientX - start.x, dy = e.clientY - start.y;
         if (!moved && Math.hypot(dx, dy) < 4) return;
         if (!moved) { moved = true; box.classList.add("panning"); try { box.setPointerCapture(e.pointerId); } catch {} }
@@ -4335,16 +4353,19 @@
         shift(dx, dy);
       });
       const end = (e) => {
-        if (!start) return;
+        if (!start) { box.hover?.(e); return; }
         const dx = e.clientX - start.x, dy = e.clientY - start.y; start = null; box.classList.remove("panning");
         if (!moved) return;
         box.addEventListener("click", (c) => { c.stopPropagation(); c.preventDefault(); }, { capture: true, once: true }); // the drag isn't a click on a dot
         commit(dx, dy);
       };
       box.addEventListener("pointerup", end); box.addEventListener("pointercancel", end);
+      box.addEventListener("pointerleave", () => box.hover?.(null));
       // a click on the map itself (not a dot, a button or a drag) copies that spot's Google Maps link, for a technician
       box.addEventListener("click", (e) => {
-        const g = box.geo; if (e.defaultPrevented || !(e.target === box || e.target.matches(".pan, .tiles")) || !g || g.left == null) return;
+        if (e.defaultPrevented || e.target.closest(".zoom, .brief, .foot, .sharesheet, button")) return;
+        if (box.hit?.(e)) return; // a painted dot: its customer
+        const g = box.geo; if (!(e.target === box || e.target.matches(".pan, .tiles, .tiles img")) || !g || g.left == null) return;
         const r = box.getBoundingClientRect(), px = e.clientX - r.left, py = e.clientY - r.top, x = g.left + px, y = g.top + py;
         const lng = (x / g.size) * 360 - 180, lat = (Math.atan(Math.sinh(Math.PI * (1 - (2 * y) / g.size))) * 180) / Math.PI, url = `https://www.google.com/maps?q=${lat.toFixed(6)},${lng.toFixed(6)}`;
         box.querySelector(".mpin")?.remove();
@@ -4420,6 +4441,14 @@
       return o && usable(o) && o.rx < -28 ? "weak" : "on";
     }
     const detail = (z) => (z.k === "weak" ? dbm(modemOf(z.c).ont?.rx) : `${z.k === "los" ? "LOS" : z.k === "pwr" ? "mati listrik" : "offline"}${z.t ? ` ${lama(Date.now() - z.t)}` : ""}`);
+    // one customer's dot on a canvas, as the buttons look: down white with its ring, the rest filled; an online one small
+    // and dark-edged; a dashed amber ring when it keeps reconnecting
+    function paintDot(g, x, y, kind, r = 6, unst = false) {
+      g.beginPath(); g.arc(x, y, r, 0, 7);
+      if (DOWN.has(kind)) { g.fillStyle = "#efefed"; g.fill(); g.lineWidth = kind === "los" ? 2.5 : 2; g.strokeStyle = kind === "off" ? "rgba(7,9,11,.9)" : KIND[kind][1]; if (kind === "pwr") g.setLineDash([2, 2]); g.stroke(); g.setLineDash([]); }
+      else { g.fillStyle = KIND[kind][1]; g.fill(); g.lineWidth = kind === "on" ? (r < 4 ? 1 : 1.5) : 2; g.strokeStyle = kind === "on" ? "rgba(7,9,11,.85)" : "rgba(255,255,255,.9)"; g.stroke(); }
+      if (unst) { g.beginPath(); g.arc(x, y, r + 3.5, 0, 7); g.setLineDash([3, 2]); g.lineWidth = 2; g.strokeStyle = "#e0b252"; g.stroke(); g.setLineDash([]); }
+    }
     const shortName = (c) => String(c.nama || c.username || "").trim().split(/\s+/).slice(0, 2).join(" ");
     // From the drop log and the modem's own TR-069 report: when an offline customer went down (0 = unknown), and whether
     // an online one keeps reconnecting (4+ new sessions in 24 h, as on the Down? box)
@@ -4516,7 +4545,11 @@
       const inView = ([x, y], m = 0) => x >= -m && y >= -m && x <= w + m && y <= h + m;
       let assets = (netList || []).map((a) => ({ ...a, xy: at(a.p) })).filter((a) => inView(a.xy, 10));
       // zoomed out, hundreds of boxes bury the customers: keep the ones near a problem (200 m), at most 80
-      if (assets.length > 80) assets = assets.filter((a) => probs.some((z) => metres(z.p, a.p) <= 200)).slice(0, 80);
+      // (the problems put in ~330 m cells first: every box against every problem froze the whole-network map)
+      if (assets.length > 80) { const cell = new Map(), key = (p, a = 0, b = 0) => `${Math.floor(p.lat / 0.003) + a},${Math.floor(p.lng / 0.003) + b}`;
+        for (const z of probs) { const k = key(z.p); (cell.get(k) || cell.set(k, []).get(k)).push(z); }
+        const near = (a) => { for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (const z of cell.get(key(a.p, i, j)) || []) if (metres(z.p, a.p) <= 200) return true; return false; };
+        const out = []; for (const a of assets) { if (near(a)) out.push(a); if (out.length >= 80) break; } assets = out; }
       const faultXY = fault ? at(fault.p) : null;
       // name the problems where there's room: beside the dot, else the other side, above or below; never over the strip,
       // the legend or another name
@@ -4620,10 +4653,7 @@
       g.filter = "none";
       const font = (wt, px) => { g.font = `${wt} ${px}px Inter, ui-sans-serif, system-ui, sans-serif`; };
       const pill = (x, y, ww, hh, r, fill) => { g.beginPath(); g.roundRect(x, y, ww, hh, r); g.fillStyle = fill; g.fill(); };
-      const dot = (x, y, kind, r = 6) => { g.beginPath(); g.arc(x, y, r, 0, 7);
-        if (DOWN.has(kind)) { g.fillStyle = "#efefed"; g.fill(); g.lineWidth = kind === "los" ? 2.5 : 2; g.strokeStyle = kind === "off" ? "rgba(7,9,11,.9)" : KIND[kind][1];
-          if (kind === "pwr") g.setLineDash([2, 2]); g.stroke(); g.setLineDash([]); return; }
-        g.fillStyle = KIND[kind][1]; g.fill(); g.lineWidth = 2; g.strokeStyle = "rgba(255,255,255,.9)"; g.stroke(); };
+      const dot = (x, y, kind, r = 6) => paintDot(g, x, y, kind, r);
       for (const [x, y, R] of s.rings) { g.beginPath(); g.arc(x, y, R, 0, 7); g.lineWidth = 1.5; g.strokeStyle = "rgba(233,225,220,.6)"; g.stroke(); }
       g.shadowColor = "#000"; g.shadowBlur = 3; g.textAlign = "center";
       for (const v of s.vlabels) { font(600, 10); g.fillStyle = "rgba(233,225,220,.7)"; g.fillText(v.d.toUpperCase(), v.x, v.y + (v.team ? -1 : 3)); if (v.team) { font(500, 9); g.fillStyle = "rgba(170,200,255,.85)"; g.fillText(v.team, v.x, v.y + 10); } }

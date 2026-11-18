@@ -16,6 +16,14 @@
       return o && usable(o) && o.rx < -28 ? "weak" : "on";
     }
     const detail = (z) => (z.k === "weak" ? dbm(modemOf(z.c).ont?.rx) : `${z.k === "los" ? "LOS" : z.k === "pwr" ? "mati listrik" : "offline"}${z.t ? ` ${lama(Date.now() - z.t)}` : ""}`);
+    // one customer's dot on a canvas, as the buttons look: down white with its ring, the rest filled; an online one small
+    // and dark-edged; a dashed amber ring when it keeps reconnecting
+    function paintDot(g, x, y, kind, r = 6, unst = false) {
+      g.beginPath(); g.arc(x, y, r, 0, 7);
+      if (DOWN.has(kind)) { g.fillStyle = "#efefed"; g.fill(); g.lineWidth = kind === "los" ? 2.5 : 2; g.strokeStyle = kind === "off" ? "rgba(7,9,11,.9)" : KIND[kind][1]; if (kind === "pwr") g.setLineDash([2, 2]); g.stroke(); g.setLineDash([]); }
+      else { g.fillStyle = KIND[kind][1]; g.fill(); g.lineWidth = kind === "on" ? (r < 4 ? 1 : 1.5) : 2; g.strokeStyle = kind === "on" ? "rgba(7,9,11,.85)" : "rgba(255,255,255,.9)"; g.stroke(); }
+      if (unst) { g.beginPath(); g.arc(x, y, r + 3.5, 0, 7); g.setLineDash([3, 2]); g.lineWidth = 2; g.strokeStyle = "#e0b252"; g.stroke(); g.setLineDash([]); }
+    }
     const shortName = (c) => String(c.nama || c.username || "").trim().split(/\s+/).slice(0, 2).join(" ");
     // From the drop log and the modem's own TR-069 report: when an offline customer went down (0 = unknown), and whether
     // an online one keeps reconnecting (4+ new sessions in 24 h, as on the Down? box)
@@ -112,7 +120,11 @@
       const inView = ([x, y], m = 0) => x >= -m && y >= -m && x <= w + m && y <= h + m;
       let assets = (netList || []).map((a) => ({ ...a, xy: at(a.p) })).filter((a) => inView(a.xy, 10));
       // zoomed out, hundreds of boxes bury the customers: keep the ones near a problem (200 m), at most 80
-      if (assets.length > 80) assets = assets.filter((a) => probs.some((z) => metres(z.p, a.p) <= 200)).slice(0, 80);
+      // (the problems put in ~330 m cells first: every box against every problem froze the whole-network map)
+      if (assets.length > 80) { const cell = new Map(), key = (p, a = 0, b = 0) => `${Math.floor(p.lat / 0.003) + a},${Math.floor(p.lng / 0.003) + b}`;
+        for (const z of probs) { const k = key(z.p); (cell.get(k) || cell.set(k, []).get(k)).push(z); }
+        const near = (a) => { for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (const z of cell.get(key(a.p, i, j)) || []) if (metres(z.p, a.p) <= 200) return true; return false; };
+        const out = []; for (const a of assets) { if (near(a)) out.push(a); if (out.length >= 80) break; } assets = out; }
       const faultXY = fault ? at(fault.p) : null;
       // name the problems where there's room: beside the dot, else the other side, above or below; never over the strip,
       // the legend or another name
@@ -216,10 +228,7 @@
       g.filter = "none";
       const font = (wt, px) => { g.font = `${wt} ${px}px Inter, ui-sans-serif, system-ui, sans-serif`; };
       const pill = (x, y, ww, hh, r, fill) => { g.beginPath(); g.roundRect(x, y, ww, hh, r); g.fillStyle = fill; g.fill(); };
-      const dot = (x, y, kind, r = 6) => { g.beginPath(); g.arc(x, y, r, 0, 7);
-        if (DOWN.has(kind)) { g.fillStyle = "#efefed"; g.fill(); g.lineWidth = kind === "los" ? 2.5 : 2; g.strokeStyle = kind === "off" ? "rgba(7,9,11,.9)" : KIND[kind][1];
-          if (kind === "pwr") g.setLineDash([2, 2]); g.stroke(); g.setLineDash([]); return; }
-        g.fillStyle = KIND[kind][1]; g.fill(); g.lineWidth = 2; g.strokeStyle = "rgba(255,255,255,.9)"; g.stroke(); };
+      const dot = (x, y, kind, r = 6) => paintDot(g, x, y, kind, r);
       for (const [x, y, R] of s.rings) { g.beginPath(); g.arc(x, y, R, 0, 7); g.lineWidth = 1.5; g.strokeStyle = "rgba(233,225,220,.6)"; g.stroke(); }
       g.shadowColor = "#000"; g.shadowBlur = 3; g.textAlign = "center";
       for (const v of s.vlabels) { font(600, 10); g.fillStyle = "rgba(233,225,220,.7)"; g.fillText(v.d.toUpperCase(), v.x, v.y + (v.team ? -1 : 3)); if (v.team) { font(500, 9); g.fillStyle = "rgba(170,200,255,.85)"; g.fillText(v.team, v.x, v.y + 10); } }
