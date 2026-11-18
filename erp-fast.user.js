@@ -2,7 +2,7 @@
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/erp-script/main/icons/dock.png
-// @version      3.14.1
+// @version      3.14.2
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -4388,9 +4388,13 @@
       head.append(e, seg); box.append(head);
       const n = nearby(r, view.radius);
       if (!n) { box.append(el("p", "note", customers && !("lat" in r) ? "Locations arrive with the next refresh of the customer list (LDN → Pelanggan → Update)." : "This customer has no location saved.")); return box; }
-      const map = el("div", "map"); map.setAttribute("role", "group"); map.setAttribute("aria-label", `Map of ${n.list.length} customers within ${view.radius} metres`);
+      // open full screen, the map stays through the Dock's refresh (as the Network map does), drawn with the new data;
+      // the card gets a spot where it goes back to
+      const key = `near:${r.username}`, old = mapWas?.get(key), full = old?.classList.contains("full");
+      const map = full ? old : el("div", "map"); map.setAttribute("role", "group"); map.setAttribute("aria-label", `Map of ${n.list.length} customers within ${view.radius} metres`); map.dataset.what = key;
+      if (full) { map.fullHome = el("span"); map.kept = true; }
       const pon = el("div", "ponbox");
-      box.append(map, cartoKeyRow(() => drawBody()), pon);
+      box.append(full ? map.fullHome : map, cartoKeyRow(() => drawBody()), pon);
       const rows = [];
       for (const [i, x] of n.list.slice(0, 8).entries()) { const it = custItem(x.r, i); it.querySelector(".r").textContent = `${Math.round(x.d)} m`;
         it.addEventListener("mouseenter", () => map.hl?.(i, true)); it.addEventListener("mouseleave", () => map.hl?.(i, false)); rows.push(it); box.append(it); }

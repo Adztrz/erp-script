@@ -240,9 +240,13 @@
       head.append(e, seg); box.append(head);
       const n = nearby(r, view.radius);
       if (!n) { box.append(el("p", "note", customers && !("lat" in r) ? "Locations arrive with the next refresh of the customer list (LDN → Pelanggan → Update)." : "This customer has no location saved.")); return box; }
-      const map = el("div", "map"); map.setAttribute("role", "group"); map.setAttribute("aria-label", `Map of ${n.list.length} customers within ${view.radius} metres`);
+      // open full screen, the map stays through the Dock's refresh (as the Network map does), drawn with the new data;
+      // the card gets a spot where it goes back to
+      const key = `near:${r.username}`, old = mapWas?.get(key), full = old?.classList.contains("full");
+      const map = full ? old : el("div", "map"); map.setAttribute("role", "group"); map.setAttribute("aria-label", `Map of ${n.list.length} customers within ${view.radius} metres`); map.dataset.what = key;
+      if (full) { map.fullHome = el("span"); map.kept = true; }
       const pon = el("div", "ponbox");
-      box.append(map, cartoKeyRow(() => drawBody()), pon);
+      box.append(full ? map.fullHome : map, cartoKeyRow(() => drawBody()), pon);
       const rows = [];
       for (const [i, x] of n.list.slice(0, 8).entries()) { const it = custItem(x.r, i); it.querySelector(".r").textContent = `${Math.round(x.d)} m`;
         it.addEventListener("mouseenter", () => map.hl?.(i, true)); it.addEventListener("mouseleave", () => map.hl?.(i, false)); rows.push(it); box.append(it); }
