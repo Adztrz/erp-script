@@ -184,17 +184,18 @@ test("map redaman: all with dB on, only redaman tinggi with it off, and not twic
   assert.deepEqual(rxTags(list, named).map((t) => [t.text, t.cls]), [["-21,4", "mrx good"], ["-27,1", "mrx warn"], ["-29,6", "mrx crit"]]);
 });
 
-test("bulk lunas: three customers at once, each one's months in order, override only for skipped older months", async () => {
+test("bulk lunas: a few customers at once, each one's months in order, override only for skipped older months", async () => {
   const calls = [], live = new Set(); let most = 0;
   const api = async (path, body) => { const no = body.invoiceNumbers[0], who = no.split("-")[0];
     assert.ok(!live.has(who), `${who} paid two months at once`); live.add(who); most = Math.max(most, live.size);
     await new Promise((ok) => setTimeout(ok, 5)); live.delete(who); calls.push([no, !!body.lunasiWalauAdaTertua]); return { summary: { marked: 1 } }; };
-  const { payQueue } = load(dock, ["PAY_AT_ONCE", "payQueue", "payOne"], { api, settled: async () => null, payingNow: 0 }, ["payQueue"]);
+  const { limiter } = load(dock, ["limiter"]), pays = limiter(3, 6, 12000);
+  const { payQueue } = load(dock, ["timed", "payQueue", "payOne"], { api, pays, settled: async () => null, payingNow: 0, unpaidIdx: null }, ["payQueue"]);
   const row = (u, n, ticks) => ({ user: u, invs: Array.from({ length: n }, (_, i) => ({ no: `${u}-${i}`, period: `m${i}`, on: ticks.includes(i), recharge: false, result: null })) });
   const rows = [row("a", 3, [0, 1, 2]), row("b", 2, [1]), row("c", 1, [0]), row("d", 2, [0, 1]), row("e", 1, [0])];
   const st = { method: "Tunai", note: "di luar kota", date: "", skipOlder: true };
   await payQueue(rows.flatMap((r) => r.invs.filter((v) => v.on).map((v) => [r, v])), st, () => {}, "x");
-  assert.equal(most, 3); assert.equal(st.done, 8); assert.equal(st.phase, "done");
+  assert.ok(most >= 3 && most <= 6, `${most} at once`); assert.equal(st.done, 8); assert.equal(st.phase, "done");
   assert.deepEqual(calls.filter(([n]) => n.startsWith("a")).map(([n]) => n), ["a-0", "a-1", "a-2"]);
   assert.deepEqual(calls.filter(([, o]) => o).map(([n]) => n), ["b-1"]); // only b left an older month unpaid
 });
@@ -210,4 +211,14 @@ test("bulk SPK: a location after an asset's name goes to a new asset, and the ca
   assert.deepEqual([placeAsset(new Map(), "FAT TEST 1.1").lat, placeAsset(new Map(), "FAT TEST 1.1").code], [null, "FAT TEST 1.1"]); // "1.1" alone isn't a location
   const idx = new Map([[akey("FAT OLD 2"), [{ id: "x", kodeAset: "FAT OLD 2", tipeAset: "FAT" }]]]); // in Network Assets with no location: the typed one is used
   assert.deepEqual([placeAsset(idx, "FAT OLD 2 -8.1, 111.2").id, placeAsset(idx, "FAT OLD 2 -8.1, 111.2").lat], ["x", -8.1]);
+});
+
+test("bulk lunas pacing: more at once while answers are quick, half as many when slow or failing", async () => {
+  const { limiter } = load(dock, ["limiter"]), L = limiter(3, 6, 1000);
+  for (let i = 0; i < 3; i++) L.took(100, true); assert.equal(L.at, 4);
+  for (let i = 0; i < 40; i++) L.took(100, true); assert.equal(L.at, 6); // never past the most
+  L.took(1500, true); assert.equal(L.at, 3); L.took(100, false); assert.equal(L.at, 1); L.took(100, false); assert.equal(L.at, 1);
+  let run = 0, most = 0; const M = limiter(2, 2, 1000);
+  await Promise.all(Array.from({ length: 6 }, () => M.add(async () => { most = Math.max(most, ++run); await new Promise((ok) => setTimeout(ok, 5)); run--; })));
+  assert.equal(most, 2);
 });

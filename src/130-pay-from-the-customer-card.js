@@ -56,19 +56,19 @@
       const back = el("button", "back", "← Back"); back.type = "button"; back.onclick = () => { view.mode = null; drawBody(); panel.querySelector("input")?.focus(); };
       head.append(e, back);
       const ta = el("textarea", "field"); ta.placeholder = "Paste usernames, one per line"; ta.setAttribute("aria-label", "Usernames"); ta.spellcheck = false;
-      ta.onpaste = () => setTimeout(() => bulk.phase !== "paying" && find(), 0);
+      ta.onpaste = () => setTimeout(() => find(), 0);
       ta.onkeydown = (ev) => { if (ev.key === "Enter" && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); find(); } };
       const go = el("button", "btn", "Find them"); go.type = "button"; go.onclick = () => find(); go.style.marginTop = "8px"; go.dataset.k = "find";
-      wrap.append(head, ta, go, el("div", "bform"), el("div", "blist"), el("div", "bpay"));
+      wrap.append(head, el("div", "bday"), el("div", "bsent"), ta, go, el("div", "bform"), el("div", "blist"), el("div", "bpay"));
       return (bulk.el = wrap);
     }
     function bulkDraw() {
       if (!bulk?.el) return;
       const list = bulk.el.querySelector(".blist"), form = bulk.el.querySelector(".bform"), foot = bulk.el.querySelector(".bpay"), focus = document.activeElement?.dataset?.k;
-      const busy = bulk.phase === "paying" || bulk.phase === "looking";
-      bulk.el.querySelector("textarea").disabled = bulk.phase === "paying";
+      const busy = bulk.phase === "looking";
+      dayDraw(bulk.el.querySelector(".bday")); bulk.el.querySelector(".bsent").replaceChildren(...bulk.sent.map(sentView));
       const findBtn = bulk.el.querySelector('[data-k="find"]'); findBtn.disabled = busy;
-      findBtn.textContent = bulk.phase === "looking" ? `Looking… ${bulk.rows.filter((r) => r.state !== "looking").length}/${bulk.rows.length}` : bulk.rows.length ? "Find again" : "Find them";
+      findBtn.textContent = bulk.loading ? bulk.loading : bulk.phase === "looking" ? `Looking… ${bulk.rows.filter((r) => r.state !== "looking").length}/${bulk.rows.length}` : bulk.rows.length ? "Find again" : "Find them";
       const rows = [];
       for (const [ri, r] of bulk.rows.entries()) {
         const box = el("div", `brow${r.shown ? "" : " rise"}${r.state === "found" && r.invs.length ? "" : " off"}`); box.style.setProperty("--i", String(Math.min(ri, 12))); r.shown = true;
@@ -76,7 +76,7 @@
         if (r.state === "found") {
           h.append(el("b", null, r.name || r.user), el("span", `mono${r.guess ? " warn" : ""}`, r.user.toLowerCase() !== r.token.toLowerCase() ? `${r.token} → ${r.user}` : r.user)); box.append(h);
           if (r.guess && r.invs.length) box.append(el("div", "sub warn", /\s/.test(r.token.trim()) ? "Found by name and village: tick it if this is the right customer" : "Not the exact username you pasted: tick it if this is the right customer"));
-          box.append(el("div", "sub", [r.where, r.paidTo ? `paid to ${r.paidTo}` : "nothing paid yet"].filter(Boolean).join(" · ")));
+          box.append(el("div", "sub", [r.where, r.paidTo ? `paid to ${r.paidTo}` : r.paidTo === null ? "" : "nothing paid yet"].filter(Boolean).join(" · ")));
           if (!r.invs.length) box.append(el("div", "sub good", "Nothing unpaid"));
           box.append(...monthRows(r, ri, busy, bulk, bulkDraw));
         } else {
@@ -110,16 +110,7 @@
             : "Only a finance manager or admin can skip older months."));
           sk.append(cb, t); fields.push(sk);
         }
-        if (bulk.phase === "paying") {
-          const bar = el("div", "bar"), i = el("i"); i.style.width = `${(bulk.done / bulk.total) * 100}%`; bar.append(i);
-          const stop = el("button", "btn wide", bulk.stop ? "Stopping after the ones in progress…" : `Paying… ${bulk.done} of ${bulk.total} done · Stop`); stop.type = "button"; stop.disabled = bulk.stop;
-          stop.onclick = () => { bulk.stop = true; bulkDraw(); }; stop.dataset.k = "pay";
-          parts.push(bar, stop, el("div", "sub", "Keep this tab open until it's done."));
-        } else {
-          if (bulk.phase === "done") {
-            const all = bulk.rows.flatMap((r) => r.invs.filter((v) => v.result)), ok = all.filter((v) => v.result.ok).length;
-            parts.push(el("div", `sum ${ok === all.length ? "good" : "warn"}`, `${ok} marked Lunas${all.length - ok ? ` · ${all.length - ok} not: see the red lines` : ""}`));
-          }
+        {
           const skipped = bulk.skipOlder ? bulk.rows.filter((r) => r.state === "found").reduce((n, r) => n + skippedOf(r), 0) : 0;
           const btn = armButton(bulk, ch.length ? `Mark ${ch.length} Lunas · ${rupiah(total)}${skipped ? ` · skip ${skipped} older` : ""}${recharges ? ` · ${recharges} recharge` : ""}` : "Tick the months to pay",
             `Click again: mark ${ch.length} paid (${people} customers, ${rupiah(total)})${skipped ? `, ${skipped} older left unpaid` : ""}`, pay, bulkDraw, "pay");
@@ -131,6 +122,37 @@
         }
       }
       form.replaceChildren(...fields); foot.replaceChildren(...parts); foot.hidden = !parts.length;
+      if (bulk.sent.length && !bulk.rows.length) list.replaceChildren(el("p", "note", "Paste the next list: the ones above keep paying meanwhile."));
       if (focus) bulk.el.querySelector(`[data-k="${focus}"]`)?.focus();
     }
-
+    // a list sent to be paid: its own progress and Stop, then what didn't go, to try again
+    function sentView(b) {
+      const box = el("div", "brow sent"), all = b.rows.flatMap((r) => r.invs.filter((v) => v.result).map((v) => [r, v]));
+      const ok = all.filter(([, v]) => v.result.ok).length, bad = b.phase === "done" ? all.filter(([, v]) => !v.result.ok && !v.result.busy) : [];
+      const h = el("div", "h"); h.append(el("b", null, b.label), el("span", "mono", b.phase === "paying" ? `${b.done} of ${b.total}` : `${ok} Lunas${bad.length ? ` · ${bad.length} not` : ""}`)); box.append(h);
+      const acts = el("div", "picks"), btn = (label, fn) => { const x = el("button", "btn", label); x.type = "button"; x.onclick = fn; acts.append(x); return x; };
+      if (b.phase === "paying") {
+        const bar = el("div", "bar"), i = el("i"); i.style.width = `${(b.done / b.total) * 100}%`; bar.append(i); box.append(bar);
+        btn(b.stop ? "Stopping after the ones in progress…" : "Stop", () => { b.stop = true; bulkDraw(); }).disabled = !!b.stop;
+      } else {
+        for (const [r, v] of bad) box.append(el("div", "sub late", `${r.name || r.user} · ${v.period || v.no}: ${v.result.text}`));
+        const again = bad.filter(([, v]) => !v.result.unsure); // an answer lost without a check: look at the invoice first
+        if (again.length) btn(`Try ${again.length} again`, () => { for (const [, v] of again) v.result = null; sendList(b, again.map(([r]) => r).filter((r, i, a) => a.indexOf(r) === i).flatMap((r) => r.invs.filter((v) => v.on && !v.result?.ok && !v.result?.unsure).map((v) => [r, v]))); });
+        btn("Clear", () => { bulk.sent = bulk.sent.filter((x) => x !== b); bulkDraw(); });
+      }
+      if (acts.childNodes.length) box.append(acts);
+      return box;
+    }
+    // the end-of-day check: everyone from today's lists that isn't paid, and the lines never sorted out
+    function dayDraw(box) {
+      const d = today(), users = Object.entries(d.users), paid = users.filter(([, u]) => u.ok).length;
+      const left = [...users.filter(([, u]) => !u.ok).map(([user, u]) => ({ token: user, text: `${u.name || user} · ${u.label}${u.why ? ` · ${u.why}` : ""}` })),
+        ...Object.entries(d.open).map(([token, label]) => ({ token, text: `${token} · ${label} · never found` }))];
+      if (!users.length && !left.length) { box.replaceChildren(); return; }
+      const det = el("details", "dayck"); det.open = !!bulk.dayOpen; det.ontoggle = () => { bulk.dayOpen = det.open; };
+      det.append(el("summary", null, `Today: ${paid} paid${left.length ? ` · ${left.length} not yet` : ""}`));
+      for (const x of left.slice(0, 200)) det.append(el("div", "sub", x.text));
+      if (left.length) { const b = el("button", "btn", `Put the ${left.length} here to check again`); b.type = "button";
+        b.onclick = () => { const ta = bulk.el.querySelector("textarea"); ta.value = [ta.value.trim(), ...left.map((x) => x.token)].filter(Boolean).join("\n"); find(); }; det.append(b); }
+      box.replaceChildren(det);
+    }

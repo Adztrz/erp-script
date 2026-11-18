@@ -235,6 +235,9 @@
       .erp-dock .btn.wide { width: 100%; height: 40px; justify-content: center; }
       .erp-dock .btn.arm { background: var(--green); color: var(--canvas); box-shadow: 0 1px 3px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.35); }
       .erp-dock .btn:disabled { opacity: .45; cursor: default; }
+      .erp-dock .dayck { margin: 4px 0 8px; font-size: 12px; color: var(--muted); } .erp-dock .dayck summary { cursor: pointer; color: var(--paper); padding: 4px 0; }
+      .erp-dock .dayck .sub { padding: 2px 0; overflow-wrap: anywhere; } .erp-dock .dayck .btn { margin-top: 8px; }
+      .erp-dock .bsent .brow.sent { margin: 0 0 6px; } .erp-dock .brow.sent .bar { margin-top: 8px; }
       .erp-dock .bar { height: 2px; border-radius: 2px; background: var(--hair); overflow: hidden; } .erp-dock .bar i { display: block; height: 100%; background: var(--bone); transition: width .3s var(--out); }
       /* Outage radar */
       .erp-dock-fab.alert::after { content: ""; position: absolute; top: 7px; right: 7px; width: 9px; height: 9px; border-radius: 50%; background: var(--red);
