@@ -199,9 +199,39 @@
       const act = (label, fn, primary) => { const b = el("button", `btn${primary ? " primary" : ""}`, label); b.type = "button"; b.onclick = fn; acts.append(b); };
       act("Open in LDN", () => openIn.ldn(r), true); act("Remote ↗", () => remoteGo(r)); act("Invoices", () => openIn.invoices(r)); act("Map Terpadu", () => openIn.map(r)); act("Master", () => openIn.master(r));
       const loc = where(r); if (loc) { const a = el("a", "btn", "Google Maps"); a.href = `https://www.google.com/maps?q=${loc.lat},${loc.lng}`; a.target = "_blank"; a.rel = "noreferrer"; acts.append(a); }
+      const link = linkBox(r), lb = el("button", "btn", "1× link"); lb.type = "button"; lb.onclick = () => link.send();
+      lb.title = !r.customerDocId ? "Needs the customer list refreshed (LDN → Pelanggan → Update)" : !digits(r.phone) ? "No phone number: the ERP needs one to send the link" : "Make the one-click login link and send it on WhatsApp, as Master Pelanggan does";
+      lb.disabled = !r.customerDocId || !digits(r.phone); acts.append(lb);
       const bill = payBox(r); billDraw(bills.get(r.username));
-      wrap.append(back, who, facts, tech, acts, forensicBox(r), bill, modemBox(`u:${r.username}`, r), nearView(r));
+      wrap.append(back, who, facts, tech, acts, link, forensicBox(r), bill, modemBox(`u:${r.username}`, r), nearView(r));
       return wrap;
+    }
+    // Master Pelanggan's "Link 1× Klik": one press makes the customer's one-click login link and the ERP tries to send it
+    // on WhatsApp; when its gateway fails, the link, the login and the ready message are here to send by hand. The answer
+    // is kept in memory only, so it survives the card being redrawn but not a reload.
+    const links = new Map(), linkBoxes = new Map(); // username → the answer, and the box showing it now
+    function linkBox(r) {
+      const box = el("div", "near webbox"), u = lower(r.username); linkBoxes.set(u, box);
+      const draw = () => { box.replaceChildren(); const s = links.get(u); if (!s) return;
+        const e = el("div", "eyebrow"); e.append("One-click login link"); box.append(e);
+        if (s.busy) { box.append(el("p", "note ld", "Making the link and sending it on WhatsApp…")); return; }
+        if (s.err) { box.append(el("p", "note warn", `Couldn't make the link: ${s.err}`)); return; }
+        const j = s.j, msg = j.waMessageText || j.magicLink, to = String(j.phoneE164 || "").replace(/\D/g, "");
+        box.append(el("p", j.waSent ? "note" : "note warn", j.waSent ? `Sent on WhatsApp to ${j.phone || r.phone}.` : `WhatsApp gateway failed, send it yourself. ${j.waError || ""}`.trim()));
+        const facts = el("dl", "facts"), fact = (label, v) => { if (!v) return; const dd = el("dd", "mono", v), c = el("button", "copy", "Copy"); c.type = "button"; c.onclick = () => copy(String(v), c); dd.append(c); facts.append(el("dt", null, label), dd); };
+        fact("Link", j.magicLink); fact("Username", j.credentials?.username || j.phone); fact("Password", j.credentials?.password); box.append(facts);
+        const acts = el("div", "actions"), btn = (label, fn, cls = "btn") => { const b = el("button", cls, label); b.type = "button"; b.onclick = () => fn(b); acts.append(b); };
+        if (to && msg && !j.waSent) { const a = el("a", "btn primary", "WhatsApp ↗"); a.href = `https://wa.me/${to}?text=${encodeURIComponent(msg)}`; a.target = "_blank"; a.rel = "noreferrer noopener"; acts.append(a); }
+        btn("Copy link", (b) => copy(j.magicLink, b)); if (j.waMessageText) btn("Copy message", (b) => copy(j.waMessageText, b));
+        if (!j.waSent) btn("Try WhatsApp again", () => box.send());
+        box.append(acts); };
+      box.send = async () => {
+        if (links.get(u)?.busy) return; links.set(u, { busy: true }); draw();
+        try { links.set(u, { j: await api(`/api/admin/customers/${encodeURIComponent(r.customerDocId)}/resend-login-link`, {}) }); }
+        catch (err) { links.set(u, { err: err.message }); }
+        linkBoxes.get(u)?.draw();
+      };
+      box.draw = draw; draw(); return box;
     }
     function nearView(r) {
       const box = el("div", "near rise"); box.style.setProperty("--i", "3");
