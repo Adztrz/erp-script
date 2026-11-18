@@ -2,7 +2,7 @@
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/erp-script/main/icons/dock.png
-// @version      3.9.0
+// @version      3.10.0
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -524,15 +524,22 @@
     }
     return null;
   }
-  function placeAsset(idx, name) {
+  // "FAT X -8.2337, 111.3114" (as Google Maps copies a point, brackets allowed): where the asset stands, like the form's
+  // Titik Koordinat. A Calon Aset gets it, and so does an existing one with no location saved; the cable length follows.
+  function splitCoord(name) {
+    const m = /\s*[(@]?\s*(-?\d{1,2}\.\d+)\s*,\s*(-?\d{1,3}\.\d+)\s*\)?\s*$/.exec(name);
+    return m && Math.abs(+m[1]) <= 90 && Math.abs(+m[2]) <= 180 ? { name: name.slice(0, m.index).trim(), lat: +m[1], lng: +m[2] } : { name, lat: null, lng: null };
+  }
+  function placeAsset(idx, typed) {
+    const { name, lat, lng } = splitCoord(typed);
     const hits = [...new Map((idx?.get(akey(name)) || []).map((a) => [a.id, a])).values()], want = typeOf(name); // the list repeats some rows
     const same = hits.filter((a) => !want || String(a.tipeAset).toLowerCase() === want.toLowerCase());
     const list = same.length ? same : hits;
     if (list.length === 1) { const a = list[0], p = a.lokasiKoordinat;
-      return { ok: true, id: a.id, code: a.kodeAset, type: a.tipeAset, desa: a.desa || null, planned: false, lat: p?.latitude ?? a.lat ?? null, lng: p?.longitude ?? a.lng ?? null }; }
+      return { ok: true, id: a.id, code: a.kodeAset, type: a.tipeAset, desa: a.desa || null, planned: false, lat: p?.latitude ?? a.lat ?? lat, lng: p?.longitude ?? a.lng ?? lng }; }
     if (list.length > 1) return { ok: false, why: `${list.length} assets are called ${name}` };
     if (!want) return { ok: false, why: `${name}: type unclear (start with FDT, FAT, ODP…)` };
-    return { ok: true, id: null, code: name.trim().replace(/\s+/g, " "), type: want, desa: null, planned: true, lat: null, lng: null }; // not in Network Assets yet: a Calon Aset, as the form does it
+    return { ok: true, id: null, code: name.trim().replace(/\s+/g, " "), type: want, desa: null, planned: true, lat, lng }; // not in Network Assets yet: a Calon Aset, as the form does it
   }
   const title = (r) => spkTpl().replace(/\{dari\}/g, r.a?.code || r.from).replace(/\{ke\}/g, r.b?.code || r.to).replace(/\s+/g, " ").trim();
   const metres = (a, b) => {
@@ -740,6 +747,7 @@
     const ex = mk("div", "ex");
     for (const [h, body] of [
       ["Routes: one SPK per DARI → KE", "Tarik & aktivasi FAT\nBudi santoso\nFDT DAYU ke :\n* FAT DAYU 1\n* FAT DAYU 2"],
+      ["New assets with their location (Google Maps' lat, lng)", "FDT DAYU -8.2336, 111.3114 ke:\n* FAT DAYU 1 -8.2337, 111.3114"],
       ["A number of SPKs per technician", "Aktivasi FAT\nAgus setiawan 10\nJoko susilo 15 spk"],
       ["Pengecekan Port ODP (1/n…)", "Cek port\nAgus setiawan 10 spk"],
       ["One SPK per pole", "Instalasi tiang\nJoko susilo\nSudimoro 5-24"],
@@ -773,7 +781,8 @@
         row.append(mk("span", "n", { ok: "✓", err: "✕", busy: "…" }[j.state] ?? String(i + 1)), mk("span", "t", j.kind === "route" ? title(j) : j.kind === "poles" ? `${j.title} (${j.n})` : `${j.title} × ${j.n}`));
         const bits = [j.type, j.emp && j.emp !== tn ? j.emp : ""];
         if (j.bad) bits.push(j.bad);
-        if (j.kind === "route") bits.push(j.a?.ok === false ? j.a.why : j.a?.planned ? `${j.a.code}: new (Calon Aset)` : "", j.b?.ok === false ? j.b.why : j.b?.planned ? `${j.b.code}: new (Calon Aset)` : "");
+        const side = (x) => x?.ok === false ? x.why : x?.planned ? `${x.code}: new (Calon Aset${x.lat == null ? ", no location" : ""})` : "";
+        if (j.kind === "route") { const m = metres(j.a || {}, j.b || {}); bits.push(side(j.a), side(j.b), m == null ? "" : `${m} m`); }
         if (j.why) bits.push(j.why);
         if (L && editing && j.who && (!j.opts.length && j.kind !== "route" || j.opts.length > 1 || spk.picks[j.who])) {
           // nobody or several fit: pick the team here, once per name (every team when the name wasn't found)

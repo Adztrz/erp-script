@@ -198,3 +198,16 @@ test("bulk lunas: three customers at once, each one's months in order, override 
   assert.deepEqual(calls.filter(([n]) => n.startsWith("a")).map(([n]) => n), ["a-0", "a-1", "a-2"]);
   assert.deepEqual(calls.filter(([, o]) => o).map(([n]) => n), ["b-1"]); // only b left an older month unpaid
 });
+
+test("bulk SPK: a location after an asset's name goes to a new asset, and the cable length follows", () => {
+  const ATYPE = { fdt: "FDT", fat: "FAT" }, akey = (v) => String(v ?? "").toLowerCase().replace(/[\s\-_]+/g, "");
+  const typeOf = (name) => ATYPE[(/^\s*(fdt|fat)\b/i.exec(name)?.[1] || "").toLowerCase()] || null;
+  const { placeAsset, metres } = load(dock, ["splitCoord", "placeAsset", "metres"], { ATYPE, akey, typeOf }, ["placeAsset", "metres"]);
+  const a = placeAsset(new Map(), "FDT TEST 1 -8.2336333, 111.3113602"), b = placeAsset(new Map(), "FAT TEST 1.4 (-8.232568, 111.3132423)");
+  assert.deepEqual([a.code, a.planned, a.lat, a.lng], ["FDT TEST 1", true, -8.2336333, 111.3113602]);
+  assert.deepEqual([b.code, b.lat], ["FAT TEST 1.4", -8.232568]);
+  assert.equal(metres(a, b), 239);
+  assert.deepEqual([placeAsset(new Map(), "FAT TEST 1.1").lat, placeAsset(new Map(), "FAT TEST 1.1").code], [null, "FAT TEST 1.1"]); // "1.1" alone isn't a location
+  const idx = new Map([[akey("FAT OLD 2"), [{ id: "x", kodeAset: "FAT OLD 2", tipeAset: "FAT" }]]]); // in Network Assets with no location: the typed one is used
+  assert.deepEqual([placeAsset(idx, "FAT OLD 2 -8.1, 111.2").id, placeAsset(idx, "FAT OLD 2 -8.1, 111.2").lat], ["x", -8.1]);
+});
