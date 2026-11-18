@@ -237,6 +237,8 @@
       .erp-dock .btn:disabled { opacity: .45; cursor: default; }
       .erp-dock .dayck { margin: 4px 0 8px; font-size: 12px; color: var(--muted); } .erp-dock .dayck summary { cursor: pointer; color: var(--paper); padding: 4px 0; }
       .erp-dock .dayck .sub { padding: 2px 0; overflow-wrap: anywhere; } .erp-dock .dayck .btn { margin-top: 8px; }
+      .erp-dock .dayck .tots { margin: 8px 0 0; padding-top: 6px; border-top: 1px solid var(--hair); } .erp-dock .dayck .tot { display: flex; justify-content: space-between; gap: 10px; padding: 2px 0; color: var(--paper); }
+      .erp-dock .dayck .tot.all { margin-top: 4px; font-weight: 600; }
       .erp-dock .bsent .brow.sent { margin: 0 0 6px; } .erp-dock .brow.sent .bar { margin-top: 8px; }
       .erp-dock .bar { height: 2px; border-radius: 2px; background: var(--hair); overflow: hidden; } .erp-dock .bar i { display: block; height: 100%; background: var(--bone); transition: width .3s var(--out); }
       /* Outage radar */

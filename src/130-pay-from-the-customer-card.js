@@ -151,6 +151,16 @@
       if (!users.length && !left.length) { box.replaceChildren(); return; }
       const det = el("details", "dayck"); det.open = !!bulk.dayOpen; det.ontoggle = () => { bulk.dayOpen = det.open; };
       det.append(el("summary", null, `Today: ${paid} paid${left.length ? ` · ${left.length} not yet` : ""}`));
+      // per collector: the lists with the same method and note added up
+      const by = new Map(); for (const x of Object.values(d.lists || {})) { const t = by.get(x.label) || by.set(x.label, { people: 0, months: 0, total: 0 }).get(x.label); t.people += x.people; t.months += x.months; t.total += x.total; }
+      if (by.size) {
+        const tot = el("div", "tots"), lines = [...by].sort((a, b) => b[1].total - a[1].total);
+        for (const [label, t] of lines) { const r = el("div", "tot"); r.append(el("span", null, label), el("span", "mono", `${t.people} · ${rupiah(t.total)}`)); tot.append(r); }
+        const all = lines.reduce((n, [, t]) => n + t.total, 0), sumR = el("div", "tot all"); sumR.append(el("span", null, "All"), el("span", "mono", rupiah(all))); tot.append(sumR);
+        const cp = el("button", "btn", "Copy totals"); cp.type = "button";
+        cp.onclick = () => copy([`Setoran ${d.day}`, ...lines.map(([label, t]) => `${label}: ${t.people} pelanggan, ${rupiah(t.total)}`), `Total: ${rupiah(all)}`].join("\n"), cp);
+        det.append(tot, cp);
+      }
       for (const x of left.slice(0, 200)) det.append(el("div", "sub", x.text));
       if (left.length) { const b = el("button", "btn", `Put the ${left.length} here to check again`); b.type = "button";
         b.onclick = () => { const ta = bulk.el.querySelector("textarea"); ta.value = [ta.value.trim(), ...left.map((x) => x.token)].filter(Boolean).join("\n"); find(); }; det.append(b); }

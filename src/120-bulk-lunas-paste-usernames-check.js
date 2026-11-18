@@ -64,12 +64,14 @@
         await Promise.all([...UNPAID].flatMap((st, i) => Array.from({ length: Math.max(0, (firsts[i].pageCount || 1) - 1) }, (_, k) => page(st, k + 2).then((j) => { add(j); onPage?.(++done, all); }))));
         return m;
       })();
-      unpaidIdx = { at: Date.now(), p }; p.catch(() => { if (unpaidIdx?.p === p) unpaidIdx = null; });
+      unpaidIdx = { at: Date.now(), p }; p.then(() => { if (unpaidIdx?.p === p) unpaidIdx.ready = true; }, () => { if (unpaidIdx?.p === p) unpaidIdx = null; });
       return p;
     }
     function openBulk(text) {
       if (!bulk || (bulk.phase !== "paying" && text)) bulk = newBulk();
       view.mode = "bulk"; view.card = null; drawBody();
+      // the unpaid list starts loading now, so the first long list doesn't wait for it
+      if (!unpaidIdx) unpaidIndex((n, all) => { bulk.loading = `Loading unpaid invoices… ${n}/${all}`; bulkDraw(); }).catch(() => {}).finally(() => { bulk.loading = ""; bulkDraw(); });
       const ta = bulk.el.querySelector("textarea");
       if (text) { ta.value = text.trim(); find(); } else if (bulk.phase === "input") ta.focus();
     }
@@ -83,7 +85,7 @@
       if (!bulk.rows.length) { bulk.phase = "input"; bulkDraw(); return; }
       const fresh = bulk.rows.filter((r) => r.state === "looking");
       bulk.phase = "looking"; bulk.armed = 0; bulkDraw();
-      fastIdx = fresh.length >= 15 ? await unpaidIndex((n, all) => { bulk.loading = `Loading unpaid invoices… ${n}/${all}`; bulkDraw(); }).catch(() => null) : null;
+      fastIdx = fresh.length >= 15 || unpaidIdx?.ready ? await unpaidIndex((n, all) => { bulk.loading = `Loading unpaid invoices… ${n}/${all}`; bulkDraw(); }).catch(() => null) : null;
       bulk.loading = "";
       await Promise.all(fresh.map((r) => looks.add(() => lookup(r))));
       fastIdx = null;
@@ -213,7 +215,7 @@
     function pay() {
       const ch = chosen(); if (!ch.length) return;
       const rows = [...new Set(ch.map(([r]) => r))];
-      const b = { label: [bulk.method, bulk.note.trim()].filter(Boolean).join(" · "), method: bulk.method, date: bulk.date, note: bulk.note, skipOlder: !!bulk.skipOlder, rows, done: 0, total: 0 };
+      const b = { id: `${Date.now()}${Math.random()}`, label: [bulk.method, bulk.note.trim()].filter(Boolean).join(" · "), method: bulk.method, date: bulk.date, note: bulk.note, skipOlder: !!bulk.skipOlder, rows, done: 0, total: 0 };
       bulk.sent.unshift(b);
       dayNote((d) => { for (const r of rows) { d.users[r.user] = { name: r.name, label: b.label, periods: r.invs.filter((v) => v.on && !v.result?.ok).map((v) => v.period), ok: false }; delete d.open[r.token]; } });
       bulk.rows = bulk.rows.filter((r) => !rows.includes(r) && r.state !== "dupe" && !(r.state === "found" && !r.invs.some((v) => !v.result?.ok)));
@@ -224,7 +226,10 @@
     async function sendList(b, ch) {
       await payQueue(ch, b, bulkDraw, "Bulk Lunas (Dock)");
       dayNote((d) => { for (const r of b.rows) { const u = d.users[r.user]; if (!u) continue; const bad = r.invs.find((v) => v.result && !v.result.ok);
-        u.ok = !bad && r.invs.some((v) => v.result?.ok); u.why = bad ? `${bad.period}: ${bad.result.text}` : u.ok ? "" : "not paid"; } });
+        u.ok = !bad && r.invs.some((v) => v.result?.ok); u.why = bad ? `${bad.period}: ${bad.result.text}` : u.ok ? "" : "not paid"; }
+        // what this list paid, to check against the cash its collector hands in (a retry recounts it, never twice)
+        const paid = b.rows.flatMap((r) => r.invs.filter((v) => v.result?.ok).map((v) => [r, v]));
+        (d.lists ||= {})[b.id] = { label: b.label, people: new Set(paid.map(([r]) => r.user)).size, months: paid.length, total: paid.reduce((n, [, v]) => n + v.amount, 0) }; });
       bulkDraw();
     }
     // pays a list of [row, invoice], one request each; a few customers at a time (shared by every list being paid), each

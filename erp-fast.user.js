@@ -2,7 +2,7 @@
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/erp-script/main/icons/dock.png
-// @version      3.11.0
+// @version      3.12.0
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -1956,6 +1956,8 @@
       .erp-dock .btn:disabled { opacity: .45; cursor: default; }
       .erp-dock .dayck { margin: 4px 0 8px; font-size: 12px; color: var(--muted); } .erp-dock .dayck summary { cursor: pointer; color: var(--paper); padding: 4px 0; }
       .erp-dock .dayck .sub { padding: 2px 0; overflow-wrap: anywhere; } .erp-dock .dayck .btn { margin-top: 8px; }
+      .erp-dock .dayck .tots { margin: 8px 0 0; padding-top: 6px; border-top: 1px solid var(--hair); } .erp-dock .dayck .tot { display: flex; justify-content: space-between; gap: 10px; padding: 2px 0; color: var(--paper); }
+      .erp-dock .dayck .tot.all { margin-top: 4px; font-weight: 600; }
       .erp-dock .bsent .brow.sent { margin: 0 0 6px; } .erp-dock .brow.sent .bar { margin-top: 8px; }
       .erp-dock .bar { height: 2px; border-radius: 2px; background: var(--hair); overflow: hidden; } .erp-dock .bar i { display: block; height: 100%; background: var(--bone); transition: width .3s var(--out); }
       /* Outage radar */
@@ -2199,12 +2201,14 @@
         await Promise.all([...UNPAID].flatMap((st, i) => Array.from({ length: Math.max(0, (firsts[i].pageCount || 1) - 1) }, (_, k) => page(st, k + 2).then((j) => { add(j); onPage?.(++done, all); }))));
         return m;
       })();
-      unpaidIdx = { at: Date.now(), p }; p.catch(() => { if (unpaidIdx?.p === p) unpaidIdx = null; });
+      unpaidIdx = { at: Date.now(), p }; p.then(() => { if (unpaidIdx?.p === p) unpaidIdx.ready = true; }, () => { if (unpaidIdx?.p === p) unpaidIdx = null; });
       return p;
     }
     function openBulk(text) {
       if (!bulk || (bulk.phase !== "paying" && text)) bulk = newBulk();
       view.mode = "bulk"; view.card = null; drawBody();
+      // the unpaid list starts loading now, so the first long list doesn't wait for it
+      if (!unpaidIdx) unpaidIndex((n, all) => { bulk.loading = `Loading unpaid invoices… ${n}/${all}`; bulkDraw(); }).catch(() => {}).finally(() => { bulk.loading = ""; bulkDraw(); });
       const ta = bulk.el.querySelector("textarea");
       if (text) { ta.value = text.trim(); find(); } else if (bulk.phase === "input") ta.focus();
     }
@@ -2218,7 +2222,7 @@
       if (!bulk.rows.length) { bulk.phase = "input"; bulkDraw(); return; }
       const fresh = bulk.rows.filter((r) => r.state === "looking");
       bulk.phase = "looking"; bulk.armed = 0; bulkDraw();
-      fastIdx = fresh.length >= 15 ? await unpaidIndex((n, all) => { bulk.loading = `Loading unpaid invoices… ${n}/${all}`; bulkDraw(); }).catch(() => null) : null;
+      fastIdx = fresh.length >= 15 || unpaidIdx?.ready ? await unpaidIndex((n, all) => { bulk.loading = `Loading unpaid invoices… ${n}/${all}`; bulkDraw(); }).catch(() => null) : null;
       bulk.loading = "";
       await Promise.all(fresh.map((r) => looks.add(() => lookup(r))));
       fastIdx = null;
@@ -2348,7 +2352,7 @@
     function pay() {
       const ch = chosen(); if (!ch.length) return;
       const rows = [...new Set(ch.map(([r]) => r))];
-      const b = { label: [bulk.method, bulk.note.trim()].filter(Boolean).join(" · "), method: bulk.method, date: bulk.date, note: bulk.note, skipOlder: !!bulk.skipOlder, rows, done: 0, total: 0 };
+      const b = { id: `${Date.now()}${Math.random()}`, label: [bulk.method, bulk.note.trim()].filter(Boolean).join(" · "), method: bulk.method, date: bulk.date, note: bulk.note, skipOlder: !!bulk.skipOlder, rows, done: 0, total: 0 };
       bulk.sent.unshift(b);
       dayNote((d) => { for (const r of rows) { d.users[r.user] = { name: r.name, label: b.label, periods: r.invs.filter((v) => v.on && !v.result?.ok).map((v) => v.period), ok: false }; delete d.open[r.token]; } });
       bulk.rows = bulk.rows.filter((r) => !rows.includes(r) && r.state !== "dupe" && !(r.state === "found" && !r.invs.some((v) => !v.result?.ok)));
@@ -2359,7 +2363,10 @@
     async function sendList(b, ch) {
       await payQueue(ch, b, bulkDraw, "Bulk Lunas (Dock)");
       dayNote((d) => { for (const r of b.rows) { const u = d.users[r.user]; if (!u) continue; const bad = r.invs.find((v) => v.result && !v.result.ok);
-        u.ok = !bad && r.invs.some((v) => v.result?.ok); u.why = bad ? `${bad.period}: ${bad.result.text}` : u.ok ? "" : "not paid"; } });
+        u.ok = !bad && r.invs.some((v) => v.result?.ok); u.why = bad ? `${bad.period}: ${bad.result.text}` : u.ok ? "" : "not paid"; }
+        // what this list paid, to check against the cash its collector hands in (a retry recounts it, never twice)
+        const paid = b.rows.flatMap((r) => r.invs.filter((v) => v.result?.ok).map((v) => [r, v]));
+        (d.lists ||= {})[b.id] = { label: b.label, people: new Set(paid.map(([r]) => r.user)).size, months: paid.length, total: paid.reduce((n, [, v]) => n + v.amount, 0) }; });
       bulkDraw();
     }
     // pays a list of [row, invoice], one request each; a few customers at a time (shared by every list being paid), each
@@ -2599,6 +2606,16 @@
       if (!users.length && !left.length) { box.replaceChildren(); return; }
       const det = el("details", "dayck"); det.open = !!bulk.dayOpen; det.ontoggle = () => { bulk.dayOpen = det.open; };
       det.append(el("summary", null, `Today: ${paid} paid${left.length ? ` · ${left.length} not yet` : ""}`));
+      // per collector: the lists with the same method and note added up
+      const by = new Map(); for (const x of Object.values(d.lists || {})) { const t = by.get(x.label) || by.set(x.label, { people: 0, months: 0, total: 0 }).get(x.label); t.people += x.people; t.months += x.months; t.total += x.total; }
+      if (by.size) {
+        const tot = el("div", "tots"), lines = [...by].sort((a, b) => b[1].total - a[1].total);
+        for (const [label, t] of lines) { const r = el("div", "tot"); r.append(el("span", null, label), el("span", "mono", `${t.people} · ${rupiah(t.total)}`)); tot.append(r); }
+        const all = lines.reduce((n, [, t]) => n + t.total, 0), sumR = el("div", "tot all"); sumR.append(el("span", null, "All"), el("span", "mono", rupiah(all))); tot.append(sumR);
+        const cp = el("button", "btn", "Copy totals"); cp.type = "button";
+        cp.onclick = () => copy([`Setoran ${d.day}`, ...lines.map(([label, t]) => `${label}: ${t.people} pelanggan, ${rupiah(t.total)}`), `Total: ${rupiah(all)}`].join("\n"), cp);
+        det.append(tot, cp);
+      }
       for (const x of left.slice(0, 200)) det.append(el("div", "sub", x.text));
       if (left.length) { const b = el("button", "btn", `Put the ${left.length} here to check again`); b.type = "button";
         b.onclick = () => { const ta = bulk.el.querySelector("textarea"); ta.value = [ta.value.trim(), ...left.map((x) => x.token)].filter(Boolean).join("\n"); find(); }; det.append(b); }
