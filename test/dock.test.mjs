@@ -222,3 +222,16 @@ test("bulk lunas pacing: more at once while answers are quick, half as many when
   await Promise.all(Array.from({ length: 6 }, () => M.add(async () => { most = Math.max(most, ++run); await new Promise((ok) => setTimeout(ok, 5)); run--; })));
   assert.equal(most, 2);
 });
+
+test("bulk SPK from a map: each FAT from the FDT its number names, else the nearest; names tidied, repeats flagged", () => {
+  const ATYPE = { fdt: "FDT", fat: "FAT", odp: "ODP" }, akey = (v) => String(v ?? "").toLowerCase().replace(/[\s\-_]+/g, "");
+  const typeOf = (name) => ATYPE[(/^\s*(fdt|fat|odp)\b/i.exec(name)?.[1] || "").toLowerCase()] || null;
+  const { mapRoutes } = load(dock, ["metres", "mapRoutes"], { akey, typeOf }, ["mapRoutes"]);
+  const pts = [{ name: "FDT AB 1", lat: -8.2447, lng: 111.3073 }, { name: "FDT AB 2", lat: -8.2453, lng: 111.3091 },
+    { name: "FAT AB 2.4", lat: -8.2451, lng: 111.3080 }, { name: "FAT AB 1.1", lat: -8.2447, lng: 111.3074 }, { name: "FAT AB 9.1", lat: -8.2453, lng: 111.3090 }, { name: "FAT AB 1.1", lat: -8.2440, lng: 111.3070 }];
+  const byNumber = mapRoutes(pts, false), nearest = mapRoutes(pts, true);
+  assert.equal(byNumber.text, "FDT AB 1 -8.2447, 111.3073 ke:\n* FAT AB 1.1 -8.2447, 111.3074\n* FAT AB 1.1 -8.244, 111.307\n\nFDT AB 2 -8.2453, 111.3091 ke:\n* FAT AB 2.4 -8.2451, 111.308\n* FAT AB 9.1 -8.2453, 111.309");
+  assert.ok(byNumber.notes.some((n) => n.startsWith("FAT AB 9.1 has no FDT by its number")) && byNumber.notes.some((n) => n.startsWith("FAT AB 1.1 is on the map 2 times")));
+  assert.match(nearest.text, /FDT AB 1 [^\n]* ke:\n\* FAT AB 1\.1[^\n]*\n\* FAT AB 1\.1[^\n]*\n\* FAT AB 2\.4/); // 2.4 is nearer FDT AB 1
+  assert.throws(() => mapRoutes(pts.filter((p) => p.name.startsWith("FAT")), false), /needs both/);
+});

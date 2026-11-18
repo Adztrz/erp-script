@@ -2,7 +2,7 @@
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/erp-script/main/icons/dock.png
-// @version      3.12.0
+// @version      3.13.0
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -549,6 +549,49 @@
     return Math.round(2 * R * Math.asin(Math.sqrt(h)));
   };
 
+  // A Google My Maps link (shared with "anyone with the link") pasted in the box: its points are read (Google gives any
+  // site the map as KML) and written into the box as routes, each FAT/ODP from its FDT with both locations, to check
+  // before creating. A FAT goes to the FDT its number names (FAT DAYU 1.4 → FDT DAYU 1); with no such FDT, or with
+  // "nearest" picked, to the closest FDT. Lines and areas on the map are left out.
+  const MAPLINK = /https?:\/\/(?:www\.)?google\.[a-z.]+\/maps\/d\/\S*?[?&]mid=([\w-]+)\S*/;
+  async function mapPoints(mid) {
+    const r = await realFetch(`https://www.google.com/maps/d/kml?mid=${encodeURIComponent(mid)}&forcekml=1`).catch(() => null);
+    if (!r?.ok) throw new Error(`Google didn't give the map${r ? ` (HTTP ${r.status})` : ""}: is it shared with anyone with the link?`);
+    const doc = new DOMParser().parseFromString(await r.text(), "text/xml"), tag = (e, t) => e.getElementsByTagName(t)[0];
+    return [...doc.getElementsByTagName("Placemark")].map((p) => {
+      const c = tag(tag(p, "Point") || p, "coordinates")?.textContent.trim().split(","); if (!tag(p, "Point") || !c) return null;
+      return { name: (tag(p, "name")?.textContent || "").trim().replace(/\.\s+(?=\d)/g, ".").replace(/\s+/g, " "), lng: +c[0], lat: +c[1] }; // "FAT X 1. 2" → "FAT X 1.2"
+    }).filter((p) => p && typeOf(p.name));
+  }
+  function mapRoutes(pts, nearest) {
+    const fdts = pts.filter((p) => typeOf(p.name) === "FDT"), ends = pts.filter((p) => ["FAT", "ODP"].includes(typeOf(p.name)));
+    if (!fdts.length || !ends.length) throw new Error(`the map has ${fdts.length} FDT and ${ends.length} FAT/ODP points: it needs both`);
+    const by = new Map(), notes = [], count = new Map();
+    for (const p of ends) {
+      count.set(p.name, (count.get(p.name) || 0) + 1);
+      const m = /^(?:FAT|ODP)\s+(.+?)\s+(\d+)\.\d+$/i.exec(p.name), named = m && fdts.find((f) => akey(f.name) === akey(`FDT ${m[1]} ${m[2]}`));
+      const close = fdts.reduce((a, f) => metres(f, p) < metres(a, p) ? f : a), f = !nearest && named ? named : close;
+      if (!nearest && !named) notes.push(`${p.name} has no FDT by its number: from the nearest, ${close.name}`);
+      (by.get(f) || by.set(f, []).get(f)).push(p);
+    }
+    for (const [n, k] of count) if (k > 1) notes.push(`${n} is on the map ${k} times: rename one in the box`);
+    const at = (p) => `${p.name} ${p.lat}, ${p.lng}`, order = (a, b) => a.name.localeCompare(b.name, "id", { numeric: true });
+    const text = [...by].sort((a, b) => order(a[0], b[0])).map(([f, list]) => [`${at(f)} ke:`, ...list.sort(order).map((p) => `* ${at(p)}`)].join("\n")).join("\n\n");
+    return { text, notes, n: ends.length, fdts: fdts.length };
+  }
+  // the routes written in place of the link (or of the last ones written, when the pairing changes)
+  async function fromMap(ta) {
+    const link = MAPLINK.exec(ta.value); if (!link && !spk.map) return;
+    if (link) { spk.text = ta.value; spk.map = { note: "Reading the map…" }; spkDraw();
+      try { spk.map = { pts: await mapPoints(link[1]), text: link[0] }; } catch (e) { spk.map = { note: `Couldn't read the map: ${e.message}` }; return; } }
+    if (!spk.map.pts) return;
+    try { const m = mapRoutes(spk.map.pts, spk.mapNearest);
+      if (!ta.value.includes(spk.map.text)) { spk.map = null; return; } // the routes were edited away: done with the map
+      ta.value = ta.value.replace(spk.map.text, m.text); spk.text = ta.value; spk.map.text = m.text;
+      spk.map.note = `${m.n} routes from ${m.fdts} FDTs on the map${m.notes.length ? `. ${m.notes.join(". ")}.` : "."}`;
+    } catch (e) { spk.map = { note: `Couldn't use the map: ${e.message}` }; }
+  }
+
   async function fsToken() {
     try {
       const db = await new Promise((ok, no) => { const q = indexedDB.open("firebaseLocalStorageDb"); q.onupgradeneeded = () => q.transaction.abort(); q.onsuccess = () => ok(q.result); q.onerror = no; });
@@ -735,11 +778,21 @@
     const ta = mk("textarea"); ta.rows = 7; ta.value = spk.text; ta.disabled = !editing;
     ta.placeholder = "Paste the message…";
     ta.oninput = async () => {
+      if (MAPLINK.test(ta.value)) await fromMap(ta);
       spk.text = ta.value; spk.armed = false; await spkPlan();
       const at = ta.selectionStart; spkDraw(); // redraw, then put the caret back where it was
       const t2 = document.querySelector("#erp-bulk-spk textarea"); t2?.focus(); t2?.setSelectionRange(at, at);
     };
     if (!manual) p.append(ta);
+    if (!manual && spk.map?.note) {
+      p.append(mk("p", "hint", spk.map.note));
+      if (spk.map.pts) { // which FDT a FAT comes from
+        const sel = mk("select"); sel.disabled = !editing;
+        for (const [v, t] of [["", "FAT from the FDT its number names (1.4 → FDT 1)"], ["n", "FAT from the nearest FDT"]]) { const o = mk("option", null, t); o.value = v; o.selected = !!spk.mapNearest === !!v; sel.append(o); }
+        sel.onchange = async () => { spk.mapNearest = !!sel.value; const t = document.querySelector("#erp-bulk-spk textarea"); await fromMap(t); spk.armed = false; await spkPlan(); spkDraw(); };
+        p.append(sel);
+      }
+    }
     // how to write each kind, in its own scrolling box (open while the box above is empty)
     const guide = mk("details", "guide"); guide.open = spk.guide ?? !spk.text.trim();
     const sum = mk("summary", null, "How to write it"); sum.onclick = () => { spk.guide = !guide.open; }; // opened or closed by hand stays so
@@ -747,6 +800,7 @@
     const ex = mk("div", "ex");
     for (const [h, body] of [
       ["Routes: one SPK per DARI → KE", "Tarik & aktivasi FAT\nBudi santoso\nFDT DAYU ke :\n* FAT DAYU 1\n* FAT DAYU 2"],
+      ["Or paste a Google My Maps link (shared with anyone with the link): its FDT and FAT points become the routes", "Tarik kabel distribusi\nBudi santoso\nhttps://www.google.com/maps/d/edit?mid=…"],
       ["New assets with their location (Google Maps' lat, lng)", "FDT DAYU -8.2336, 111.3114 ke:\n* FAT DAYU 1 -8.2337, 111.3114"],
       ["A number of SPKs per technician", "Aktivasi FAT\nAgus setiawan 10\nJoko susilo 15 spk"],
       ["Pengecekan Port ODP (1/n…)", "Cek port\nAgus setiawan 10 spk"],
