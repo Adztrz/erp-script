@@ -255,3 +255,11 @@ test("approvals: three save at once, never two of one SPK, and a stop lets the r
   const bad = await runAll(["x", "y"], { atOnce: 2, stopped: () => false, spkOf: (id) => id, check: async (id) => (id === "x" ? "!The report didn't open" : {}), save: async () => "ok", done: () => {} });
   assert.equal(bad, "The report didn't open");
 });
+
+test("review count: decided reports still count, so the position goes up and the total stays", () => {
+  const rv = { type: "", all: ["a", "b", "c"].map((id) => ({ id, type: id === "c" ? "Tiang" : "FAT" })), gone: [], i: 0 };
+  const { queue, gone, decide } = load(dock, ["queue", "gone", "decide"], { rv });
+  const at = () => `${gone() + rv.i + 1} / ${gone() + queue().length}`;
+  assert.equal(at(), "1 / 3"); decide("a"); assert.equal(at(), "2 / 3"); decide("b"); assert.equal(at(), "3 / 3");
+  rv.type = "Tiang"; assert.equal(at(), "1 / 1"); // a type counts only its own
+});

@@ -2,7 +2,7 @@
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/erp-script/main/icons/dock.png
-// @version      3.14.0
+// @version      3.14.1
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -949,7 +949,7 @@
   function reviewToggle() {
     if (reviewOpen()) return reviewStop(true);
     rv = rv || { i: 0, type: "", auto: true };
-    const b = reviewBuild(); Object.assign(rv, { all: b.items, aside: b.aside, known: b.known, run: false, msg: "" });
+    const b = reviewBuild(); Object.assign(rv, { all: b.items, aside: b.aside, known: b.known, run: false, msg: "", gone: [] });
     const p = document.createElement("div"); p.id = "erp-review"; p.setAttribute("role", "dialog"); p.setAttribute("aria-label", "Review queue");
     document.body.append(p); reviewDraw(); draw(); dispatchEvent(new Event("erp-fast-panel"));
   }
@@ -959,6 +959,9 @@
     if (close) { document.getElementById("erp-review")?.remove(); draw(); dispatchEvent(new Event("erp-fast-panel")); } else reviewDraw();
   }
   const queue = () => rv.all.filter((x) => !rv.type || x.type === rv.type);
+  // decided reports leave the list, so the count adds them back: 1 / 70, 2 / 70… rather than 1 / 70, 1 / 69…
+  const gone = () => (rv.gone || []).filter((x) => !rv.type || x.type === rv.type).length;
+  const decide = (id) => { const x = rv.all.find((y) => y.id === id); if (x) (rv.gone ||= []).push(x); rv.all = rv.all.filter((y) => y.id !== id); };
   const reviewDraw = () => keepScroll("erp-review", [".list"], reviewDrawNow);
   function reviewDrawNow() {
     const p = document.getElementById("erp-review"); if (!p || !rv) return;
@@ -985,7 +988,7 @@
     auto.append(cb, mk("span", null, "Open the next report after each decision")); auto.style.gridTemplateColumns = "auto 1fr"; p.append(auto);
     const list = mk("div", "list");
     q.slice(rv.i, rv.i + 6).forEach((x, k) => {
-      const row = mk("div", "rt"); row.append(mk("span", "n", String(rv.i + k + 1)), mk("span", "t", x.job), mk("span", "s", [x.type, x.tech, x.val, x.gps === false ? "GPS off" : ""].filter(Boolean).join(" · ")));
+      const row = mk("div", "rt"); row.append(mk("span", "n", String(gone() + rv.i + k + 1)), mk("span", "t", x.job), mk("span", "s", [x.type, x.tech, x.val, x.gps === false ? "GPS off" : ""].filter(Boolean).join(" · ")));
       list.append(row);
     });
     if (q.length) p.append(list);
@@ -994,10 +997,10 @@
     p.append(keys);
     if (rv.msg) p.append(mk("p", "note", rv.msg));
     const foot = mk("div", "ft");
-    const go = btn(!q.length ? "Nothing to review" : rv.i ? `Continue at ${rv.i + 1} of ${q.length}` : `Start · ${q.length} reports`, () => reviewGo(rv.i), "primary");
+    const go = btn(!q.length ? "Nothing to review" : rv.i || gone() ? `Continue at ${gone() + rv.i + 1} of ${gone() + q.length}` : `Start · ${q.length} reports`, () => reviewGo(rv.i), "primary");
     go.disabled = !q.length; foot.append(go);
     if (rv.i) foot.append(btn("From the top", () => { rv.i = 0; reviewGo(0); }));
-    foot.append(btn("Reload list", () => { const b = reviewBuild(); Object.assign(rv, { all: b.items, aside: b.aside, known: b.known, i: 0, msg: "" }); reviewDraw(); }));
+    foot.append(btn("Reload list", () => { const b = reviewBuild(); Object.assign(rv, { all: b.items, aside: b.aside, known: b.known, i: 0, msg: "", gone: [] }); reviewDraw(); }));
     p.append(foot);
   }
   // Pick & approve: tick reports, then approve them one after another the way the keys would
@@ -1028,7 +1031,7 @@
       go.textContent = !n ? "Tick the reports to approve" : rv.pArmed ? `Press again: approve ${n} report${n > 1 ? "s" : ""}` : `Approve ${n} ticked`; go.disabled = !n;
     }
     label(); foot.append(go);
-    foot.append(btn("Reload list", () => { const b = reviewBuild(); Object.assign(rv, { all: b.items, aside: b.aside, known: b.known, i: 0, msg: "" }); reviewDraw(); }));
+    foot.append(btn("Reload list", () => { const b = reviewBuild(); Object.assign(rv, { all: b.items, aside: b.aside, known: b.known, i: 0, msg: "", gone: [] }); reviewDraw(); }));
     p.append(foot);
   }
   const rowOf = (id) => [...document.querySelectorAll("main table tbody > tr")].find((r) => rowKey(r) === id);
@@ -1112,7 +1115,7 @@
       atOnce: AT_ONCE, stopped: () => rv.stopAuto, spkOf: (id) => reps.get(id)?.spkId || reps.get(id)?.workOrderId || id,
       check: async (id) => { const c = await autoCheck(id); if (typeof c !== "string") { n++; show(); } return c; },
       save: autoSave,
-      done: (id, r) => { rv.res[id] = r; if (r === "ok") { ok++; rv.sel.delete(id); rv.all = rv.all.filter((x) => x.id !== id); } else if (!r.startsWith("!") && r !== "stopped") skipped++; show(); },
+      done: (id, r) => { rv.res[id] = r; if (r === "ok") { ok++; rv.sel.delete(id); decide(id); } else if (!r.startsWith("!") && r !== "stopped") skipped++; show(); },
     });
     rv.autoOn = false;
     rv.msg = `${ok} approved${skipped ? `, ${skipped} skipped (marked in the list)` : ""}.${why ? ` Stopped: ${why}.` : rv.stopAuto ? " Stopped." : ""}`;
@@ -1125,7 +1128,7 @@
     if (!h) { h = document.createElement("div"); h.id = "erp-review-hud"; h.setAttribute("role", "status"); document.body.append(h); }
     const q = queue(), x = q[rv.i]; if (!x) return;
     h.innerHTML = "";
-    const b = document.createElement("b"); b.textContent = `${rv.i + 1} / ${q.length}`;
+    const b = document.createElement("b"); b.textContent = `${gone() + rv.i + 1} / ${gone() + q.length}`;
     const t = document.createElement("span"); t.textContent = `  ${x.tech} · ${x.val}${x.gps === false ? " · GPS off" : ""}  `;
     const k = document.createElement("span"); k.className = "k"; k.innerHTML = "<kbd>C</kbd> tick all · <kbd>A</kbd><kbd>A</kbd> approve · <kbd>T</kbd> note · <kbd>R</kbd><kbd>R</kbd> reject · <kbd>N</kbd> next · <kbd>Esc</kbd> pause";
     const m = document.createElement("div"); m.className = "m"; m.textContent = rv.msg || "";
@@ -1185,7 +1188,7 @@
     // wait for the report to leave Menunggu counts from when its window closed, not from the key press
     if (dlg()) { if (byHand) rv.waiting = null; else { rv.waiting.at = Date.now(); const s = Math.round((Date.now() - rv.waiting.from) / 1000); if (s >= 8 && s % 5 === 0) say(`Saving… the ERP is still at it (${s} s)`); } return; }
     if (decided) {
-      rv.waiting = null; rv.all = rv.all.filter((x) => x.id !== id);
+      rv.waiting = null; decide(id);
       if (rv.auto) reviewGo(rv.i); else { rv.msg = "Saved."; reviewStop(false); }
     } else if (Date.now() - at > (byHand ? 6000 : 60000)) {
       rv.waiting = null; rv.msg = byHand ? "" : "The decision wasn't confirmed: check that report before going on."; reviewStop(false);
