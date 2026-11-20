@@ -75,9 +75,10 @@
       const ta = bulk.el.querySelector("textarea");
       if (text) { ta.value = text.trim(); find(); } else if (bulk.phase === "input") ta.focus();
     }
-    // A pasted WhatsApp chat: "[20/11/2026, 16.13] TEK. BUDI: Siswanto0903" (or "20/11/26 16.13 - Budi: …") keeps only
-    // the message; times, dates and chat notes on their own are left out.
-    const CHAT = /^\[?\s*\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4},?\s+\d{1,2}[.:]\d{2}(?:[.:]\d{2})?(?:\s*[ap]\.?m\.?)?\s*\]?\s*(?:-\s*)?[^:]{1,60}:\s*/i;
+    // A pasted WhatsApp chat: "[16.13, 20/11/2026] TEK. BUDI: Siswanto0903", "[20/11/2026, 16.13] …", "20/11/26 16.13 - Budi: …"
+    // (or what's left of one cut at its comma: "20/11/2026] Budi: …") keeps only the message; times, dates and chat
+    // notes on their own are left out.
+    const CHAT = /^(?:\[?[\d\s/.:,apm-]{4,30}\]\s*|\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4},?\s+\d{1,2}[.:]\d{2}(?:[.:]\d{2})?(?:\s*[ap]\.?m\.?)?\s*-\s*)[^:]{1,60}:\s*/i;
     function tokensOf(text) {
       return String(text).split(/\n+/).map((l) => l.replace(CHAT, "")).flatMap((l) => l.split(/[,;]+/)).map((x) => x.trim())
         .filter((x) => x && !/^\[?[\d\s/.:,-]+\]?$/.test(x) && !/^<.*>$|^(?:image|video|audio|sticker|document) omitted$|^pesan ini (?:dihapus|telah dihapus)/i.test(x));

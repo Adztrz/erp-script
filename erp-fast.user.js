@@ -2,7 +2,7 @@
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/erp-script/main/icons/dock.png
-// @version      3.15.0
+// @version      3.15.1
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -2285,9 +2285,10 @@
       const ta = bulk.el.querySelector("textarea");
       if (text) { ta.value = text.trim(); find(); } else if (bulk.phase === "input") ta.focus();
     }
-    // A pasted WhatsApp chat: "[20/11/2026, 16.13] TEK. BUDI: Siswanto0903" (or "20/11/26 16.13 - Budi: …") keeps only
-    // the message; times, dates and chat notes on their own are left out.
-    const CHAT = /^\[?\s*\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4},?\s+\d{1,2}[.:]\d{2}(?:[.:]\d{2})?(?:\s*[ap]\.?m\.?)?\s*\]?\s*(?:-\s*)?[^:]{1,60}:\s*/i;
+    // A pasted WhatsApp chat: "[16.13, 20/11/2026] TEK. BUDI: Siswanto0903", "[20/11/2026, 16.13] …", "20/11/26 16.13 - Budi: …"
+    // (or what's left of one cut at its comma: "20/11/2026] Budi: …") keeps only the message; times, dates and chat
+    // notes on their own are left out.
+    const CHAT = /^(?:\[?[\d\s/.:,apm-]{4,30}\]\s*|\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4},?\s+\d{1,2}[.:]\d{2}(?:[.:]\d{2})?(?:\s*[ap]\.?m\.?)?\s*-\s*)[^:]{1,60}:\s*/i;
     function tokensOf(text) {
       return String(text).split(/\n+/).map((l) => l.replace(CHAT, "")).flatMap((l) => l.split(/[,;]+/)).map((x) => x.trim())
         .filter((x) => x && !/^\[?[\d\s/.:,-]+\]?$/.test(x) && !/^<.*>$|^(?:image|video|audio|sticker|document) omitted$|^pesan ini (?:dihapus|telah dihapus)/i.test(x));

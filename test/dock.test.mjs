@@ -269,4 +269,7 @@ test("bulk lunas: a pasted WhatsApp chat gives just the usernames and names", ()
   const chat = ["[20/11/2026, 16.13] TEK. BUDI SANTOSO: Testuser0903", "[20/11/2026, 16.14] TEK. BUDI SANTOSO: Testdua0903, Testtiga1001",
     "20/11/26 16.15 - Admin Kantor: Jarmo Sumberagung", "[16.13]", "<Media omitted>", "Testempat0908"].join("\n");
   assert.deepEqual(tokensOf(chat), ["Testuser0903", "Testdua0903", "Testtiga1001", "Jarmo Sumberagung", "Testempat0908"]);
+  // the time first, as WhatsApp on a computer copies it, and a line already cut at its comma
+  assert.deepEqual(tokensOf("[16.13, 20/11/2026] TEK. BUDI SANTOSO: Testlima0903\n[16.14, 20/11/2026] TEK. BUDI: Testenam0903, Testtujuh0903\n20/11/2026] TEK. BUDI SANTOSO: Testdelapan0903\n[16.13\n[4:05 PM, 11/20/2026] Budi: Testsembilan0903"),
+    ["Testlima0903", "Testenam0903", "Testtujuh0903", "Testdelapan0903", "Testsembilan0903"]);
 });
