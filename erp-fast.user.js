@@ -2,7 +2,7 @@
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/erp-script/main/icons/dock.png
-// @version      3.16.1
+// @version      3.16.2
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -2033,6 +2033,7 @@
       .erp-dock .btn.arm { background: var(--green); color: var(--canvas); box-shadow: 0 1px 3px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.35); }
       .erp-dock .btn:disabled { opacity: .45; cursor: default; }
       .erp-dock .rsearch { margin-top: 8px; } .erp-dock .rsearch .field { height: 32px; font-size: 13px; } .erp-dock .rsearch .picks { margin-top: 6px; }
+      .erp-dock .foot .ver { margin-left: auto; font: 11px "JetBrains Mono", ui-monospace, monospace; color: var(--muted); }
       .erp-dock .dayck { margin: 4px 0 8px; font-size: 12px; color: var(--muted); } .erp-dock .dayck summary { cursor: pointer; color: var(--paper); padding: 4px 0; }
       .erp-dock .dayck .sub { padding: 2px 0; overflow-wrap: anywhere; } .erp-dock .dayck .btn { margin-top: 8px; }
       .erp-dock .dayck .tots { margin: 8px 0 0; padding-top: 6px; border-top: 1px solid var(--hair); } .erp-dock .dayck .tot { display: flex; justify-content: space-between; gap: 10px; padding: 2px 0; color: var(--paper); }
@@ -4329,6 +4330,8 @@
       top.append(svg(ICON.search), input, el("kbd", null, "Esc"), mono, shut);
       const body = el("div", "scroll"), foot = el("div", "foot");
       foot.append(el("span", null, customers ? `${customers.length.toLocaleString("id-ID")} customers · ${ago(custAt)}` : "Customer list: open LDN → Pelanggan once"), el("span", null, invoices ? `Invoices ${MONTHS_ID[Number(invKey.split("-")[2]) - 1]} kept` : "Invoices: open Invoices once"));
+      // the Dock's version, as Tampermonkey installed it (its GM_info is there even without grants)
+      const ver = typeof GM_info !== "undefined" ? GM_info.script?.version : ""; if (ver) { const v = el("span", "ver", `v${ver}`); v.title = "Dock version: Tampermonkey → Check for userscript updates gets the newest"; foot.append(v); }
       const was = document.activeElement, keep = was === document.body || !was || panel.contains(was); // focus was in the Dock: the new box takes it
       panel.replaceChildren(top, body, foot);
       drawBody();

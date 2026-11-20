@@ -108,6 +108,8 @@
       top.append(svg(ICON.search), input, el("kbd", null, "Esc"), mono, shut);
       const body = el("div", "scroll"), foot = el("div", "foot");
       foot.append(el("span", null, customers ? `${customers.length.toLocaleString("id-ID")} customers · ${ago(custAt)}` : "Customer list: open LDN → Pelanggan once"), el("span", null, invoices ? `Invoices ${MONTHS_ID[Number(invKey.split("-")[2]) - 1]} kept` : "Invoices: open Invoices once"));
+      // the Dock's version, as Tampermonkey installed it (its GM_info is there even without grants)
+      const ver = typeof GM_info !== "undefined" ? GM_info.script?.version : ""; if (ver) { const v = el("span", "ver", `v${ver}`); v.title = "Dock version: Tampermonkey → Check for userscript updates gets the newest"; foot.append(v); }
       const was = document.activeElement, keep = was === document.body || !was || panel.contains(was); // focus was in the Dock: the new box takes it
       panel.replaceChildren(top, body, foot);
       drawBody();
