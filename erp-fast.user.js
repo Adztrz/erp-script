@@ -2,7 +2,7 @@
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/erp-script/main/icons/dock.png
-// @version      3.15.3
+// @version      3.16.0
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -1951,6 +1951,12 @@
       .erp-dock .map .brief .lv.high { background: var(--red); color: #fff; } .erp-dock .map .brief .lv.mid { background: #e0b252; } .erp-dock .map .brief .lv.low { background: #a3a4a3; } .erp-dock .map .brief .lv.ok { background: var(--green); }
       .erp-dock .map .brief .bs, .erp-dock .map .brief .bf { margin-top: 2px; font-size: 11px; color: var(--body); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .erp-dock .map .brief .bf { color: #ff8a7a; font-weight: 500; }
       .erp-dock .map .zoom button.bm { font-size: 10px; font-weight: 600; }
+      .erp-dock .map .spkpick { position: absolute; z-index: 4; width: 22px; height: 22px; margin: -11px 0 0 -11px; border: 0; border-radius: 50%; background: rgba(9,11,12,.9); color: var(--paper); box-shadow: inset 0 0 0 1.5px var(--paper); font: 600 13px/22px Inter, system-ui, sans-serif; text-align: center; cursor: pointer; padding: 0; }
+      .erp-dock .map .spkpick.on { background: var(--paper); color: #07090b; } .erp-dock .map .spkpick:hover { transform: scale(1.12); }
+      .erp-dock .map .spksheet { position: absolute; z-index: 6; left: 10px; right: 10px; bottom: 44px; display: grid; gap: 4px; padding: 10px 12px; border-radius: 8px; background: rgba(9,11,12,.94); box-shadow: 0 0 0 1px var(--hair); font-size: 12px; color: var(--muted); max-height: 45%; overflow: auto; }
+      .erp-dock .map .spksheet b { color: var(--paper); font-weight: 500; } .erp-dock .map .spksheet .acts { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 4px; }
+      .erp-dock .map .spksheet select, .erp-dock .map .spksheet input { height: 28px; border: 0; border-radius: 6px; background: var(--canvas); color: var(--paper); font: 12px Inter, system-ui, sans-serif; padding: 0 6px; max-width: 220px; }
+      .erp-dock .map .spksheet .copy.primary { background: var(--paper); color: #07090b; }
       .erp-dock .map .zoom button.bm.on { background: var(--paper); color: #07090b; }
       .erp-dock .map .mrx { position: absolute; z-index: 1; transform: translate(9px, -50%); padding: 0 4px; border-radius: 3px; background: rgba(9,11,12,.82); color: var(--body); font: 500 10px/14px Inter, system-ui, sans-serif; font-variant-numeric: tabular-nums; white-space: nowrap; pointer-events: none; }
       .erp-dock .map .mrx.warn { color: #e0b252; } .erp-dock .map .mrx.crit { background: #e0b252; color: #07090b; font-weight: 600; }
@@ -4491,7 +4497,7 @@
         old.redraw = () => drawAreaMap(old, pts, about); old.redraw(); spot.redraw = () => old.redraw(); return spot;
       }
       const box = el("div", "map"); box.setAttribute("role", "group"); box.setAttribute("aria-label", label); box.dataset.what = key;
-      if (old) { box.zoom = old.zoom; box.ctr = old.ctr; }
+      if (old) { box.zoom = old.zoom; box.ctr = old.ctr; box.spk = old.spk; }
       box.redraw = () => drawAreaMap(box, pts, about); setTimeout(box.redraw, 0); return box;
     }
     function drawAreaMap(box, pts, about = {}) {
@@ -4551,14 +4557,14 @@
       const zoom = el("div", "zoom"), full = box.classList.contains("full"), fs = el("button", null, full ? "⤡" : "⤢"); fs.type = "button"; fs.title = full ? "Back (F or Esc)" : "Full screen (F)"; fs.onclick = () => toggleFull(box); zoom.append(fs);
       for (const [t, dz, label] of [["+", 1, "Zoom in"], ["−", -1, "Zoom out"]]) { const bt = el("button", null, t); bt.type = "button"; bt.setAttribute("aria-label", label);
         bt.disabled = (dz > 0 && z >= T.max) || (dz < 0 && z <= 8); bt.onclick = () => { box.zoom = (box.zoom || 0) + dz; box.redraw(); }; zoom.append(bt); }
-      zoom.append(recentre(box), rxButton(box), baseButton(box, kind), shareButton(box));
+      zoom.append(recentre(box), rxButton(box), baseButton(box, kind), spkButton(box), shareButton(box));
       box.classList.toggle("sat", kind === "sat"); box.classList.toggle("carto", carto);
       const mpp = 156543.03392 * Math.cos(mid.lat * Math.PI / 180) / 2 ** z;
       const bar = replayBar(box);
       const scene = briefScene({ pts: kinds, at: (p) => { const [x, y] = proj(p, z); return [x - left, y - top]; }, mpp, w, h, about: { ...about, replay: rp, bar: !!bar } });
       box.scene = scene;
       const tags = rxTags(near.map(([z0, [px, py]]) => [z0.c, px - left, py - top]), new Set(scene.labels.map((l) => l.c)));
-      mapLayers(box, [tiles, ...briefUnder(scene), ...(paint ? [paint] : []), ...(paint?.ring ? [paint.ring] : []), ...dots, ...tags, ...briefOver(scene), tip, zoom, el("span", "attr", T.attr)]);
+      mapLayers(box, [tiles, ...briefUnder(scene), ...(paint ? [paint] : []), ...(paint?.ring ? [paint.ring] : []), ...dots, ...tags, ...briefOver(scene), ...spkLayer(box, scene), tip, zoom, el("span", "attr", T.attr)]);
       if (bar) box.querySelector(".brief").append(bar);
       swapTiles(box, tiles, { z, kind: carto ? "carto" : kind, left, top, id: `area:${box.dataset.what}` });
     }
@@ -4619,7 +4625,7 @@
     // than 4 px is still a click (a dot opens its customer). ◎ goes back to the start.
     // What moves with the map goes in one layer (.pan) and a drag moves only that layer, on the graphics card: moving the
     // ~900 dots and labels one by one cost ~23 ms a step on a big router. The strip, legend and buttons stay put.
-    const MAP_FIXED = ".zoom, .seg, .attr, .tip, .brief, .foot, .sharesheet";
+    const MAP_FIXED = ".zoom, .seg, .attr, .tip, .brief, .foot, .sharesheet, .spksheet";
     function mapLayers(box, items) {
       const pan = el("div", "pan"), fixed = [];
       for (const c of items) if (c.matches(MAP_FIXED)) fixed.push(c); else pan.append(c);
@@ -4793,7 +4799,7 @@
           for (const a of j.data || []) {
             const type = String(a.tipeAset || "").toUpperCase(); if (seen.has(a.id) || !/^(FAT|ODP|FDT|ODC)$/.test(type)) continue; seen.add(a.id);
             const lat = num(a.lokasiKoordinat?.latitude ?? a.lat), lng = num(a.lokasiKoordinat?.longitude ?? a.lng); if (!lat || !lng) continue;
-            const code = String(a.kodeAset || "").trim(); out.push({ type, code: code.toUpperCase().startsWith(type) ? code : `${type} ${code}`, p: { lat, lng } });
+            const code = String(a.kodeAset || "").trim(); out.push({ type, code: code.toUpperCase().startsWith(type) ? code : `${type} ${code}`, p: { lat, lng }, desa: a.desa || "" });
           }
           return (netList = out);
         }
@@ -4849,7 +4855,8 @@
       // of down / all its customers on this map ("3/5"); half or more down with 2+ is the box to suspect
       const groups = new Map();
       for (const z of pts) { if (z.k === "iso" || z.me && !DOWN.has(z.k)) continue; const a = nearestBox(z.p); if (!a) continue; z.box = a;
-        let g = groups.get(a.code); if (!g) groups.set(a.code, (g = { a, down: 0, all: 0 })); g.all++; if (DOWN.has(z.k)) g.down++; }
+        let g = groups.get(a.code); if (!g) groups.set(a.code, (g = { a, down: 0, all: 0, desa: new Map() })); g.all++; if (DOWN.has(z.k)) g.down++;
+        if (z.c.desa) g.desa.set(z.c.desa, (g.desa.get(z.c.desa) || 0) + 1); }
       const fats = [...groups.values()].filter((g) => g.down).map((g) => ({ ...g, bad: g.down >= 2 && g.down / g.all >= 0.5, xy: at(g.a.p) }))
         .sort((a, b) => b.bad - a.bad || b.down - a.down || b.down / b.all - a.down / a.all);
       const links = down.filter((z) => z.box).map((z) => [at(z.p), at(z.box.p)]).filter(([a, b]) => inView(a, 40) || inView(b, 40));
@@ -5003,6 +5010,84 @@
     function baseButton(box, kind) {
       const b = el("button", "bm", kind === "sat" ? "Map" : "Sat"); b.type = "button"; b.title = kind === "sat" ? "Street map" : "Satellite";
       b.onclick = () => { ls.set(BASEMAP, kind === "sat" ? "dark" : "sat"); box.redraw(); }; return b;
+    }
+    // Maintenance SPKs from the map: with SPK on, every box with customers down gets a + to pick it, and each picked box
+    // becomes one Maintenance Jaringan Umum SPK for the chosen team, at the box's place (the form's own manual SPK with a
+    // location), titled for the technician: "Perbaikan FAT X · 5/8 pelanggan mati". Saved as Bulk SPK saves them.
+    function spkButton(box) {
+      const on = !!box.spk, b = el("button", `bm${on ? " on" : ""}`, "SPK"); b.type = "button"; b.setAttribute("aria-pressed", String(on));
+      b.title = on ? "Stop making SPKs" : "Make Maintenance SPKs: pick the boxes with customers down"; b.setAttribute("aria-label", "Make SPKs from the map");
+      b.onclick = () => { box.spk = on ? null : { picked: new Map(), team: "", date: todayIso(), armed: 0, msg: "" }; box.redraw(); }; return b;
+    }
+    let spkTeams = null; // Planning's own team list, read once
+    const boxDesa = (g) => g.a.desa || [...(g.desa || [])].sort((a, b) => b[1] - a[1])[0]?.[0] || "";
+    const spkTitle = (g) => `Perbaikan ${g.a.code} · ${g.down}/${g.all} pelanggan mati`;
+    function spkLayer(box, s) {
+      const st = box.spk; if (!st) return [];
+      const out = [];
+      for (const g of s.fats) {
+        const k = g.a.code, on = st.picked.has(k), b = el("button", `spkpick${on ? " on" : ""}`, on ? "✓" : "+"); b.type = "button";
+        b.style.left = `${g.xy[0]}px`; b.style.top = `${g.xy[1]}px`; b.title = `${k}: ${g.down}/${g.all} pelanggan mati`; b.setAttribute("aria-pressed", String(on)); b.setAttribute("aria-label", `SPK for ${k}`);
+        b.onclick = (e) => { e.stopPropagation(); if (on) st.picked.delete(k); else st.picked.set(k, g); st.armed = 0; st.msg = ""; box.redraw(); };
+        out.push(b);
+      }
+      out.push(spkSheet(box));
+      return out;
+    }
+    function spkSheet(box) {
+      const st = box.spk, list = [...st.picked.values()], sheet = el("div", "spksheet");
+      sheet.addEventListener("pointerdown", (e) => e.stopPropagation());
+      const btn = (t, fn, cls = "copy") => { const b = el("button", cls, t); b.type = "button"; b.onclick = fn; return b; };
+      sheet.append(el("b", null, list.length ? `${list.length} SPK${list.length > 1 ? "s" : ""}, Maintenance Jaringan Umum` : "SPK: click + on the boxes to send a technician to"));
+      for (const g of list) sheet.append(el("span", "sub", spkTitle(g)));
+      if (st.msg) sheet.append(el("span", st.ok ? "good" : "late", st.msg));
+      const row = el("span", "acts");
+      if (list.length && !st.ok) {
+        const sel = el("select"); sel.setAttribute("aria-label", "Team");
+        if (!spkTeams) { sel.append(new Option("Loading teams…", "")); spkTeams = spkLists().catch((e) => ({ err: e.message })); spkTeams.then(() => box.isConnected && box.redraw()); }
+        else spkTeams.then((L) => {
+          if (L.err) { sel.append(new Option(`No teams: ${L.err}`, "")); return; }
+          // the field team that covers the first box's village, until one is picked
+          if (!st.team) { const vil = fold(boxDesa(list[0])), want = vil && teamsFor(vil).filter((t) => teamKind(t.name) === "field").map((t) => fold(t.name));
+            st.team = L.teams.find((t) => want?.includes(fold(t.namaTim || "")))?.id || ""; }
+          sel.append(new Option("Team…", ""));
+          for (const t of L.teams) sel.append(new Option(t.namaTim || t.id, t.id, false, t.id === st.team));
+        });
+        sel.onchange = () => { st.team = sel.value; st.armed = 0; };
+        const date = el("input"); date.type = "date"; date.value = st.date; date.onchange = () => { st.date = date.value; st.armed = 0; };
+        const go = btn(st.armed > Date.now() ? `Press again: make ${list.length}` : `Make ${list.length} SPK${list.length > 1 ? "s" : ""}`, () => {
+          if (!st.team) { st.msg = "Pick the team first."; return box.redraw(); }
+          if (!(st.armed > Date.now())) { st.armed = Date.now() + 5000; box.redraw(); setTimeout(() => box.isConnected && box.redraw(), 5100); return; }
+          spkMake(box, list);
+        }, "copy primary");
+        row.append(sel, date, go);
+      }
+      row.append(btn(st.ok ? "Done" : "Cancel", () => { box.spk = null; box.redraw(); }));
+      sheet.append(row);
+      return sheet;
+    }
+    // all the picked boxes in one save (all made, or none), then Daftar SPK's copy refreshed, as Bulk SPK does
+    async function spkMake(box, list) {
+      const st = box.spk; st.armed = 0; st.msg = "Making the SPKs…"; box.redraw();
+      try {
+        const L = await spkTeams, db = L.db, team = L.teams.find((t) => t.id === st.team);
+        const [y, m, d] = st.date.split("-").map(Number), day = new Date(y, m - 1, d), now = new Date(), when = day.toDateString() === now.toDateString() ? now : day;
+        const writes = list.map((g) => {
+          const id = Array.from(crypto.getRandomValues(new Uint8Array(20)), (n) => "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"[n % 62]).join("");
+          return { update: { name: `${db}/documents/workOrders/${id}`, fields: {
+              name: S(spkTitle(g)), status: S("Baru"), workOrderType: S("Maintenance Jaringan Umum"), scheduledDate: { timestampValue: when.toISOString() },
+              assignedTeamId: S(st.team), assignmentType: S("team"), assignedEmployeeIds: { arrayValue: {} }, assignedEmployeeNames: { arrayValue: {} },
+              tasks: { arrayValue: {} }, installationTasks: { arrayValue: {} }, progress: { mapValue: { fields: { total: I(1), completed: I(0) } } },
+              target: { mapValue: { fields: { type: S("manual"), lat: D(g.a.p.lat), lng: D(g.a.p.lng) } } }, projectId: { nullValue: null }, bukanProyek: B(true),
+              ...(team && !(team.anggotaIds || []).length ? { teamEmptyAtCreate: B(true) } : {}) } },
+            updateTransforms: [{ fieldPath: "createdAt", setToServerValue: "REQUEST_TIME" }, { fieldPath: "updatedAt", setToServerValue: "REQUEST_TIME" }],
+            currentDocument: { exists: false } };
+        });
+        await fsCall(`${db}/documents:commit`, { writes });
+        const auth = await fsToken(), res = await realFetch("/api/spk/mirror", { method: "POST", headers: auth ? { authorization: auth } : {} }).catch(() => null);
+        st.ok = true; st.msg = `${list.length} SPK${list.length > 1 ? "s" : ""} made for ${team?.namaTim || "the team"}${res?.ok ? "" : ", not in Daftar SPK yet (opening Technical → Misi adds them)"}.`; st.picked.clear();
+      } catch (e) { st.msg = `Not made: ${e.message}`; }
+      box.redraw();
     }
     function shareButton(box) {
       const b = el("button", null, "⇪"); b.type = "button"; b.title = "Share with a technician: copies a picture of this map, then the note"; b.setAttribute("aria-label", "Share with a technician");

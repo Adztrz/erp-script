@@ -160,6 +160,12 @@
       .erp-dock .map .brief .lv.high { background: var(--red); color: #fff; } .erp-dock .map .brief .lv.mid { background: #e0b252; } .erp-dock .map .brief .lv.low { background: #a3a4a3; } .erp-dock .map .brief .lv.ok { background: var(--green); }
       .erp-dock .map .brief .bs, .erp-dock .map .brief .bf { margin-top: 2px; font-size: 11px; color: var(--body); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .erp-dock .map .brief .bf { color: #ff8a7a; font-weight: 500; }
       .erp-dock .map .zoom button.bm { font-size: 10px; font-weight: 600; }
+      .erp-dock .map .spkpick { position: absolute; z-index: 4; width: 22px; height: 22px; margin: -11px 0 0 -11px; border: 0; border-radius: 50%; background: rgba(9,11,12,.9); color: var(--paper); box-shadow: inset 0 0 0 1.5px var(--paper); font: 600 13px/22px Inter, system-ui, sans-serif; text-align: center; cursor: pointer; padding: 0; }
+      .erp-dock .map .spkpick.on { background: var(--paper); color: #07090b; } .erp-dock .map .spkpick:hover { transform: scale(1.12); }
+      .erp-dock .map .spksheet { position: absolute; z-index: 6; left: 10px; right: 10px; bottom: 44px; display: grid; gap: 4px; padding: 10px 12px; border-radius: 8px; background: rgba(9,11,12,.94); box-shadow: 0 0 0 1px var(--hair); font-size: 12px; color: var(--muted); max-height: 45%; overflow: auto; }
+      .erp-dock .map .spksheet b { color: var(--paper); font-weight: 500; } .erp-dock .map .spksheet .acts { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 4px; }
+      .erp-dock .map .spksheet select, .erp-dock .map .spksheet input { height: 28px; border: 0; border-radius: 6px; background: var(--canvas); color: var(--paper); font: 12px Inter, system-ui, sans-serif; padding: 0 6px; max-width: 220px; }
+      .erp-dock .map .spksheet .copy.primary { background: var(--paper); color: #07090b; }
       .erp-dock .map .zoom button.bm.on { background: var(--paper); color: #07090b; }
       .erp-dock .map .mrx { position: absolute; z-index: 1; transform: translate(9px, -50%); padding: 0 4px; border-radius: 3px; background: rgba(9,11,12,.82); color: var(--body); font: 500 10px/14px Inter, system-ui, sans-serif; font-variant-numeric: tabular-nums; white-space: nowrap; pointer-events: none; }
       .erp-dock .map .mrx.warn { color: #e0b252; } .erp-dock .map .mrx.crit { background: #e0b252; color: #07090b; font-weight: 600; }

@@ -277,7 +277,7 @@
         old.redraw = () => drawAreaMap(old, pts, about); old.redraw(); spot.redraw = () => old.redraw(); return spot;
       }
       const box = el("div", "map"); box.setAttribute("role", "group"); box.setAttribute("aria-label", label); box.dataset.what = key;
-      if (old) { box.zoom = old.zoom; box.ctr = old.ctr; }
+      if (old) { box.zoom = old.zoom; box.ctr = old.ctr; box.spk = old.spk; }
       box.redraw = () => drawAreaMap(box, pts, about); setTimeout(box.redraw, 0); return box;
     }
     function drawAreaMap(box, pts, about = {}) {
@@ -337,14 +337,14 @@
       const zoom = el("div", "zoom"), full = box.classList.contains("full"), fs = el("button", null, full ? "⤡" : "⤢"); fs.type = "button"; fs.title = full ? "Back (F or Esc)" : "Full screen (F)"; fs.onclick = () => toggleFull(box); zoom.append(fs);
       for (const [t, dz, label] of [["+", 1, "Zoom in"], ["−", -1, "Zoom out"]]) { const bt = el("button", null, t); bt.type = "button"; bt.setAttribute("aria-label", label);
         bt.disabled = (dz > 0 && z >= T.max) || (dz < 0 && z <= 8); bt.onclick = () => { box.zoom = (box.zoom || 0) + dz; box.redraw(); }; zoom.append(bt); }
-      zoom.append(recentre(box), rxButton(box), baseButton(box, kind), shareButton(box));
+      zoom.append(recentre(box), rxButton(box), baseButton(box, kind), spkButton(box), shareButton(box));
       box.classList.toggle("sat", kind === "sat"); box.classList.toggle("carto", carto);
       const mpp = 156543.03392 * Math.cos(mid.lat * Math.PI / 180) / 2 ** z;
       const bar = replayBar(box);
       const scene = briefScene({ pts: kinds, at: (p) => { const [x, y] = proj(p, z); return [x - left, y - top]; }, mpp, w, h, about: { ...about, replay: rp, bar: !!bar } });
       box.scene = scene;
       const tags = rxTags(near.map(([z0, [px, py]]) => [z0.c, px - left, py - top]), new Set(scene.labels.map((l) => l.c)));
-      mapLayers(box, [tiles, ...briefUnder(scene), ...(paint ? [paint] : []), ...(paint?.ring ? [paint.ring] : []), ...dots, ...tags, ...briefOver(scene), tip, zoom, el("span", "attr", T.attr)]);
+      mapLayers(box, [tiles, ...briefUnder(scene), ...(paint ? [paint] : []), ...(paint?.ring ? [paint.ring] : []), ...dots, ...tags, ...briefOver(scene), ...spkLayer(box, scene), tip, zoom, el("span", "attr", T.attr)]);
       if (bar) box.querySelector(".brief").append(bar);
       swapTiles(box, tiles, { z, kind: carto ? "carto" : kind, left, top, id: `area:${box.dataset.what}` });
     }
@@ -405,7 +405,7 @@
     // than 4 px is still a click (a dot opens its customer). ◎ goes back to the start.
     // What moves with the map goes in one layer (.pan) and a drag moves only that layer, on the graphics card: moving the
     // ~900 dots and labels one by one cost ~23 ms a step on a big router. The strip, legend and buttons stay put.
-    const MAP_FIXED = ".zoom, .seg, .attr, .tip, .brief, .foot, .sharesheet";
+    const MAP_FIXED = ".zoom, .seg, .attr, .tip, .brief, .foot, .sharesheet, .spksheet";
     function mapLayers(box, items) {
       const pan = el("div", "pan"), fixed = [];
       for (const c of items) if (c.matches(MAP_FIXED)) fixed.push(c); else pan.append(c);
