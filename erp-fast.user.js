@@ -2,7 +2,7 @@
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/erp-script/main/icons/dock.png
-// @version      3.16.0
+// @version      3.16.1
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -2259,7 +2259,8 @@
       };
       return L;
     }
-    const looks = limiter(5, 10, 8000), pays = limiter(3, 6, 12000); // a lookup takes ~4 s
+    // the unpaid list loads on its own queue, so a short list's own lookups never wait behind its 50-odd pages
+    const looks = limiter(5, 10, 8000), pageQ = limiter(3, 6, 10000), pays = limiter(3, 6, 12000); // a lookup takes ~4 s
     const timed = (L, fn) => { const t = Date.now(); return fn().then((x) => (L.took(Date.now() - t, true), x), (e) => { L.took(Date.now() - t, false); throw e; }); };
     // Today's lists, kept in this browser until the day ends: who was sent to be paid and how it went, and the lines
     // never sorted out, for the check at the end of the day.
@@ -2272,7 +2273,7 @@
     let unpaidIdx = null;
     function unpaidIndex(onPage) {
       if (unpaidIdx && unpaidIdx.at > Date.now() - 600000) return unpaidIdx.p;
-      const page = (st, n) => looks.add(() => timed(looks, () => api(`/api/finance/invoices/list?month=all&year=${new Date().getFullYear()}&page=${n}&pageSize=200&status=${encodeURIComponent(st)}`)));
+      const page = (st, n) => pageQ.add(() => timed(pageQ, () => api(`/api/finance/invoices/list?month=all&year=${new Date().getFullYear()}&page=${n}&pageSize=200&status=${encodeURIComponent(st)}`)));
       const p = (async () => {
         const m = new Map(), add = (j) => { for (const v of j.invoices || []) { const u = String(v.radiusUsername || "").toLowerCase(); if (u && UNPAID.has(v.status)) (m.get(u) || m.set(u, []).get(u)).push(v); } };
         const firsts = await Promise.all([...UNPAID].map((st) => page(st, 1))); let done = firsts.length, all = firsts.reduce((n, j) => n + (j.pageCount || 1), 0);
@@ -2300,7 +2301,7 @@
     const USERISH = /^[a-z][a-z._]*\d{3,}[a-z]?(?![\w.])/i;
     const MONTH_WORDS = "januari|februari|maret|april|mei|juni|juli|agustus|september|oktober|november|desember|january|february|march|may|june|july|august|october|december|jan|feb|mar|apr|jun|jul|agu|agt|aug|sep|sept|okt|oct|nov|des|dec";
     const EXTRA = new RegExp(`\\s+(?:(?:${MONTH_WORDS}|bulan|bln|b|bayar|lunas|rp\\.?)\\b|\\d[\\d.,]*\\s*(?:rb|ribu|k|jt)?\\b)`, "gi");
-    const lineUser = (x) => USERISH.exec(x)?.[0] ?? x.replace(EXTRA, "").trim();
+    const lineUser = (x) => { x = x.replace(/^(?:\d{1,3}\s*[.)]|[-*•·>])\s*/, ""); return USERISH.exec(x)?.[0] ?? x.replace(EXTRA, "").trim(); }; // "1. budi0101", "- budi0101"
     function tokensOf(text) {
       return String(text).split(/\n+/).map((l) => l.replace(CHAT, "")).flatMap((l) => l.split(/[,;]+/)).map((x) => lineUser(x.trim()))
         .filter((x) => x && !/^\[?[\d\s/.:,-]+\]?$/.test(x) && !/^<.*>$|^(?:image|video|audio|sticker|document) omitted$|^pesan ini (?:dihapus|telah dihapus)/i.test(x));
