@@ -235,6 +235,7 @@
       .erp-dock .btn.wide { width: 100%; height: 40px; justify-content: center; }
       .erp-dock .btn.arm { background: var(--green); color: var(--canvas); box-shadow: 0 1px 3px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.35); }
       .erp-dock .btn:disabled { opacity: .45; cursor: default; }
+      .erp-dock .rsearch { margin-top: 8px; } .erp-dock .rsearch .field { height: 32px; font-size: 13px; } .erp-dock .rsearch .picks { margin-top: 6px; }
       .erp-dock .dayck { margin: 4px 0 8px; font-size: 12px; color: var(--muted); } .erp-dock .dayck summary { cursor: pointer; color: var(--paper); padding: 4px 0; }
       .erp-dock .dayck .sub { padding: 2px 0; overflow-wrap: anywhere; } .erp-dock .dayck .btn { margin-top: 8px; }
       .erp-dock .dayck .tots { margin: 8px 0 0; padding-top: 6px; border-top: 1px solid var(--hair); } .erp-dock .dayck .tot { display: flex; justify-content: space-between; gap: 10px; padding: 2px 0; color: var(--paper); }

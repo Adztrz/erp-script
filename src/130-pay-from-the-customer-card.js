@@ -77,6 +77,7 @@
         if (r.state === "found") {
           h.append(el("b", null, r.name || r.user), el("span", `mono${r.guess ? " warn" : ""}`, r.user.toLowerCase() !== r.token.toLowerCase() ? `${r.token} → ${r.user}` : r.user)); box.append(h);
           if (r.guess && r.invs.length) box.append(el("div", "sub warn", /\s/.test(r.token.trim()) ? "Found by name and village: tick it if this is the right customer" : "Not the exact username you pasted: tick it if this is the right customer"));
+          if (r.guess && !busy && !r.invs.some((v) => v.result)) box.append(rowSearch(r, ri));
           box.append(el("div", "sub", [r.where, r.paidTo ? `paid to ${r.paidTo}` : r.paidTo === null ? "" : "nothing paid yet"].filter(Boolean).join(" · ")));
           if (!r.invs.length) box.append(el("div", "sub good", "Nothing unpaid"));
           box.append(...monthRows(r, ri, busy, bulk, bulkDraw));
@@ -93,6 +94,7 @@
               b.onclick = async () => { r.pick = c; r.guess = false; await lookup(r); await radius(r.invs); bulkDraw(); }; p.append(b); }
             box.append(p);
           }
+          if (["pick", "none", "error", "stopped"].includes(r.state) && !busy) box.append(rowSearch(r, ri));
         }
         rows.push(box);
       }
@@ -172,4 +174,31 @@
       const b = bulk?.el?.querySelector('[data-k="find"]'); if (!b) return;
       const looking = bulk.phase === "looking", changed = bulk.el.querySelector("textarea").value !== bulk.lastText;
       b.textContent = looking && changed ? "Find again (drops the old search)" : `${bulk.loading || (looking ? `Looking… ${bulk.rows.filter((r) => r.state !== "looking").length}/${bulk.rows.length}` : bulk.rows.length ? "Find again" : "Find them")}${looking ? " · Stop" : ""}`;
+    }
+    // a line's customer found by hand: type a name, username or phone. The Dock's customer list answers at once; when it
+    // has nothing, the ERP's invoices are searched. Picking one looks that customer up for this line.
+    function rowSearch(r, ri) {
+      const wrap = el("div", "rsearch"), inp = el("input", "field"), out = el("div", "picks");
+      inp.placeholder = r.state === "found" ? "Not this one? Search the customer" : "Search the customer: name, username or phone"; inp.value = r.q || ""; inp.dataset.k = `q${ri}`;
+      inp.setAttribute("aria-label", `Search the customer for ${r.token}`);
+      const pickBtn = ([u, who]) => { const b = el("button", "btn", u); if (who) b.append(el("span", "who", ` · ${who}`)); b.type = "button";
+        b.onclick = async () => { r.pick = u; r.guess = false; r.q = ""; r.qres = null; r.state = "looking"; bulkDraw(); await lookup(r); await radius(r.invs); bulkDraw(); }; return b; };
+      const who = (name, desa) => [titleCase(name || ""), desa && !fold(name).includes(fold(desa)) ? titleCase(desa) : ""].filter(Boolean).join(" · "); // the village, unless the name has it
+      const put = (list) => out.replaceChildren(...(list.length ? list.map(pickBtn) : [el("span", "sub", "No customer matches")]));
+      const show = async () => {
+        const q = (r.q = inp.value).trim(); clearTimeout(r.qt); if (q.length < 2) { out.replaceChildren(); return; }
+        if (r.qres?.q === q) return put(r.qres.list); // the same search, kept through a redraw
+        let list = findCustomers(q, 6).map((c) => [c.username, who(c.nama, c.desa)]);
+        if (!list.length && q.length >= 3) {
+          out.replaceChildren(el("span", "sub", "Searching the ERP…"));
+          await new Promise((ok) => { r.qt = setTimeout(ok, 400); }); if (inp.value.trim() !== q) return;
+          try { const j = await api(`/api/finance/invoices/list?month=all&year=${new Date().getFullYear()}&page=1&pageSize=50&q=${encodeURIComponent(q)}`), m = new Map();
+            for (const v of j.invoices || []) if (v.radiusUsername && !m.has(v.radiusUsername)) m.set(v.radiusUsername, who(v.customerName, v.desa));
+            list = [...m].slice(0, 6); } catch { list = []; }
+          if (inp.value.trim() !== q) return;
+        }
+        r.qres = { q, list }; if (inp.isConnected) put(list);
+      };
+      inp.oninput = show; if (r.q) show();
+      wrap.append(inp, out); return wrap;
     }

@@ -2,7 +2,7 @@
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/erp-script/main/icons/dock.png
-// @version      3.14.3
+// @version      3.15.0
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -2026,6 +2026,7 @@
       .erp-dock .btn.wide { width: 100%; height: 40px; justify-content: center; }
       .erp-dock .btn.arm { background: var(--green); color: var(--canvas); box-shadow: 0 1px 3px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.35); }
       .erp-dock .btn:disabled { opacity: .45; cursor: default; }
+      .erp-dock .rsearch { margin-top: 8px; } .erp-dock .rsearch .field { height: 32px; font-size: 13px; } .erp-dock .rsearch .picks { margin-top: 6px; }
       .erp-dock .dayck { margin: 4px 0 8px; font-size: 12px; color: var(--muted); } .erp-dock .dayck summary { cursor: pointer; color: var(--paper); padding: 4px 0; }
       .erp-dock .dayck .sub { padding: 2px 0; overflow-wrap: anywhere; } .erp-dock .dayck .btn { margin-top: 8px; }
       .erp-dock .dayck .tots { margin: 8px 0 0; padding-top: 6px; border-top: 1px solid var(--hair); } .erp-dock .dayck .tot { display: flex; justify-content: space-between; gap: 10px; padding: 2px 0; color: var(--paper); }
@@ -2620,6 +2621,7 @@
         if (r.state === "found") {
           h.append(el("b", null, r.name || r.user), el("span", `mono${r.guess ? " warn" : ""}`, r.user.toLowerCase() !== r.token.toLowerCase() ? `${r.token} → ${r.user}` : r.user)); box.append(h);
           if (r.guess && r.invs.length) box.append(el("div", "sub warn", /\s/.test(r.token.trim()) ? "Found by name and village: tick it if this is the right customer" : "Not the exact username you pasted: tick it if this is the right customer"));
+          if (r.guess && !busy && !r.invs.some((v) => v.result)) box.append(rowSearch(r, ri));
           box.append(el("div", "sub", [r.where, r.paidTo ? `paid to ${r.paidTo}` : r.paidTo === null ? "" : "nothing paid yet"].filter(Boolean).join(" · ")));
           if (!r.invs.length) box.append(el("div", "sub good", "Nothing unpaid"));
           box.append(...monthRows(r, ri, busy, bulk, bulkDraw));
@@ -2636,6 +2638,7 @@
               b.onclick = async () => { r.pick = c; r.guess = false; await lookup(r); await radius(r.invs); bulkDraw(); }; p.append(b); }
             box.append(p);
           }
+          if (["pick", "none", "error", "stopped"].includes(r.state) && !busy) box.append(rowSearch(r, ri));
         }
         rows.push(box);
       }
@@ -2715,6 +2718,33 @@
       const b = bulk?.el?.querySelector('[data-k="find"]'); if (!b) return;
       const looking = bulk.phase === "looking", changed = bulk.el.querySelector("textarea").value !== bulk.lastText;
       b.textContent = looking && changed ? "Find again (drops the old search)" : `${bulk.loading || (looking ? `Looking… ${bulk.rows.filter((r) => r.state !== "looking").length}/${bulk.rows.length}` : bulk.rows.length ? "Find again" : "Find them")}${looking ? " · Stop" : ""}`;
+    }
+    // a line's customer found by hand: type a name, username or phone. The Dock's customer list answers at once; when it
+    // has nothing, the ERP's invoices are searched. Picking one looks that customer up for this line.
+    function rowSearch(r, ri) {
+      const wrap = el("div", "rsearch"), inp = el("input", "field"), out = el("div", "picks");
+      inp.placeholder = r.state === "found" ? "Not this one? Search the customer" : "Search the customer: name, username or phone"; inp.value = r.q || ""; inp.dataset.k = `q${ri}`;
+      inp.setAttribute("aria-label", `Search the customer for ${r.token}`);
+      const pickBtn = ([u, who]) => { const b = el("button", "btn", u); if (who) b.append(el("span", "who", ` · ${who}`)); b.type = "button";
+        b.onclick = async () => { r.pick = u; r.guess = false; r.q = ""; r.qres = null; r.state = "looking"; bulkDraw(); await lookup(r); await radius(r.invs); bulkDraw(); }; return b; };
+      const who = (name, desa) => [titleCase(name || ""), desa && !fold(name).includes(fold(desa)) ? titleCase(desa) : ""].filter(Boolean).join(" · "); // the village, unless the name has it
+      const put = (list) => out.replaceChildren(...(list.length ? list.map(pickBtn) : [el("span", "sub", "No customer matches")]));
+      const show = async () => {
+        const q = (r.q = inp.value).trim(); clearTimeout(r.qt); if (q.length < 2) { out.replaceChildren(); return; }
+        if (r.qres?.q === q) return put(r.qres.list); // the same search, kept through a redraw
+        let list = findCustomers(q, 6).map((c) => [c.username, who(c.nama, c.desa)]);
+        if (!list.length && q.length >= 3) {
+          out.replaceChildren(el("span", "sub", "Searching the ERP…"));
+          await new Promise((ok) => { r.qt = setTimeout(ok, 400); }); if (inp.value.trim() !== q) return;
+          try { const j = await api(`/api/finance/invoices/list?month=all&year=${new Date().getFullYear()}&page=1&pageSize=50&q=${encodeURIComponent(q)}`), m = new Map();
+            for (const v of j.invoices || []) if (v.radiusUsername && !m.has(v.radiusUsername)) m.set(v.radiusUsername, who(v.customerName, v.desa));
+            list = [...m].slice(0, 6); } catch { list = []; }
+          if (inp.value.trim() !== q) return;
+        }
+        r.qres = { q, list }; if (inp.isConnected) put(list);
+      };
+      inp.oninput = show; if (r.q) show();
+      wrap.append(inp, out); return wrap;
     }
     // ---- Outage radar ----
     // Every 5 minutes one ERP tab reads the LDN panel's router feed (how many sessions each router has open right now,
