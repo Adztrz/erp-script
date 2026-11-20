@@ -2,7 +2,7 @@
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/erp-script/main/icons/dock.png
-// @version      3.14.2
+// @version      3.14.3
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -2262,7 +2262,7 @@
     // A long list: every unpaid invoice first, in a few dozen requests (~40 s for ~10,000), then each pasted username is
     // found here at once instead of one ~4 s search each. Kept 10 minutes; a name, a typo or a customer with nothing
     // unpaid is searched as before.
-    let unpaidIdx = null, fastIdx = null;
+    let unpaidIdx = null;
     function unpaidIndex(onPage) {
       if (unpaidIdx && unpaidIdx.at > Date.now() - 600000) return unpaidIdx.p;
       const page = (st, n) => looks.add(() => timed(looks, () => api(`/api/finance/invoices/list?month=all&year=${new Date().getFullYear()}&page=${n}&pageSize=200&status=${encodeURIComponent(st)}`)));
@@ -2284,25 +2284,41 @@
       const ta = bulk.el.querySelector("textarea");
       if (text) { ta.value = text.trim(); find(); } else if (bulk.phase === "input") ta.focus();
     }
+    // A pasted WhatsApp chat: "[20/11/2026, 16.13] TEK. BUDI: Siswanto0903" (or "20/11/26 16.13 - Budi: …") keeps only
+    // the message; times, dates and chat notes on their own are left out.
+    const CHAT = /^\[?\s*\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4},?\s+\d{1,2}[.:]\d{2}(?:[.:]\d{2})?(?:\s*[ap]\.?m\.?)?\s*\]?\s*(?:-\s*)?[^:]{1,60}:\s*/i;
+    function tokensOf(text) {
+      return String(text).split(/\n+/).map((l) => l.replace(CHAT, "")).flatMap((l) => l.split(/[,;]+/)).map((x) => x.trim())
+        .filter((x) => x && !/^\[?[\d\s/.:,-]+\]?$/.test(x) && !/^<.*>$|^(?:image|video|audio|sticker|document) omitted$|^pesan ini (?:dihapus|telah dihapus)/i.test(x));
+    }
+    // Pasting again (or pressing Find) while lines are still being looked up starts over at once: lines still in the box
+    // keep their lookup, new ones join, removed ones are dropped before they reach the server. Stop drops the ones waiting.
     async function find() {
-      if (bulk.phase === "looking") return;
-      const lines = bulk.el.querySelector("textarea").value.split(/[\n,;]+/).map((x) => x.trim()).filter(Boolean);
-      // lines already looked up keep what was found and picked; only new ones (and failed ones) go to the server
+      const text = bulk.el.querySelector("textarea").value, gen = (bulk.gen = (bulk.gen || 0) + 1), lines = tokensOf(text); bulk.lastText = text;
+      // lines already looked up (or being looked up) keep it; only new ones (and failed ones) go to the server
       const old = new Map(bulk.rows.map((r) => [r.token.toLowerCase(), r])), seen = new Set(); bulk.rows = [];
       for (const t of lines) { const k = t.toLowerCase(); if (seen.has(k)) continue; seen.add(k); const was = old.get(k);
-        bulk.rows.push(was && !["error", "dupe", "looking"].includes(was.state) ? was : { token: t, state: "looking", invs: [] }); }
-      if (!bulk.rows.length) { bulk.phase = "input"; bulkDraw(); return; }
-      const fresh = bulk.rows.filter((r) => r.state === "looking");
+        bulk.rows.push(was && !["error", "dupe", "stopped"].includes(was.state) ? was : { token: t, state: "looking", invs: [] }); }
+      if (!bulk.rows.length) { bulk.phase = "input"; bulk.loading = ""; bulkDraw(); return; }
+      const fresh = bulk.rows.filter((r) => r.state === "looking" && !r.p);
       bulk.phase = "looking"; bulk.armed = 0; bulkDraw();
-      fastIdx = fresh.length >= 15 || unpaidIdx?.ready ? await unpaidIndex((n, all) => { bulk.loading = `Loading unpaid invoices… ${n}/${all}`; bulkDraw(); }).catch(() => null) : null;
+      const idx = fresh.length >= 15 || unpaidIdx?.ready ? await unpaidIndex((n, all) => { if (bulk.gen === gen) { bulk.loading = `Loading unpaid invoices… ${n}/${all}`; bulkDraw(); } }).catch(() => null) : null;
+      if (bulk.gen !== gen) return; // a newer paste took over
       bulk.loading = "";
-      await Promise.all(fresh.map((r) => looks.add(() => lookup(r))));
-      fastIdx = null;
+      for (const r of fresh) { r.idx = idx; r.p = looks.add(() => (bulk.rows.includes(r) && r.state === "looking" ? lookup(r) : Promise.resolve())).finally(() => { r.p = null; r.idx = null; }); }
+      await Promise.all(bulk.rows.map((r) => r.p).filter(Boolean));
+      if (bulk.gen !== gen) return;
       // one customer listed twice: keep the first
       const users = new Set();
       for (const r of bulk.rows) if (r.state === "found") { if (users.has(r.user)) { r.state = "dupe"; r.invs = []; } else users.add(r.user); }
-      await radius(fresh.flatMap((r) => r.invs));
+      await radius(bulk.rows.flatMap((r) => r.invs.filter((v) => v.radius == null && !v.result)));
+      if (bulk.gen !== gen) return;
       dayNote((d) => { for (const r of bulk.rows) if (["none", "pick", "error"].includes(r.state)) d.open[r.token] = bulk.method; else delete d.open[r.token]; });
+      bulk.phase = "review"; bulkDraw();
+    }
+    function stopFind() {
+      bulk.gen = (bulk.gen || 0) + 1; bulk.loading = "";
+      for (const r of bulk.rows) if (r.state === "looking") r.state = "stopped"; // its lookup, if already running, is let finish but not shown
       bulk.phase = "review"; bulkDraw();
     }
     // "Djarmo Sumberagung": a name and a village, read the way the customer search reads it. The village (the last word
@@ -2353,7 +2369,7 @@
             row.pick = hits[0].r.username; row.guess = true; return await lookup(row); }
           if (hits.length) { row.state = "pick"; row.cands = hits.slice(0, 6).map((h) => h.r.username); return; }
         }
-        const quick = !row.pick && fastIdx?.get(low);
+        const quick = !row.pick && row.idx?.get(low);
         if (quick) { // straight from the unpaid list: nothing to ask the server
           const mine = [...quick].sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate)), last = mine[mine.length - 1];
           row.user = last.radiusUsername; row.name = last.customerName; row.where = [last.desa, last.paket].filter(Boolean).join(" · "); row.paidTo = null;
@@ -2582,10 +2598,12 @@
       const head = el("div", "head"), e = el("div", "eyebrow"); e.append("Bulk Lunas");
       const back = el("button", "back", "← Back"); back.type = "button"; back.onclick = () => { view.mode = null; drawBody(); panel.querySelector("input")?.focus(); };
       head.append(e, back);
-      const ta = el("textarea", "field"); ta.placeholder = "Paste usernames, one per line"; ta.setAttribute("aria-label", "Usernames"); ta.spellcheck = false;
+      const ta = el("textarea", "field"); ta.placeholder = "Paste usernames, names with their village, or a WhatsApp chat"; ta.setAttribute("aria-label", "Usernames"); ta.spellcheck = false;
       ta.onpaste = () => setTimeout(() => find(), 0);
       ta.onkeydown = (ev) => { if (ev.key === "Enter" && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); find(); } };
-      const go = el("button", "btn", "Find them"); go.type = "button"; go.onclick = () => find(); go.style.marginTop = "8px"; go.dataset.k = "find";
+      // while looking: Stop, or Find again once the box has changed
+      const go = el("button", "btn", "Find them"); go.type = "button"; go.onclick = () => (bulk.phase === "looking" && ta.value === bulk.lastText ? stopFind() : find());
+      ta.oninput = () => findLabel(); go.style.marginTop = "8px"; go.dataset.k = "find";
       wrap.append(head, el("div", "bday"), el("div", "bsent"), ta, go, el("div", "bform"), el("div", "blist"), el("div", "bpay"));
       return (bulk.el = wrap);
     }
@@ -2594,8 +2612,7 @@
       const list = bulk.el.querySelector(".blist"), form = bulk.el.querySelector(".bform"), foot = bulk.el.querySelector(".bpay"), focus = document.activeElement?.dataset?.k;
       const busy = bulk.phase === "looking";
       dayDraw(bulk.el.querySelector(".bday")); bulk.el.querySelector(".bsent").replaceChildren(...bulk.sent.map(sentView));
-      const findBtn = bulk.el.querySelector('[data-k="find"]'); findBtn.disabled = busy;
-      findBtn.textContent = bulk.loading ? bulk.loading : bulk.phase === "looking" ? `Looking… ${bulk.rows.filter((r) => r.state !== "looking").length}/${bulk.rows.length}` : bulk.rows.length ? "Find again" : "Find them";
+      findLabel();
       const rows = [];
       for (const [ri, r] of bulk.rows.entries()) {
         const box = el("div", `brow${r.shown ? "" : " rise"}${r.state === "found" && r.invs.length ? "" : " off"}`); box.style.setProperty("--i", String(Math.min(ri, 12))); r.shown = true;
@@ -2607,9 +2624,10 @@
           if (!r.invs.length) box.append(el("div", "sub good", "Nothing unpaid"));
           box.append(...monthRows(r, ri, busy, bulk, bulkDraw));
         } else {
-          h.append(el("b", null, r.token), el("span", "mono", { looking: "looking…", none: "not found", pick: "which one?", dupe: "listed twice", error: "failed" }[r.state])); box.append(h);
+          h.append(el("b", null, r.token), el("span", "mono", { looking: "looking…", none: "not found", pick: "which one?", dupe: "listed twice", error: "failed", stopped: "stopped" }[r.state])); box.append(h);
           if (r.state === "error") box.append(el("div", "sub late", r.err));
           if (r.state === "dupe") box.append(el("div", "sub", "Same customer as a line above: shown once"));
+          if (r.state === "stopped") box.append(el("div", "sub", "Not looked up: press Find to look it up"));
           if (r.state === "none") box.append(el("div", "sub", "No invoice has this username or anything close. Check the spelling."));
           if (r.state === "pick") box.append(el("div", "sub", /\s/.test(r.token.trim()) ? "More than one customer fits: which one?" : "No exact username: is it one of these?"));
           if (r.state === "pick" || r.state === "error") {
@@ -2692,6 +2710,11 @@
       if (left.length) { const b = el("button", "btn", `Put the ${left.length} here to check again`); b.type = "button";
         b.onclick = () => { const ta = bulk.el.querySelector("textarea"); ta.value = [ta.value.trim(), ...left.map((x) => x.token)].filter(Boolean).join("\n"); find(); }; det.append(b); }
       box.replaceChildren(det);
+    }
+    function findLabel() {
+      const b = bulk?.el?.querySelector('[data-k="find"]'); if (!b) return;
+      const looking = bulk.phase === "looking", changed = bulk.el.querySelector("textarea").value !== bulk.lastText;
+      b.textContent = looking && changed ? "Find again (drops the old search)" : `${bulk.loading || (looking ? `Looking… ${bulk.rows.filter((r) => r.state !== "looking").length}/${bulk.rows.length}` : bulk.rows.length ? "Find again" : "Find them")}${looking ? " · Stop" : ""}`;
     }
     // ---- Outage radar ----
     // Every 5 minutes one ERP tab reads the LDN panel's router feed (how many sessions each router has open right now,

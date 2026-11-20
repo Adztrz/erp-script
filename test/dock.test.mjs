@@ -263,3 +263,10 @@ test("review count: decided reports still count, so the position goes up and the
   assert.equal(at(), "1 / 3"); decide("a"); assert.equal(at(), "2 / 3"); decide("b"); assert.equal(at(), "3 / 3");
   rv.type = "Tiang"; assert.equal(at(), "1 / 1"); // a type counts only its own
 });
+
+test("bulk lunas: a pasted WhatsApp chat gives just the usernames and names", () => {
+  const { tokensOf } = load(dock, ["CHAT", "tokensOf"]);
+  const chat = ["[20/11/2026, 16.13] TEK. BUDI SANTOSO: Testuser0903", "[20/11/2026, 16.14] TEK. BUDI SANTOSO: Testdua0903, Testtiga1001",
+    "20/11/26 16.15 - Admin Kantor: Jarmo Sumberagung", "[16.13]", "<Media omitted>", "Testempat0908"].join("\n");
+  assert.deepEqual(tokensOf(chat), ["Testuser0903", "Testdua0903", "Testtiga1001", "Jarmo Sumberagung", "Testempat0908"]);
+});

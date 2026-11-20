@@ -55,10 +55,12 @@
       const head = el("div", "head"), e = el("div", "eyebrow"); e.append("Bulk Lunas");
       const back = el("button", "back", "← Back"); back.type = "button"; back.onclick = () => { view.mode = null; drawBody(); panel.querySelector("input")?.focus(); };
       head.append(e, back);
-      const ta = el("textarea", "field"); ta.placeholder = "Paste usernames, one per line"; ta.setAttribute("aria-label", "Usernames"); ta.spellcheck = false;
+      const ta = el("textarea", "field"); ta.placeholder = "Paste usernames, names with their village, or a WhatsApp chat"; ta.setAttribute("aria-label", "Usernames"); ta.spellcheck = false;
       ta.onpaste = () => setTimeout(() => find(), 0);
       ta.onkeydown = (ev) => { if (ev.key === "Enter" && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); find(); } };
-      const go = el("button", "btn", "Find them"); go.type = "button"; go.onclick = () => find(); go.style.marginTop = "8px"; go.dataset.k = "find";
+      // while looking: Stop, or Find again once the box has changed
+      const go = el("button", "btn", "Find them"); go.type = "button"; go.onclick = () => (bulk.phase === "looking" && ta.value === bulk.lastText ? stopFind() : find());
+      ta.oninput = () => findLabel(); go.style.marginTop = "8px"; go.dataset.k = "find";
       wrap.append(head, el("div", "bday"), el("div", "bsent"), ta, go, el("div", "bform"), el("div", "blist"), el("div", "bpay"));
       return (bulk.el = wrap);
     }
@@ -67,8 +69,7 @@
       const list = bulk.el.querySelector(".blist"), form = bulk.el.querySelector(".bform"), foot = bulk.el.querySelector(".bpay"), focus = document.activeElement?.dataset?.k;
       const busy = bulk.phase === "looking";
       dayDraw(bulk.el.querySelector(".bday")); bulk.el.querySelector(".bsent").replaceChildren(...bulk.sent.map(sentView));
-      const findBtn = bulk.el.querySelector('[data-k="find"]'); findBtn.disabled = busy;
-      findBtn.textContent = bulk.loading ? bulk.loading : bulk.phase === "looking" ? `Looking… ${bulk.rows.filter((r) => r.state !== "looking").length}/${bulk.rows.length}` : bulk.rows.length ? "Find again" : "Find them";
+      findLabel();
       const rows = [];
       for (const [ri, r] of bulk.rows.entries()) {
         const box = el("div", `brow${r.shown ? "" : " rise"}${r.state === "found" && r.invs.length ? "" : " off"}`); box.style.setProperty("--i", String(Math.min(ri, 12))); r.shown = true;
@@ -80,9 +81,10 @@
           if (!r.invs.length) box.append(el("div", "sub good", "Nothing unpaid"));
           box.append(...monthRows(r, ri, busy, bulk, bulkDraw));
         } else {
-          h.append(el("b", null, r.token), el("span", "mono", { looking: "looking…", none: "not found", pick: "which one?", dupe: "listed twice", error: "failed" }[r.state])); box.append(h);
+          h.append(el("b", null, r.token), el("span", "mono", { looking: "looking…", none: "not found", pick: "which one?", dupe: "listed twice", error: "failed", stopped: "stopped" }[r.state])); box.append(h);
           if (r.state === "error") box.append(el("div", "sub late", r.err));
           if (r.state === "dupe") box.append(el("div", "sub", "Same customer as a line above: shown once"));
+          if (r.state === "stopped") box.append(el("div", "sub", "Not looked up: press Find to look it up"));
           if (r.state === "none") box.append(el("div", "sub", "No invoice has this username or anything close. Check the spelling."));
           if (r.state === "pick") box.append(el("div", "sub", /\s/.test(r.token.trim()) ? "More than one customer fits: which one?" : "No exact username: is it one of these?"));
           if (r.state === "pick" || r.state === "error") {
@@ -165,4 +167,9 @@
       if (left.length) { const b = el("button", "btn", `Put the ${left.length} here to check again`); b.type = "button";
         b.onclick = () => { const ta = bulk.el.querySelector("textarea"); ta.value = [ta.value.trim(), ...left.map((x) => x.token)].filter(Boolean).join("\n"); find(); }; det.append(b); }
       box.replaceChildren(det);
+    }
+    function findLabel() {
+      const b = bulk?.el?.querySelector('[data-k="find"]'); if (!b) return;
+      const looking = bulk.phase === "looking", changed = bulk.el.querySelector("textarea").value !== bulk.lastText;
+      b.textContent = looking && changed ? "Find again (drops the old search)" : `${bulk.loading || (looking ? `Looking… ${bulk.rows.filter((r) => r.state !== "looking").length}/${bulk.rows.length}` : bulk.rows.length ? "Find again" : "Find them")}${looking ? " · Stop" : ""}`;
     }

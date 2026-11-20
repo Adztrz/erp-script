@@ -53,7 +53,7 @@
     // A long list: every unpaid invoice first, in a few dozen requests (~40 s for ~10,000), then each pasted username is
     // found here at once instead of one ~4 s search each. Kept 10 minutes; a name, a typo or a customer with nothing
     // unpaid is searched as before.
-    let unpaidIdx = null, fastIdx = null;
+    let unpaidIdx = null;
     function unpaidIndex(onPage) {
       if (unpaidIdx && unpaidIdx.at > Date.now() - 600000) return unpaidIdx.p;
       const page = (st, n) => looks.add(() => timed(looks, () => api(`/api/finance/invoices/list?month=all&year=${new Date().getFullYear()}&page=${n}&pageSize=200&status=${encodeURIComponent(st)}`)));
@@ -75,25 +75,41 @@
       const ta = bulk.el.querySelector("textarea");
       if (text) { ta.value = text.trim(); find(); } else if (bulk.phase === "input") ta.focus();
     }
+    // A pasted WhatsApp chat: "[20/11/2026, 16.13] TEK. BUDI: Siswanto0903" (or "20/11/26 16.13 - Budi: …") keeps only
+    // the message; times, dates and chat notes on their own are left out.
+    const CHAT = /^\[?\s*\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4},?\s+\d{1,2}[.:]\d{2}(?:[.:]\d{2})?(?:\s*[ap]\.?m\.?)?\s*\]?\s*(?:-\s*)?[^:]{1,60}:\s*/i;
+    function tokensOf(text) {
+      return String(text).split(/\n+/).map((l) => l.replace(CHAT, "")).flatMap((l) => l.split(/[,;]+/)).map((x) => x.trim())
+        .filter((x) => x && !/^\[?[\d\s/.:,-]+\]?$/.test(x) && !/^<.*>$|^(?:image|video|audio|sticker|document) omitted$|^pesan ini (?:dihapus|telah dihapus)/i.test(x));
+    }
+    // Pasting again (or pressing Find) while lines are still being looked up starts over at once: lines still in the box
+    // keep their lookup, new ones join, removed ones are dropped before they reach the server. Stop drops the ones waiting.
     async function find() {
-      if (bulk.phase === "looking") return;
-      const lines = bulk.el.querySelector("textarea").value.split(/[\n,;]+/).map((x) => x.trim()).filter(Boolean);
-      // lines already looked up keep what was found and picked; only new ones (and failed ones) go to the server
+      const text = bulk.el.querySelector("textarea").value, gen = (bulk.gen = (bulk.gen || 0) + 1), lines = tokensOf(text); bulk.lastText = text;
+      // lines already looked up (or being looked up) keep it; only new ones (and failed ones) go to the server
       const old = new Map(bulk.rows.map((r) => [r.token.toLowerCase(), r])), seen = new Set(); bulk.rows = [];
       for (const t of lines) { const k = t.toLowerCase(); if (seen.has(k)) continue; seen.add(k); const was = old.get(k);
-        bulk.rows.push(was && !["error", "dupe", "looking"].includes(was.state) ? was : { token: t, state: "looking", invs: [] }); }
-      if (!bulk.rows.length) { bulk.phase = "input"; bulkDraw(); return; }
-      const fresh = bulk.rows.filter((r) => r.state === "looking");
+        bulk.rows.push(was && !["error", "dupe", "stopped"].includes(was.state) ? was : { token: t, state: "looking", invs: [] }); }
+      if (!bulk.rows.length) { bulk.phase = "input"; bulk.loading = ""; bulkDraw(); return; }
+      const fresh = bulk.rows.filter((r) => r.state === "looking" && !r.p);
       bulk.phase = "looking"; bulk.armed = 0; bulkDraw();
-      fastIdx = fresh.length >= 15 || unpaidIdx?.ready ? await unpaidIndex((n, all) => { bulk.loading = `Loading unpaid invoices… ${n}/${all}`; bulkDraw(); }).catch(() => null) : null;
+      const idx = fresh.length >= 15 || unpaidIdx?.ready ? await unpaidIndex((n, all) => { if (bulk.gen === gen) { bulk.loading = `Loading unpaid invoices… ${n}/${all}`; bulkDraw(); } }).catch(() => null) : null;
+      if (bulk.gen !== gen) return; // a newer paste took over
       bulk.loading = "";
-      await Promise.all(fresh.map((r) => looks.add(() => lookup(r))));
-      fastIdx = null;
+      for (const r of fresh) { r.idx = idx; r.p = looks.add(() => (bulk.rows.includes(r) && r.state === "looking" ? lookup(r) : Promise.resolve())).finally(() => { r.p = null; r.idx = null; }); }
+      await Promise.all(bulk.rows.map((r) => r.p).filter(Boolean));
+      if (bulk.gen !== gen) return;
       // one customer listed twice: keep the first
       const users = new Set();
       for (const r of bulk.rows) if (r.state === "found") { if (users.has(r.user)) { r.state = "dupe"; r.invs = []; } else users.add(r.user); }
-      await radius(fresh.flatMap((r) => r.invs));
+      await radius(bulk.rows.flatMap((r) => r.invs.filter((v) => v.radius == null && !v.result)));
+      if (bulk.gen !== gen) return;
       dayNote((d) => { for (const r of bulk.rows) if (["none", "pick", "error"].includes(r.state)) d.open[r.token] = bulk.method; else delete d.open[r.token]; });
+      bulk.phase = "review"; bulkDraw();
+    }
+    function stopFind() {
+      bulk.gen = (bulk.gen || 0) + 1; bulk.loading = "";
+      for (const r of bulk.rows) if (r.state === "looking") r.state = "stopped"; // its lookup, if already running, is let finish but not shown
       bulk.phase = "review"; bulkDraw();
     }
     // "Djarmo Sumberagung": a name and a village, read the way the customer search reads it. The village (the last word
@@ -144,7 +160,7 @@
             row.pick = hits[0].r.username; row.guess = true; return await lookup(row); }
           if (hits.length) { row.state = "pick"; row.cands = hits.slice(0, 6).map((h) => h.r.username); return; }
         }
-        const quick = !row.pick && fastIdx?.get(low);
+        const quick = !row.pick && row.idx?.get(low);
         if (quick) { // straight from the unpaid list: nothing to ask the server
           const mine = [...quick].sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate)), last = mine[mine.length - 1];
           row.user = last.radiusUsername; row.name = last.customerName; row.where = [last.desa, last.paket].filter(Boolean).join(" · "); row.paidTo = null;
