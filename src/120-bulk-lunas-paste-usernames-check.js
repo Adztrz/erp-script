@@ -87,7 +87,8 @@
     const EXTRA = new RegExp(`\\s+(?:(?:${MONTH_WORDS}|bulan|bln|b|bayar|lunas|rp\\.?)\\b|\\d[\\d.,]*\\s*(?:rb|ribu|k|jt)?\\b)`, "gi");
     const lineUser = (x) => { x = x.replace(/^(?:\d{1,3}\s*[.)]|[-*•·>])\s*/, ""); return USERISH.exec(x)?.[0] ?? x.replace(EXTRA, "").trim(); }; // "1. budi0101", "- budi0101"
     function tokensOf(text) {
-      return String(text).split(/\n+/).map((l) => l.replace(CHAT, "")).flatMap((l) => l.split(/[,;]+/)).map((x) => lineUser(x.trim()))
+      // invisible marks WhatsApp puts before lines (left-to-right, zero-width) and non-breaking spaces would spoil an exact match
+      return String(text).replace(/[\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF]/g, "").replace(/\u00A0/g, " ").split(/\n+/).map((l) => l.replace(CHAT, "")).flatMap((l) => l.split(/[,;]+/)).map((x) => lineUser(x.trim()))
         .filter((x) => x && !/^\[?[\d\s/.:,-]+\]?$/.test(x) && !/^<.*>$|^(?:image|video|audio|sticker|document) omitted$|^pesan ini (?:dihapus|telah dihapus)/i.test(x));
     }
     // Pasting again (or pressing Find) while lines are still being looked up starts over at once: lines still in the box

@@ -269,6 +269,7 @@ test("bulk lunas: a pasted WhatsApp chat gives just the usernames and names", ()
   // only the username: months, amounts and words after it are left out, and a repeat becomes one line
   assert.deepEqual([...new Set(tokensOf("Testsatu0903 b November\nTestdua0903 Oktober\nTestdua0903 November\nTesttiga1001 110rb\nTestempat0908 110.000 nov\nJarmo Sumberagung November 110rb"))],
     ["Testsatu0903", "Testdua0903", "Testtiga1001", "Testempat0908", "Jarmo Sumberagung"]);
+  assert.deepEqual(tokensOf("-contoh0107\n\u200e-contoh0207\n\u200e-contoh0307\u00a0\n\u200bcontoh0407\ufeff"), ["contoh0107", "contoh0207", "contoh0307", "contoh0407"]); // WhatsApp's invisible marks
   assert.deepEqual(tokensOf("1. contoh1007\n2) contoh2007\n- contoh3007\n10. k. contoh1007"), ["contoh1007", "contoh2007", "contoh3007", "k. contoh1007"]); // a numbered list
   const chat = ["[20/11/2026, 16.13] TEK. BUDI SANTOSO: Testuser0903", "[20/11/2026, 16.14] TEK. BUDI SANTOSO: Testdua0903, Testtiga1001",
     "20/11/26 16.15 - Admin Kantor: Jarmo Sumberagung", "[16.13]", "<Media omitted>", "Testempat0908"].join("\n");
