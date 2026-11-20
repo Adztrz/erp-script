@@ -2,7 +2,7 @@
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/erp-script/main/icons/dock.png
-// @version      3.16.3
+// @version      3.16.4
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -2250,9 +2250,10 @@
     const newBulk = () => ({ phase: "input", rows: [], method: METHODS[0], date: todayIso(), note: "", defaultNote: "Bulk Lunas (Dock)", armed: 0, stop: false, el: null, sent: [] });
     // A few requests at a time, more while the ERP answers quickly and fewer when it slows down or fails, so a busy
     // payment day doesn't pile up on the server. Lookups and payments each have their own; every list shares them.
-    function limiter(start, max, slowMs) {
+    function limiter(start, max, slowMs, may = () => true) {
       const L = { at: start, run: 0, q: [], streak: 0 };
-      const pump = () => { while (L.run < L.at && L.q.length) { const job = L.q.shift(); L.run++; job().finally(() => { L.run--; pump(); }); } };
+      const pump = () => { while (L.run < L.at && L.q.length && may()) { const job = L.q.shift(); L.run++; job().finally(() => { L.run--; pump(); L.done?.(); }); } };
+      L.pump = pump;
       L.add = (fn) => new Promise((ok, no) => { L.q.push(() => fn().then(ok, no)); pump(); });
       L.took = (ms, fine) => {
         if (!fine || ms > slowMs) { L.at = Math.max(1, Math.floor(L.at / 2)); L.streak = 0; }
@@ -2261,7 +2262,11 @@
       return L;
     }
     // the unpaid list loads on its own queue, so a short list's own lookups never wait behind its 50-odd pages
-    const looks = limiter(5, 10, 8000), pageQ = limiter(3, 6, 10000), pays = limiter(3, 6, 12000); // a lookup takes ~4 s
+    // both at once slow the ERP down for each other, so a short list's lookups go first and the pages wait; with more
+    // than 40 lines waiting the pages keep loading, since the whole list will then be the quicker way
+    const looks = limiter(5, 10, 8000), pays = limiter(3, 6, 12000); // a lookup takes ~4 s
+    const pageQ = limiter(3, 6, 10000, () => looks.run + looks.q.length === 0 || looks.q.length > 40);
+    looks.done = () => pageQ.pump();
     const timed = (L, fn) => { const t = Date.now(); return fn().then((x) => (L.took(Date.now() - t, true), x), (e) => { L.took(Date.now() - t, false); throw e; }); };
     // Today's lists, kept in this browser until the day ends: who was sent to be paid and how it went, and the lines
     // never sorted out, for the check at the end of the day.
@@ -2282,14 +2287,14 @@
         await Promise.all([...UNPAID].flatMap((st, i) => Array.from({ length: Math.max(0, (firsts[i].pageCount || 1) - 1) }, (_, k) => page(st, k + 2).then((j) => { add(j); onPage?.(++done, all); }))));
         return m;
       })();
-      unpaidIdx = { at: Date.now(), p }; p.then(() => { if (unpaidIdx?.p === p) unpaidIdx.ready = true; }, () => { if (unpaidIdx?.p === p) unpaidIdx = null; });
+      unpaidIdx = { at: Date.now(), p }; p.then((m) => { if (unpaidIdx?.p === p) Object.assign(unpaidIdx, { ready: true, m }); }, () => { if (unpaidIdx?.p === p) unpaidIdx = null; });
       return p;
     }
     function openBulk(text) {
       if (!bulk || (bulk.phase !== "paying" && text)) bulk = newBulk();
       view.mode = "bulk"; view.card = null; drawBody();
       // the unpaid list starts loading now, so the first long list doesn't wait for it
-      if (!unpaidIdx) unpaidIndex((n, all) => { bulk.loading = `Loading unpaid invoices… ${n}/${all}`; bulkDraw(); }).catch(() => {}).finally(() => { bulk.loading = ""; bulkDraw(); });
+      if (!unpaidIdx) unpaidIndex((n, all) => { bulk.loading = `Loading unpaid invoices… ${n}/${all}`; findLabel(); }).catch(() => {}).finally(() => { bulk.loading = ""; findLabel(); });
       const ta = bulk.el.querySelector("textarea");
       if (text) { ta.value = text.trim(); find(); } else if (bulk.phase === "input") ta.focus();
     }
@@ -2319,10 +2324,11 @@
       if (!bulk.rows.length) { bulk.phase = "input"; bulk.loading = ""; bulkDraw(); return; }
       const fresh = bulk.rows.filter((r) => r.state === "looking" && !r.p);
       bulk.phase = "looking"; bulk.armed = 0; bulkDraw();
-      const idx = fresh.length >= 15 || unpaidIdx?.ready ? await unpaidIndex((n, all) => { if (bulk.gen === gen) { bulk.loading = `Loading unpaid invoices… ${n}/${all}`; bulkDraw(); } }).catch(() => null) : null;
-      if (bulk.gen !== gen) return; // a newer paste took over
-      bulk.loading = "";
-      for (const r of fresh) { r.idx = idx; r.p = looks.add(() => (bulk.rows.includes(r) && r.state === "looking" ? lookup(r) : Promise.resolve())).finally(() => { r.p = null; r.idx = null; }); }
+      // each line is searched on its own at once; once the unpaid list has loaded (it keeps loading meanwhile), the lines
+      // still waiting are found in it instead, so a list is never slower than the quicker of the two
+      if (!unpaidIdx) unpaidIndex((n, all) => { bulk.loading = `Loading unpaid invoices… ${n}/${all}`; findLabel(); }).catch(() => {}).finally(() => { bulk.loading = ""; findLabel(); });
+      for (const r of fresh) r.p = looks.add(() => { if (!bulk.rows.includes(r) || r.state !== "looking") return Promise.resolve(); r.idx = unpaidIdx?.ready ? unpaidIdx.m : null; return lookup(r); })
+        .finally(() => { r.p = null; r.idx = null; });
       await Promise.all(bulk.rows.map((r) => r.p).filter(Boolean));
       if (bulk.gen !== gen) return;
       // one customer listed twice: keep the first
@@ -2739,7 +2745,7 @@
     function findLabel() {
       const b = bulk?.el?.querySelector('[data-k="find"]'); if (!b) return;
       const looking = bulk.phase === "looking", changed = bulk.el.querySelector("textarea").value !== bulk.lastText;
-      b.textContent = looking && changed ? "Find again (drops the old search)" : `${bulk.loading || (looking ? `Looking… ${bulk.rows.filter((r) => r.state !== "looking").length}/${bulk.rows.length}` : bulk.rows.length ? "Find again" : "Find them")}${looking ? " · Stop" : ""}`;
+      b.textContent = looking && changed ? "Find again (drops the old search)" : `${looking ? `Looking… ${bulk.rows.filter((r) => r.state !== "looking").length}/${bulk.rows.length}${bulk.loading ? ` (${bulk.loading.replace(/^Loading /, "").replace(/…/, "")})` : ""}` : bulk.loading || (bulk.rows.length ? "Find again" : "Find them")}${looking ? " · Stop" : ""}`;
     }
     // a line's customer found by hand: type a name, username or phone. The Dock's customer list answers at once; when it
     // has nothing, the ERP's invoices are searched. Picking one looks that customer up for this line.

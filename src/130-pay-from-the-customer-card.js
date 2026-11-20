@@ -179,7 +179,7 @@
     function findLabel() {
       const b = bulk?.el?.querySelector('[data-k="find"]'); if (!b) return;
       const looking = bulk.phase === "looking", changed = bulk.el.querySelector("textarea").value !== bulk.lastText;
-      b.textContent = looking && changed ? "Find again (drops the old search)" : `${bulk.loading || (looking ? `Looking… ${bulk.rows.filter((r) => r.state !== "looking").length}/${bulk.rows.length}` : bulk.rows.length ? "Find again" : "Find them")}${looking ? " · Stop" : ""}`;
+      b.textContent = looking && changed ? "Find again (drops the old search)" : `${looking ? `Looking… ${bulk.rows.filter((r) => r.state !== "looking").length}/${bulk.rows.length}${bulk.loading ? ` (${bulk.loading.replace(/^Loading /, "").replace(/…/, "")})` : ""}` : bulk.loading || (bulk.rows.length ? "Find again" : "Find them")}${looking ? " · Stop" : ""}`;
     }
     // a line's customer found by hand: type a name, username or phone. The Dock's customer list answers at once; when it
     // has nothing, the ERP's invoices are searched. Picking one looks that customer up for this line.
