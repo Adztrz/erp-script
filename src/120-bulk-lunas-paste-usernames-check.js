@@ -75,12 +75,18 @@
       const ta = bulk.el.querySelector("textarea");
       if (text) { ta.value = text.trim(); find(); } else if (bulk.phase === "input") ta.focus();
     }
-    // A pasted WhatsApp chat: "[16.13, 20/11/2026] TEK. BUDI: Siswanto0903", "[20/11/2026, 16.13] …", "20/11/26 16.13 - Budi: …"
+    // A pasted WhatsApp chat: "[16.13, 20/11/2026] TEK. BUDI: Contoh0903", "[20/11/2026, 16.13] …", "20/11/26 16.13 - Budi: …"
     // (or what's left of one cut at its comma: "20/11/2026] Budi: …") keeps only the message; times, dates and chat
     // notes on their own are left out.
     const CHAT = /^(?:\[?[\d\s/.:,apm-]{4,30}\]\s*|\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4},?\s+\d{1,2}[.:]\d{2}(?:[.:]\d{2})?(?:\s*[ap]\.?m\.?)?\s*-\s*)[^:]{1,60}:\s*/i;
+    // A line that starts with a username keeps only that ("Contoh0903 Oktober", "Contoh0903 b November 110rb" → the
+    // username); a name with its village has months, amounts and "bulan" taken out.
+    const USERISH = /^[a-z][a-z._]*\d{3,}[a-z]?(?![\w.])/i;
+    const MONTH_WORDS = "januari|februari|maret|april|mei|juni|juli|agustus|september|oktober|november|desember|january|february|march|may|june|july|august|october|december|jan|feb|mar|apr|jun|jul|agu|agt|aug|sep|sept|okt|oct|nov|des|dec";
+    const EXTRA = new RegExp(`\\s+(?:(?:${MONTH_WORDS}|bulan|bln|b|bayar|lunas|rp\\.?)\\b|\\d[\\d.,]*\\s*(?:rb|ribu|k|jt)?\\b)`, "gi");
+    const lineUser = (x) => USERISH.exec(x)?.[0] ?? x.replace(EXTRA, "").trim();
     function tokensOf(text) {
-      return String(text).split(/\n+/).map((l) => l.replace(CHAT, "")).flatMap((l) => l.split(/[,;]+/)).map((x) => x.trim())
+      return String(text).split(/\n+/).map((l) => l.replace(CHAT, "")).flatMap((l) => l.split(/[,;]+/)).map((x) => lineUser(x.trim()))
         .filter((x) => x && !/^\[?[\d\s/.:,-]+\]?$/.test(x) && !/^<.*>$|^(?:image|video|audio|sticker|document) omitted$|^pesan ini (?:dihapus|telah dihapus)/i.test(x));
     }
     // Pasting again (or pressing Find) while lines are still being looked up starts over at once: lines still in the box

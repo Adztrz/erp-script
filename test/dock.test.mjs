@@ -265,7 +265,10 @@ test("review count: decided reports still count, so the position goes up and the
 });
 
 test("bulk lunas: a pasted WhatsApp chat gives just the usernames and names", () => {
-  const { tokensOf } = load(dock, ["CHAT", "tokensOf"]);
+  const { tokensOf } = load(dock, ["CHAT", "USERISH", "MONTH_WORDS", "EXTRA", "lineUser", "tokensOf"]);
+  // only the username: months, amounts and words after it are left out, and a repeat becomes one line
+  assert.deepEqual([...new Set(tokensOf("Testsatu0903 b November\nTestdua0903 Oktober\nTestdua0903 November\nTesttiga1001 110rb\nTestempat0908 110.000 nov\nJarmo Sumberagung November 110rb"))],
+    ["Testsatu0903", "Testdua0903", "Testtiga1001", "Testempat0908", "Jarmo Sumberagung"]);
   const chat = ["[20/11/2026, 16.13] TEK. BUDI SANTOSO: Testuser0903", "[20/11/2026, 16.14] TEK. BUDI SANTOSO: Testdua0903, Testtiga1001",
     "20/11/26 16.15 - Admin Kantor: Jarmo Sumberagung", "[16.13]", "<Media omitted>", "Testempat0908"].join("\n");
   assert.deepEqual(tokensOf(chat), ["Testuser0903", "Testdua0903", "Testtiga1001", "Jarmo Sumberagung", "Testempat0908"]);
