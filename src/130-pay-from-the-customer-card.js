@@ -166,8 +166,14 @@
         det.append(tot, cp);
       }
       for (const x of left.slice(0, 200)) det.append(el("div", "sub", x.text));
-      if (left.length) { const b = el("button", "btn", `Put the ${left.length} here to check again`); b.type = "button";
-        b.onclick = () => { const ta = bulk.el.querySelector("textarea"); ta.value = [ta.value.trim(), ...left.map((x) => x.token)].filter(Boolean).join("\n"); find(); }; det.append(b); }
+      if (left.length) {
+        const acts = el("div", "picks"), b = el("button", "btn", `Put the ${left.length} here to check again`); b.type = "button";
+        b.onclick = () => { const ta = bulk.el.querySelector("textarea"); ta.value = [ta.value.trim(), ...left.map((x) => x.token)].filter(Boolean).join("\n"); find(); }; acts.append(b);
+        // lines never found (a typo, a chat line read wrong) are forgotten here; what was paid and the totals stay
+        const open = Object.keys(d.open).length;
+        if (open) { const c = el("button", "btn", `Forget the ${open} never found`); c.type = "button"; c.onclick = () => { dayNote((x) => { x.open = {}; }); bulkDraw(); }; acts.append(c); }
+        det.append(acts);
+      }
       box.replaceChildren(det);
     }
     function findLabel() {
