@@ -15,9 +15,10 @@
   const stuckSince = (r) => feedStuck.get(roWord(r.router));
   const rupiah = (n) => (Number.isFinite(Number(n)) ? `Rp ${Number(n).toLocaleString("id-ID")}` : "");
 
-  // How a word sounds, roughly: old Indonesian spellings made modern (oe→u, dj→j, tj→c, sj→sy, ch→kh, ph→f)
-  // and double letters made single, so WINNA = WINA, WELLY = WELY, SOEMARNO = SUMARNO.
-  const sound = (w) => w.replace(/oe/g, "u").replace(/dj/g, "j").replace(/tj/g, "c").replace(/sj/g, "sy").replace(/ch/g, "kh").replace(/ph/g, "f").replace(/(.)\1+/g, "$1");
+  // How a word sounds, roughly: old Indonesian spellings made modern (oe→u, dj→j, tj→c, sj→sy, ph→f), the ways one
+  // sound is written made one (ch/kh→h, dh→d, th→t), the y or w slipped between vowels dropped (SUGIYARTI = SUGIARTI,
+  // SUWARNO = SUARNO), a last y read as i (RUDY = RUDI) and double letters made single (WINNA = WINA, SOEMARNO = SUMARNO).
+  const sound = (w) => w.replace(/oe/g, "u").replace(/dj/g, "j").replace(/tj/g, "c").replace(/sj/g, "sy").replace(/[ck]h/g, "h").replace(/ph/g, "f").replace(/([dt])h/g, "$1").replace(/iy(?=[aeiou])/g, "i").replace(/uw(?=[aeiou])/g, "u").replace(/y$/, "i").replace(/(.)\1+/g, "$1");
   // Edits between a and b (a letter wrong, missing, extra, or two swapped), giving up past `max`
   function near(a, b, max) {
     if (Math.abs(a.length - b.length) > max) return false;

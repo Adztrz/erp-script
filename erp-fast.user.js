@@ -2,7 +2,7 @@
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/erp-script/main/icons/dock.png
-// @version      3.16.4
+// @version      3.16.5
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -1212,9 +1212,10 @@
   const stuckSince = (r) => feedStuck.get(roWord(r.router));
   const rupiah = (n) => (Number.isFinite(Number(n)) ? `Rp ${Number(n).toLocaleString("id-ID")}` : "");
 
-  // How a word sounds, roughly: old Indonesian spellings made modern (oe→u, dj→j, tj→c, sj→sy, ch→kh, ph→f)
-  // and double letters made single, so WINNA = WINA, WELLY = WELY, SOEMARNO = SUMARNO.
-  const sound = (w) => w.replace(/oe/g, "u").replace(/dj/g, "j").replace(/tj/g, "c").replace(/sj/g, "sy").replace(/ch/g, "kh").replace(/ph/g, "f").replace(/(.)\1+/g, "$1");
+  // How a word sounds, roughly: old Indonesian spellings made modern (oe→u, dj→j, tj→c, sj→sy, ph→f), the ways one
+  // sound is written made one (ch/kh→h, dh→d, th→t), the y or w slipped between vowels dropped (SUGIYARTI = SUGIARTI,
+  // SUWARNO = SUARNO), a last y read as i (RUDY = RUDI) and double letters made single (WINNA = WINA, SOEMARNO = SUMARNO).
+  const sound = (w) => w.replace(/oe/g, "u").replace(/dj/g, "j").replace(/tj/g, "c").replace(/sj/g, "sy").replace(/[ck]h/g, "h").replace(/ph/g, "f").replace(/([dt])h/g, "$1").replace(/iy(?=[aeiou])/g, "i").replace(/uw(?=[aeiou])/g, "u").replace(/y$/, "i").replace(/(.)\1+/g, "$1");
   // Edits between a and b (a letter wrong, missing, extra, or two swapped), giving up past `max`
   function near(a, b, max) {
     if (Math.abs(a.length - b.length) > max) return false;

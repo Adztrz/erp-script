@@ -278,3 +278,10 @@ test("bulk lunas: a pasted WhatsApp chat gives just the usernames and names", ()
   assert.deepEqual(tokensOf("[16.13, 20/11/2026] TEK. BUDI SANTOSO: Testlima0903\n[16.14, 20/11/2026] TEK. BUDI: Testenam0903, Testtujuh0903\n20/11/2026] TEK. BUDI SANTOSO: Testdelapan0903\n[16.13\n[4:05 PM, 11/20/2026] Budi: Testsembilan0903"),
     ["Testlima0903", "Testenam0903", "Testtujuh0903", "Testdelapan0903", "Testsembilan0903"]);
 });
+
+test("search: Indonesian spellings of one name sound the same", () => {
+  const { sound } = load(dock, ["sound"]);
+  for (const [a, b] of [["sugiyarti", "sugiarti"], ["suwarno", "suarno"], ["soemarno", "sumarno"], ["rachmat", "rahmat"], ["akhmad", "ahmad"], ["ridho", "rido"], ["rudy", "rudi"], ["winna", "wina"]]) assert.equal(sound(a), sound(b), `${a} / ${b}`);
+  assert.notEqual(sound("sugiarti"), sound("sugiarto"));
+  assert.equal(sound("mulyadi"), "mulyadi"); // a y after a consonant stays
+});
