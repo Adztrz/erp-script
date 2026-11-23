@@ -2,7 +2,7 @@
 // @name         ERP — Dock in WhatsApp Web
 // @namespace    adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/erp-script/main/icons/dock.png
-// @version      1.1.0
+// @version      1.1.1
 // @description  The Dock's customer card beside the open chat in WhatsApp Web: who is writing (found by their number, a username they sent, or their name), online or not, plan, area, unpaid months and any outage on their router, with replies that fill in their name, username and bill; Check connection, Pay and the 1× login link are done by the Dock in your open ERP tab. A reply goes into the message box; you send it yourself. The customer list comes from the ERP tab, through Tampermonkey's storage: nothing is fetched from WhatsApp, and nothing leaves this browser.
 // @match        https://*/*
 // @run-at       document-idle
@@ -284,6 +284,11 @@
     .erp-wa .reply.did { border-color: var(--on); }
     .erp-wa .empty { color: var(--muted); }
     .erp-wa textarea { min-height: 260px; font: 12px/1.5 "JetBrains Mono", ui-monospace, monospace; resize: vertical; }
+    .erp-wa .cp { cursor: copy; border-radius: 4px; transition: background-color .15s; position: relative; }
+    .erp-wa .cp:hover { background: var(--raised); }
+    .erp-wa .cp.did::after { content: "copied"; position: absolute; right: 0; top: 50%; transform: translateY(-50%); padding: 1px 6px; border-radius: 4px;
+      background: var(--bone); color: #07090b; font: 500 11px Inter, system-ui, sans-serif; }
+    .erp-wa .cp:focus-visible { outline: 1px solid var(--muted); }
     .erp-wa .sect { display: grid; gap: 8px; padding: 12px; border-radius: 8px; box-shadow: inset 0 0 0 1px var(--line); }
     .erp-wa .verdict { margin: 0; color: var(--bone); font-weight: 500; }
     .erp-wa .verdict.ok { color: var(--on); } .erp-wa .verdict.net, .erp-wa .verdict.cut, .erp-wa .verdict.iso { color: #f2b8ba; } .erp-wa .verdict.warn, .erp-wa .verdict.off { color: var(--amber); }
@@ -358,11 +363,19 @@
   }
   const state = (r) => (r.isolir ? "iso" : r.online ? "on" : "off");
 
+  // Click a name or a value to copy it (selecting part of it with the mouse still copies just that part, as usual)
+  function copyable(node, value) {
+    node.classList.add("cp"); node.title = "Click to copy"; node.tabIndex = 0;
+    const go = () => { if (String(getSelection()).trim()) return;
+      navigator.clipboard?.writeText(String(value)).then(() => { node.classList.add("did"); setTimeout(() => node.classList.remove("did"), 1000); }); };
+    node.onclick = go; node.onkeydown = (e) => { if (e.key === "Enter") go(); };
+    return node;
+  }
   function drawCard(body, r, how, others) {
     const card = el("div", "card");
     const top = el("div"); top.style.cssText = "display:grid;gap:6px";
     const pill = el("span", "pill"); pill.append(el("span", `dot ${state(r)}`), r.isolir ? "Isolir" : r.online ? "Online" : "Offline");
-    top.append(el("h3", null, r.nama || r.username), (() => { const w = el("div", "row"); w.style.alignItems = "center"; w.append(pill, el("span", "how", how === "picked" ? "picked by you" : `found by ${how}`)); return w; })());
+    top.append(copyable(el("h3", null, r.nama || r.username), r.nama || r.username), (() => { const w = el("div", "row"); w.style.alignItems = "center"; w.append(pill, el("span", "how", how === "picked" ? "picked by you" : `found by ${how}`)); return w; })());
     card.append(top);
     const out = outageOf(r);
     if (out) card.append(el("div", "alert", `Outage open: ${out.title}, since ${hhmm(out.start)}`));
@@ -374,10 +387,8 @@
     card.append(bill);
     card.append(...actionsFor(r));
     const dl = el("dl");
-    const fact = (k, v, mono, copy) => { if (!v) return; const dd = el("dd", mono ? "mono" : null, v);
-      if (copy) { const c = el("button", "mini", "copy"); c.type = "button"; c.onclick = () => navigator.clipboard?.writeText(String(v)).then(() => { c.textContent = "copied"; setTimeout(() => (c.textContent = "copy"), 1200); }); dd.append(c); }
-      dl.append(el("dt", null, k), dd); };
-    fact("Username", r.username, true, true); fact("Plan", r.paket); fact("Area", [titleCase(r.desa), titleCase(r.kec)].filter(Boolean).join(", ")); fact("Router", r.router);
+    const fact = (k, v, mono) => { if (!v) return; dl.append(el("dt", null, k), copyable(el("dd", mono ? "mono" : null, v), v)); };
+    fact("Username", r.username, true); fact("Plan", r.paket); fact("Area", [titleCase(r.desa), titleCase(r.kec)].filter(Boolean).join(", ")); fact("Router", r.router);
     fact("Phone", r.phone, true); fact("Address", r.address);
     fact("Expires", r.expirasi && !isNaN(new Date(r.expirasi)) ? new Date(r.expirasi).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" }) : r.expirasi);
     card.append(dl);
