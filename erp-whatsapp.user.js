@@ -2,7 +2,7 @@
 // @name         ERP — Dock in WhatsApp Web
 // @namespace    adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/erp-script/main/icons/dock.png
-// @version      1.0.1
+// @version      1.0.2
 // @description  The Dock's customer card beside the open chat in WhatsApp Web: who is writing (found by their number, a username they sent, or their name), online or not, plan, area, unpaid months and any outage on their router, with replies that fill in their name, username and bill. A reply goes into the message box; you send it yourself. The customer list comes from the ERP tab, through Tampermonkey's storage: nothing is fetched from WhatsApp, and nothing leaves this browser.
 // @match        https://*/*
 // @run-at       document-idle
@@ -274,6 +274,8 @@
     const x = el("button", "x", "✕"); x.type = "button"; x.title = "Hide (Alt+K)"; x.onclick = () => toggle(false);
     hd.append(age, x);
     const qw = el("div", "q"), q = el("input"); q.placeholder = "Name, username, number or village"; q.value = query; q.setAttribute("aria-label", "Search customers");
+    // a search, not a login: keeps password managers (Bitwarden, 1Password, LastPass) from offering to fill it
+    q.type = "search"; q.autocomplete = "off"; q.name = "erp-wa-find"; for (const a of ["data-bwignore", "data-1p-ignore", "data-lpignore", "data-form-type"]) q.setAttribute(a, a === "data-form-type" ? "other" : "true");
     q.oninput = () => { query = q.value; current.pick = null; draw(); };
     q.onkeydown = (e) => { if (e.key === "Escape") { query = ""; draw(); } };
     qw.append(q); panel.append(hd, qw);
