@@ -2,7 +2,7 @@
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/erp-script/main/icons/dock.png
-// @version      3.17.0
+// @version      3.18.0
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -4134,63 +4134,16 @@
     const hist = new Map();
     function forensicBox(r) {
       const box = el("div", "near hist rise"); box.style.setProperty("--i", "2");
-      const fmt = (t) => new Date(t).toLocaleString("id-ID", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
-      const dur = (ms) => { const m = Math.round(ms / 60000); return m < 60 ? `${m} min` : m < 2880 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${Math.round(m / 1440)} days`; };
-      const u = lower(r.username);
       if (!onts) ontIndex().then(() => box.isConnected && draw(box.d)).catch(() => {});
       if (!acs) acsIndex().then(() => box.isConnected && draw(box.d)).catch(() => {});
-      async function load() {
-        const [tix, due, dl, tl] = await Promise.all([
-          r.customerDocId ? api(`/api/pg-read/tickets?where=customerId%3A${encodeURIComponent(r.customerDocId)}&limit=10&orderBy=createdAt%3Adesc&fields=issue,status,ticketId,createdAt`).catch(() => null) : null,
-          api(`/api/customers/status-tagihan?username=${encodeURIComponent(r.username)}`).catch(() => null), dropsOf(),
-          r.isolir ? api(`/api/admin/billing/customer-timeline?${r.customerDocId ? `customerId=${encodeURIComponent(r.customerDocId)}` : `username=${encodeURIComponent(r.username)}`}`).catch(() => null) : null]);
-        return { tix: (tix?.data || []).filter((t) => t.status !== "Terselesaikan"), due, dl, isoAt: (tl?.events || []).filter((e) => /isolir/i.test(e.type)).map((e) => Date.parse(e.at)).sort((x, y) => y - x)[0] || null };
-      }
       function draw(d) {
         box.d = d;
         const e = el("div", "eyebrow"); e.style.margin = "0 0 8px"; e.append("Down?"); const out = [e];
-        const { ont: o, dev } = modemOf(r), rec = d?.dl?.u[u], gone = d?.dl?.off[u], sess = live && Date.now() - live.at < 5 * 60000 ? live.by.get(u) : null;
-        const online = sess ? true : rec && d.dl.at && !gone && rec.last === d.dl.at ? true : !!r.online;
-        // who else: the PON port, the neighbours, the router
-        const port = o && onts ? onts.rows.filter((x) => x.pid === o.pid && x.pon === o.pon) : [];
-        const portOff = port.filter((x) => !/online|working/i.test(x.st || "")).length;
-        const nb = (nearby(r, 300)?.list || []).filter((x) => !x.r.isolir), nbOff = nb.filter((x) => !(live?.by.has(lower(x.r.username)) ?? x.r.online)).length;
-        const rad = radar?.list.find((x) => fold(x.name) === fold(r.router || "")), radBad = rad && (rad.level === "down" || rad.level === "drop");
-        const day = Date.now() - 86400000, recon = (rec?.s || []).filter((t) => t > day).length, recon7 = (rec?.s || []).length;
-        const rx = o?.rx, rxBad = rx != null && rx < -28, rxWeak = rx != null && rx < -26;
-        // when
-        const facts = [];
-        if (r.isolir) facts.push(["State", `Isolir${d?.isoAt ? ` since ${fmt(d.isoAt)}` : ""}`]);
-        else if (online) { const st = sess?.start || rec?.s.at(-1); facts.push(["State", st ? `Online since ${fmt(st)} (${dur(Date.now() - st)})` : "Online"]); }
-        else {
-          const tr = dev?.inform ? Date.parse(dev.inform) : 0;
-          const when = gone ? (tr && tr >= gone.from - 60000 && tr <= gone.seen ? `Down since about ${fmt(tr)} (the modem's last report)` : `Down between ${fmt(gone.from)} and ${fmt(gone.seen)}`)
-            : tr ? `Down since about ${fmt(tr)} (the modem's last report)` : d?.dl?.first ? `Down since before ${fmt(d.dl.first)}, when the Dock started its drop log` : "Down (the drop log starts with the next reading)";
-          facts.push(["State", when]);
-        }
-        if (recon7 > 1) facts.push(["Reconnects", `${recon} in 24 h, ${recon7 - 1} in 7 days${recon >= 4 ? " · unstable" : ""} · ${(rec.s.slice(-6).reverse().map((t) => fmt(t))).join(", ")}`]);
-        if (o) facts.push(["Modem", `${o.olt} · PON ${o.pon} · ${o.st || "?"}${rx != null ? ` · ${rx} dBm${rxBad ? " (critical)" : rxWeak ? " (weak)" : ""}` : ""}${o.seen ? ` · read ${fmt(Date.parse(o.seen))}` : ""}`]);
-        if (dev) facts.push(["TR-069", `last report ${fmt(Date.parse(dev.inform))}`]);
-        if (port.length) facts.push(["Same port", `${portOff} of ${port.length} modems offline`]);
-        if (nb.length) facts.push(["Within 300 m", `${nbOff} of ${nb.length} customers offline`]);
-        if (rad) facts.push(["Router", `${rad.name}: ${radBad ? `${rad.level === "down" ? "down" : "dropping"} since ${hhmm(rad.since)}` : "at its usual level"}`]);
-        const ss = sess || rec; if (ss && (ss.addr || ss.ip)) facts.push(["Session", [ss.addr || ss.ip, ss.mac, ss.nas || sess?.ip].filter(Boolean).join(" · ")]);
-        if (d?.tix.length) facts.push(["Complaints", `${d.tix.length} open · ${d.tix[0].ticketId || ""} ${d.tix[0].issue || ""}`.trim()]);
-        if (d?.due?.ok && d.due.jumlahTagihan) facts.push(["Arrears", `${d.due.jumlahTagihan} overdue · Rp ${Number(d.due.totalTunggakan || 0).toLocaleString("id-ID")}`]);
-        // the verdict
-        const v = r.isolir ? ["iso", "Isolir: cut off for the bill, not a network fault."]
-          : radBad ? ["net", `Router ${rad.name} is ${rad.level === "down" ? "down" : "dropping"}: area-wide, not just this customer.`]
-          : !online && port.length >= 4 && portOff >= 3 && portOff / port.length >= 0.5 ? ["net", "The whole PON port is down: a line fault before the FAT (see Outage radar → Cause & dispatch)."]
-          : !online && nb.length >= 3 && nbOff / nb.length >= 0.5 ? ["net", "Neighbours are down too: the FAT or the line in this area."]
-          : !online && rxBad ? ["cut", "Only this customer, and the signal was critical: their drop cable or connector."]
-          : !online ? ["off", `Only this customer${rx != null ? `, signal was fine (${rx} dBm)` : ""}: the modem's power or the modem itself. Ask if it's on.`]
-          : recon >= 4 ? ["warn", `Online but unstable: ${recon} reconnects in 24 h. ${rxWeak ? "Weak signal: clean or redo the connector." : "Power or the modem."}`]
-          : ["ok", `Online and steady${rxWeak ? `, but the signal is weak (${rx} dBm)` : ""}: if they complain, it's inside the house (WiFi, devices) or the plan's speed.`];
+        const { facts, v, text } = forensicRead(r, d);
         out.push(el("p", `verdict ${v[0]}`, v[1]));
         const dl = el("dl", "facts"); for (const [k, x] of facts) dl.append(el("dt", null, k), el("dd", null, x)); out.push(dl);
         if (!d) out.push(el("p", "note ld", "Reading the drop log, complaints and bill…"));
         else {
-          const text = [`*CEK PELANGGAN* · ${r.nama || r.username} (${r.username})`, ...facts.map(([k, x]) => `${k}: ${x}`), `Dugaan: ${v[1]}`, `Dicek ${wib()} WIB`].join("\n");
           const acts = el("div", "actions"), c = el("button", "btn", "Copy summary"); c.type = "button"; c.onclick = () => copy(text, c); acts.append(c);
           const now = el("button", "btn", "Check now"); now.type = "button"; now.onclick = async () => { now.disabled = true; now.textContent = "Reading the sessions…"; live = null; await liveSessions().catch(() => {}); hist.delete(r.username); start(); }; acts.append(now);
           out.push(acts);
@@ -4201,9 +4154,62 @@
       function start() {
         const kept = hist.get(r.username);
         if (kept && Date.now() - kept.at < 2 * 60000) return draw(kept.d);
-        draw(null); load().then((d) => { hist.set(r.username, { at: Date.now(), d }); if (box.isConnected) draw(d); }).catch(() => box.replaceChildren(el("p", "note", "The ERP didn't answer.")));
+        draw(null); forensicLoad(r).then((d) => { hist.set(r.username, { at: Date.now(), d }); if (box.isConnected) draw(d); }).catch(() => box.replaceChildren(el("p", "note", "The ERP didn't answer.")));
       }
       start(); return box;
+    }
+
+    async function forensicLoad(r) {
+      const [tix, due, dl, tl] = await Promise.all([
+        r.customerDocId ? api(`/api/pg-read/tickets?where=customerId%3A${encodeURIComponent(r.customerDocId)}&limit=10&orderBy=createdAt%3Adesc&fields=issue,status,ticketId,createdAt`).catch(() => null) : null,
+        api(`/api/customers/status-tagihan?username=${encodeURIComponent(r.username)}`).catch(() => null), dropsOf(),
+        r.isolir ? api(`/api/admin/billing/customer-timeline?${r.customerDocId ? `customerId=${encodeURIComponent(r.customerDocId)}` : `username=${encodeURIComponent(r.username)}`}`).catch(() => null) : null]);
+      return { tix: (tix?.data || []).filter((t) => t.status !== "Terselesaikan"), due, dl, isoAt: (tl?.events || []).filter((e) => /isolir/i.test(e.type)).map((e) => Date.parse(e.at)).sort((x, y) => y - x)[0] || null };
+    }
+    // what the evidence says: the facts, the verdict and a summary to paste (the card's "Down?" box, and WhatsApp's Check)
+    function forensicRead(r, d) {
+      const fmt = (t) => new Date(t).toLocaleString("id-ID", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+      const dur = (ms) => { const m = Math.round(ms / 60000); return m < 60 ? `${m} min` : m < 2880 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${Math.round(m / 1440)} days`; };
+      const u = lower(r.username);
+      const { ont: o, dev } = modemOf(r), rec = d?.dl?.u[u], gone = d?.dl?.off[u], sess = live && Date.now() - live.at < 5 * 60000 ? live.by.get(u) : null;
+      const online = sess ? true : rec && d.dl.at && !gone && rec.last === d.dl.at ? true : !!r.online;
+      // who else: the PON port, the neighbours, the router
+      const port = o && onts ? onts.rows.filter((x) => x.pid === o.pid && x.pon === o.pon) : [];
+      const portOff = port.filter((x) => !/online|working/i.test(x.st || "")).length;
+      const nb = (nearby(r, 300)?.list || []).filter((x) => !x.r.isolir), nbOff = nb.filter((x) => !(live?.by.has(lower(x.r.username)) ?? x.r.online)).length;
+      const rad = radar?.list.find((x) => fold(x.name) === fold(r.router || "")), radBad = rad && (rad.level === "down" || rad.level === "drop");
+      const day = Date.now() - 86400000, recon = (rec?.s || []).filter((t) => t > day).length, recon7 = (rec?.s || []).length;
+      const rx = o?.rx, rxBad = rx != null && rx < -28, rxWeak = rx != null && rx < -26;
+      // when
+      const facts = [];
+      if (r.isolir) facts.push(["State", `Isolir${d?.isoAt ? ` since ${fmt(d.isoAt)}` : ""}`]);
+      else if (online) { const st = sess?.start || rec?.s.at(-1); facts.push(["State", st ? `Online since ${fmt(st)} (${dur(Date.now() - st)})` : "Online"]); }
+      else {
+        const tr = dev?.inform ? Date.parse(dev.inform) : 0;
+        const when = gone ? (tr && tr >= gone.from - 60000 && tr <= gone.seen ? `Down since about ${fmt(tr)} (the modem's last report)` : `Down between ${fmt(gone.from)} and ${fmt(gone.seen)}`)
+          : tr ? `Down since about ${fmt(tr)} (the modem's last report)` : d?.dl?.first ? `Down since before ${fmt(d.dl.first)}, when the Dock started its drop log` : "Down (the drop log starts with the next reading)";
+        facts.push(["State", when]);
+      }
+      if (recon7 > 1) facts.push(["Reconnects", `${recon} in 24 h, ${recon7 - 1} in 7 days${recon >= 4 ? " · unstable" : ""} · ${(rec.s.slice(-6).reverse().map((t) => fmt(t))).join(", ")}`]);
+      if (o) facts.push(["Modem", `${o.olt} · PON ${o.pon} · ${o.st || "?"}${rx != null ? ` · ${rx} dBm${rxBad ? " (critical)" : rxWeak ? " (weak)" : ""}` : ""}${o.seen ? ` · read ${fmt(Date.parse(o.seen))}` : ""}`]);
+      if (dev) facts.push(["TR-069", `last report ${fmt(Date.parse(dev.inform))}`]);
+      if (port.length) facts.push(["Same port", `${portOff} of ${port.length} modems offline`]);
+      if (nb.length) facts.push(["Within 300 m", `${nbOff} of ${nb.length} customers offline`]);
+      if (rad) facts.push(["Router", `${rad.name}: ${radBad ? `${rad.level === "down" ? "down" : "dropping"} since ${hhmm(rad.since)}` : "at its usual level"}`]);
+      const ss = sess || rec; if (ss && (ss.addr || ss.ip)) facts.push(["Session", [ss.addr || ss.ip, ss.mac, ss.nas || sess?.ip].filter(Boolean).join(" · ")]);
+      if (d?.tix.length) facts.push(["Complaints", `${d.tix.length} open · ${d.tix[0].ticketId || ""} ${d.tix[0].issue || ""}`.trim()]);
+      if (d?.due?.ok && d.due.jumlahTagihan) facts.push(["Arrears", `${d.due.jumlahTagihan} overdue · Rp ${Number(d.due.totalTunggakan || 0).toLocaleString("id-ID")}`]);
+      // the verdict
+      const v = r.isolir ? ["iso", "Isolir: cut off for the bill, not a network fault."]
+        : radBad ? ["net", `Router ${rad.name} is ${rad.level === "down" ? "down" : "dropping"}: area-wide, not just this customer.`]
+        : !online && port.length >= 4 && portOff >= 3 && portOff / port.length >= 0.5 ? ["net", "The whole PON port is down: a line fault before the FAT (see Outage radar → Cause & dispatch)."]
+        : !online && nb.length >= 3 && nbOff / nb.length >= 0.5 ? ["net", "Neighbours are down too: the FAT or the line in this area."]
+        : !online && rxBad ? ["cut", "Only this customer, and the signal was critical: their drop cable or connector."]
+        : !online ? ["off", `Only this customer${rx != null ? `, signal was fine (${rx} dBm)` : ""}: the modem's power or the modem itself. Ask if it's on.`]
+        : recon >= 4 ? ["warn", `Online but unstable: ${recon} reconnects in 24 h. ${rxWeak ? "Weak signal: clean or redo the connector." : "Power or the modem."}`]
+        : ["ok", `Online and steady${rxWeak ? `, but the signal is weak (${rx} dBm)` : ""}: if they complain, it's inside the house (WiFi, devices) or the plan's speed.`];
+      const text = [`*CEK PELANGGAN* · ${r.nama || r.username} (${r.username})`, ...facts.map(([k, x]) => `${k}: ${x}`), `Dugaan: ${v[1]}`, `Dicek ${wib()} WIB`].join("\n");
+      return { facts, v, text, online };
     }
 
     function reportBox({ title, down, total, since, custs, age }) {
@@ -5218,6 +5224,61 @@
       view.card = c; view.sel = 0; view.mode = null; remember(c); draw();
     }
     setTimeout(fromHash, 1500); addEventListener("hashchange", fromHash);
+    // Asked from WhatsApp (erp-whatsapp.user.js passes the request into this tab): check a line, load and pay bills, make
+    // the login link, with the same code as the customer card. Each request has an id, and one already run is answered
+    // from memory instead of run again, so a payment can't go twice.
+    const waDone = new Map();
+    const waReply = (id, res) => postMessage("erp-wa-res:" + JSON.stringify({ id, ...res }), location.origin);
+    addEventListener("message", async (e) => {
+      if (e.source !== window || e.origin !== location.origin || typeof e.data !== "string" || !e.data.startsWith("erp-wa:")) return;
+      let q; try { q = JSON.parse(e.data.slice(7)); } catch { return; }
+      if (!q?.id) return;
+      if (waDone.has(q.id)) { const was = waDone.get(q.id); if (was !== "busy") waReply(q.id, was); return; }
+      waDone.set(q.id, "busy");
+      let res; try { res = { ok: true, data: await waOp(q.op, q.args || {}) }; } catch (err) { res = { ok: false, err: err?.message || String(err) }; }
+      waDone.set(q.id, res); waReply(q.id, res);
+    });
+    const waBill = (row) => ({ state: row.state, err: row.err || "", paidTo: row.paidTo || "", invs: (row.invs || []).map((v) => ({ no: v.no, period: v.period, amount: v.amount, status: v.status,
+      hutang: v.hutang, recharge: !!v.recharge, canRecharge: !!v.radius?.canRecharge, covered: !!v.radius?.alreadyCovered, expiry: v.radius?.expiryDate || "", result: v.result || null })) });
+    async function waOp(op, a) {
+      if (op === "ping") return { version: typeof GM_info !== "undefined" ? GM_info.script?.version : "" };
+      await data(); const u = String(a.username || "").toLowerCase(), r = customers?.find((x) => String(x.username || "").toLowerCase() === u);
+      if (!r) throw new Error("Not in the ERP tab's customer list");
+      if (op === "check") { // fresh sessions, then the card's "Down?" evidence
+        live = null; await liveSessions().catch(() => {});
+        await Promise.all([onts ? 0 : ontIndex().catch(() => {}), acs ? 0 : acsIndex().catch(() => {})]);
+        const d = await forensicLoad(r); hist.set(r.username, { at: Date.now(), d });
+        const { facts, v, text, online } = forensicRead(r, d); return { facts, verdict: v, text, online };
+      }
+      if (op === "bills") {
+        const row = { token: r.username, pick: r.username, state: "looking", invs: [] };
+        await lookup(row); if (row.state === "found") await radius(row.invs);
+        const role = myRole(); return { ...waBill(row), methods: METHODS, today: todayIso(), maySkip: !role || SKIP_ROLES.includes(role) };
+      }
+      if (op === "pay") { // the months asked for, checked against what the ERP says now, under the card's rules
+        const row = { token: r.username, pick: r.username, state: "looking", invs: [] };
+        await lookup(row); if (row.state !== "found") throw new Error(row.err || "No unpaid invoices found");
+        const want = new Set(a.nos || []); for (const v of row.invs) v.on = want.has(v.no);
+        const ch = row.invs.filter((v) => v.on);
+        if (!ch.length || ch.length !== want.size) throw new Error("A month you ticked isn't unpaid any more: load the bills again");
+        if (!METHODS.includes(a.method)) throw new Error("Unknown payment method");
+        const top = row.invs.indexOf(ch[ch.length - 1]), skipped = row.invs.filter((v, j) => j < top && !v.on).length;
+        if (skipped && !a.skipOlder) throw new Error("Older months are unpaid: tick them too, or skip older months with a note");
+        if (skipped && myRole() && !SKIP_ROLES.includes(myRole())) throw new Error("Only a finance manager or admin can skip older months");
+        if (skipped && String(a.note || "").trim().length < 10) throw new Error("Skipping older months needs a note of 10+ letters");
+        if (ch.some((v) => a.recharge?.[v.no])) await radius(ch);
+        for (const v of ch) v.recharge = !!a.recharge?.[v.no] && !!v.radius?.canRecharge;
+        await payQueue(ch.map((v) => [row, v]), { method: a.method, date: a.date || todayIso(), note: String(a.note || ""), skipOlder: !!a.skipOlder }, () => {}, "Lunas (Dock · WhatsApp)");
+        bills.delete(r.username); // the customer card asks the ERP again
+        return waBill(row);
+      }
+      if (op === "link") {
+        if (!r.customerDocId) throw new Error("Needs the customer list refreshed (LDN → Pelanggan → Update)");
+        const j = await api(`/api/admin/customers/${encodeURIComponent(r.customerDocId)}/resend-login-link`, {});
+        return { waSent: !!j.waSent, waError: j.waError || "", link: j.magicLink || "", message: j.waMessageText || j.magicLink || "", phone: j.phone || r.phone };
+      }
+      throw new Error(`Unknown request: ${op}`);
+    }
     setInterval(() => { if (document.visibilityState === "visible") { mount(); place(); learn(); } }, 5000);
     setTimeout(() => radarTick(), 8000); setInterval(() => radarTick(), 60000);
     setTimeout(() => dropTick(), 20000); setInterval(() => dropTick(), 60000);

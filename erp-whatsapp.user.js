@@ -2,8 +2,8 @@
 // @name         ERP — Dock in WhatsApp Web
 // @namespace    adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/erp-script/main/icons/dock.png
-// @version      1.0.2
-// @description  The Dock's customer card beside the open chat in WhatsApp Web: who is writing (found by their number, a username they sent, or their name), online or not, plan, area, unpaid months and any outage on their router, with replies that fill in their name, username and bill. A reply goes into the message box; you send it yourself. The customer list comes from the ERP tab, through Tampermonkey's storage: nothing is fetched from WhatsApp, and nothing leaves this browser.
+// @version      1.1.0
+// @description  The Dock's customer card beside the open chat in WhatsApp Web: who is writing (found by their number, a username they sent, or their name), online or not, plan, area, unpaid months and any outage on their router, with replies that fill in their name, username and bill; Check connection, Pay and the 1× login link are done by the Dock in your open ERP tab. A reply goes into the message box; you send it yourself. The customer list comes from the ERP tab, through Tampermonkey's storage: nothing is fetched from WhatsApp, and nothing leaves this browser.
 // @match        https://*/*
 // @run-at       document-idle
 // @grant        GM_getValue
@@ -25,7 +25,7 @@
   const onErp = h.toString(16) === SITE, onWa = location.hostname === "web.whatsapp.com";
   if (!onErp && !onWa) return;
 
-  const KEY = "wa.data", REPLIES = "wa.replies", WIDE = "wa.open";
+  const KEY = "wa.data", REPLIES = "wa.replies", WIDE = "wa.open", ERP_TAB = "wa.erpTab", REQ = "wa.req", RES = "wa.res";
   const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   const fold = (s) => String(s ?? "").normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
   // a phone number as the ERP writes it: 08…, whether it came as +62 8…, 628… or 08…
@@ -71,6 +71,25 @@
       } finally { db.close(); }
     }
     setTimeout(sync, 4000); setInterval(sync, 60000);
+
+    // Requests from WhatsApp (Check, Pay, 1× link) go to one ERP tab: the one that said most recently that it's open.
+    // It hands them to the Dock in this page (as text, which crosses Firefox's sandbox as is) and puts the Dock's answer
+    // where WhatsApp reads it. Answers are kept 10 minutes.
+    const TAB = Math.random().toString(36).slice(2, 10), seen = new Set();
+    const here = () => GM_setValue(ERP_TAB, { tab: TAB, at: Date.now() });
+    here(); setInterval(here, 20000); document.addEventListener("visibilitychange", here);
+    GM_addValueChangeListener(REQ, (k, o, list) => {
+      for (const q of Array.isArray(list) ? list : []) {
+        if (q.to !== TAB || seen.has(q.id) || Date.now() - q.at > 120000) continue;
+        seen.add(q.id); page.postMessage("erp-wa:" + JSON.stringify({ id: q.id, op: q.op, args: q.args }), location.origin);
+      }
+    });
+    addEventListener("message", (e) => {
+      const m = typeof e.data === "string" ? e.data : ""; if (!m.startsWith("erp-wa-res:")) return;
+      let r; try { r = JSON.parse(m.slice(11)); } catch { return; }
+      const all = { ...(GM_getValue(RES, {}) || {}) }; for (const k of Object.keys(all)) if (Date.now() - (all[k].at || 0) > 600000) delete all[k];
+      all[r.id] = { ...r, at: Date.now() }; GM_setValue(RES, all);
+    });
     return;
   }
 
@@ -122,6 +141,26 @@
     return Number(m[2]) * 12 + Math.max(0, i);
   }
   const outageOf = (r) => (data?.incidents || []).find((x) => (x.users && x.users.some((u) => fold(u).replace(/ /g, "") === r._user)) || (x.kind === "router" && r.router && fold(x.title).endsWith(fold(r.router))));
+
+  // ---------- asking the ERP tab ----------
+  // Check, Pay and the 1× link are done by the Dock in an open ERP tab, with its own code and your ERP sign-in: the
+  // request goes through Tampermonkey's storage to that tab, and its answer comes back the same way.
+  const waiting = new Map();
+  function rpc(op, args, wait = 90000) {
+    const t = GM_getValue(ERP_TAB, null);
+    if (!t || Date.now() - t.at > 90000) return Promise.reject(new Error("No ERP tab open: open the ERP in a tab of this browser."));
+    const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
+    const list = (GM_getValue(REQ, []) || []).filter((q) => Date.now() - q.at < 120000);
+    list.push({ id, to: t.tab, op, args, at: Date.now() }); GM_setValue(REQ, list);
+    return new Promise((ok, no) => {
+      const timer = setTimeout(() => { waiting.delete(id); no(new Error(op === "pay" ? "No answer from the ERP tab yet. It may still be paying: look at the invoice in the ERP before trying again."
+        : "No answer from the ERP tab. Is the Dock there 3.18.0 or newer (Tampermonkey → Check for userscript updates)?")); }, wait);
+      waiting.set(id, { ok, no, timer });
+    });
+  }
+  function answers(all) {
+    for (const [id, w] of waiting) { const r = all?.[id]; if (!r) continue; clearTimeout(w.timer); waiting.delete(id); if (r.ok) w.ok(r.data); else w.no(new Error(r.err || "The ERP tab said no")); }
+  }
 
   // ---------- the open chat ----------
   // Who it is, in order of how sure: their number (unsaved contacts show it as the title; a chat's messages carry it in
@@ -191,11 +230,11 @@
   const css = `
     .erp-wa, .erp-wa-tab { --bg: #090b0c; --raised: #121416; --line: #1f2224; --bone: #e9e1dc; --text: #c9c4c0; --muted: #8a8b8a; --on: #55bc82; --bad: #e5484d; --amber: #e0b04f;
       font: 400 13px/1.45 Inter, system-ui, sans-serif; color: var(--text); }
-    .erp-wa { position: fixed; top: 0; right: 0; bottom: 0; width: 340px; z-index: 1000; background: var(--bg); box-shadow: -1px 0 0 var(--line), -12px 0 32px rgba(0,0,0,.35);
+    .erp-wa { position: fixed; top: 0; right: 0; bottom: 0; width: 340px; z-index: 2147483000; background: var(--bg); box-shadow: -1px 0 0 var(--line), -12px 0 32px rgba(0,0,0,.35);
       display: flex; flex-direction: column; animation: erp-wa-in .32s cubic-bezier(.16,1,.3,1); }
     @keyframes erp-wa-in { from { transform: translateX(24px); opacity: 0; } }
     html.erp-wa-wide #app > div { width: calc(100vw - 340px) !important; max-width: calc(100vw - 340px) !important; }
-    .erp-wa-tab { position: fixed; right: 0; top: 50%; transform: translateY(-50%); z-index: 1000; width: 26px; height: 64px; border: 0; border-radius: 8px 0 0 8px;
+    .erp-wa-tab { position: fixed; right: 0; top: 50%; transform: translateY(-50%); z-index: 2147483000; width: 26px; height: 64px; border: 0; border-radius: 8px 0 0 8px;
       background: var(--bg); color: var(--bone); cursor: pointer; box-shadow: -1px 0 0 var(--line), 0 0 0 1px var(--line); display: grid; place-items: center; }
     .erp-wa-tab svg { width: 16px; height: 16px; }
     .erp-wa header { display: flex; align-items: center; gap: 8px; padding: 14px 16px 10px; }
@@ -245,6 +284,20 @@
     .erp-wa .reply.did { border-color: var(--on); }
     .erp-wa .empty { color: var(--muted); }
     .erp-wa textarea { min-height: 260px; font: 12px/1.5 "JetBrains Mono", ui-monospace, monospace; resize: vertical; }
+    .erp-wa .sect { display: grid; gap: 8px; padding: 12px; border-radius: 8px; box-shadow: inset 0 0 0 1px var(--line); }
+    .erp-wa .verdict { margin: 0; color: var(--bone); font-weight: 500; }
+    .erp-wa .verdict.ok { color: var(--on); } .erp-wa .verdict.net, .erp-wa .verdict.cut, .erp-wa .verdict.iso { color: #f2b8ba; } .erp-wa .verdict.warn, .erp-wa .verdict.off { color: var(--amber); }
+    .erp-wa .warn { margin: 0; color: var(--amber); } .erp-wa .good { margin: 0; color: var(--on); } .erp-wa .late { color: var(--amber); }
+    .erp-wa .mrow { display: grid; grid-template-columns: 18px 1fr auto; gap: 8px; align-items: center; color: var(--bone); cursor: pointer; }
+    .erp-wa .mrow .amt { font: 12px "JetBrains Mono", ui-monospace, monospace; }
+    .erp-wa .msub { display: grid; gap: 2px; padding-left: 26px; color: var(--muted); font-size: 12px; margin-top: -4px; }
+    .erp-wa .bform { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .erp-wa .bform input:last-child { grid-column: 1 / 3; }
+    .erp-wa select { background: var(--raised); color: var(--bone); border: 1px solid var(--line); border-radius: 8px; padding: 7px 8px; font: inherit; }
+    .erp-wa input[type=checkbox] { width: auto; accent-color: var(--bone); }
+    .erp-wa .skipold { color: var(--muted); font-size: 12px; }
+    .erp-wa .ld::after { content: ""; display: inline-block; width: 18px; margin-left: 6px; height: 6px; background: radial-gradient(circle, var(--bone) 0 1.2px, transparent 1.7px) 0 0 / 6px 6px; opacity: .6; animation: erp-wa-ld 1.2s ease-in-out infinite; }
+    @keyframes erp-wa-ld { 50% { opacity: .15; } }
     @media (prefers-reduced-motion: reduce) { .erp-wa { animation: none; } }`;
 
   const svgIcon = (d) => { const s = document.createElementNS("http://www.w3.org/2000/svg", "svg"); s.setAttribute("viewBox", "0 0 24 24"); s.setAttribute("fill", "currentColor");
@@ -267,6 +320,7 @@
   function draw() {
     if (!panel) return;
     const keepFocus = document.activeElement?.closest?.(".erp-wa .q") ? document.activeElement.selectionStart : null;
+    const scrolled = panel.querySelector(".body")?.scrollTop || 0; // a redraw keeps your place
     panel.replaceChildren();
     const hd = el("header"); hd.append(el("b", null, "Dock"));
     const age = el("span", "age", data ? `customers ${ago(data.at)}` : "no customer list yet");
@@ -280,7 +334,7 @@
     q.onkeydown = (e) => { if (e.key === "Escape") { query = ""; draw(); } };
     qw.append(q); panel.append(hd, qw);
     if (keepFocus != null) { q.focus(); q.setSelectionRange(keepFocus, keepFocus); }
-    const body = el("div", "body"); panel.append(body);
+    const body = el("div", "body"); panel.append(body); queueMicrotask(() => { body.scrollTop = scrolled; });
 
     if (editing) return drawEditor(body);
     if (!data) { body.append(el("p", "empty", "Open the ERP in another tab of this browser (with this script installed there too). Its customer list shows up here within a minute.")); return; }
@@ -318,6 +372,7 @@
     else bill.append(el("b", null, "Bills not loaded"), el("span", null, "Open Finance → Invoices in the ERP once to bring this month's"));
     if (data.monthsLoaded) bill.title = `From the ${data.monthsLoaded} invoice month${data.monthsLoaded > 1 ? "s" : ""} the Dock has loaded, ${ago(data.billsAt)}`;
     card.append(bill);
+    card.append(...actionsFor(r));
     const dl = el("dl");
     const fact = (k, v, mono, copy) => { if (!v) return; const dd = el("dd", mono ? "mono" : null, v);
       if (copy) { const c = el("button", "mini", "copy"); c.type = "button"; c.onclick = () => navigator.clipboard?.writeText(String(v)).then(() => { c.textContent = "copied"; setTimeout(() => (c.textContent = "copy"), 1200); }); dd.append(c); }
@@ -341,6 +396,106 @@
     }
     card.append(lab, list);
     body.append(card);
+  }
+
+  // ---------- Check, Pay, 1× link ----------
+  let act = { user: "" };
+  const actFor = (r) => (act.user === r.username ? act : (act = { user: r.username }));
+  // a button that asks to be clicked twice for anything that changes the ERP; the second click within 5 s does it
+  function armed(label, confirm, key, fn) {
+    const b = el("button", `btn${act.armed === key ? " main" : ""}`, act.armed === key ? confirm : label); b.type = "button";
+    b.onclick = () => { if (act.armed !== key) { act.armed = key; draw(); clearTimeout(act.armTimer); act.armTimer = setTimeout(() => { if (act.armed === key) { act.armed = ""; draw(); } }, 5000); return; } act.armed = ""; fn(); };
+    return b;
+  }
+  const busyNote = (t) => el("p", "how ld", t);
+  function run(r, key, op, args, after) {
+    const a = actFor(r); a[key] = { busy: true }; draw();
+    rpc(op, { username: r.username, ...args }, op === "pay" ? 180000 : 90000)
+      .then((d) => { if (act === a) { a[key] = { data: d }; after?.(d, a); draw(); } })
+      .catch((e) => { if (act === a) { a[key] = { err: e.message }; draw(); } });
+  }
+  function actionsFor(r) {
+    const a = actFor(r), out = [], row = el("div", "row");
+    const btn = (label, fn) => { const b = el("button", "btn", label); b.type = "button"; b.onclick = fn; row.append(b); return b; };
+    btn(a.check?.data ? "Check again" : "Check connection", () => run(r, "check", "check"));
+    btn("Pay…", () => run(r, "bills", "bills", {}, (d, s) => { s.form = { method: d.methods[0], date: d.today, note: "", skipOlder: false, on: new Set(d.invs.length ? [d.invs[0].no] : []), recharge: Object.fromEntries(d.invs.map((v) => [v.no, v.recharge])) }; s.pay = null; }));
+    row.append(armed("1× login link", "Click again: the ERP makes it and sends it", "link", () => run(r, "link", "link")));
+    out.push(row);
+
+    // Check: the Dock's "Down?" evidence, with fresh sessions
+    if (a.check) {
+      const box = el("div", "sect");
+      if (a.check.busy) box.append(busyNote("Checking through the ERP tab: sessions, modem, neighbours, router…"));
+      else if (a.check.err) box.append(el("p", "warn", a.check.err));
+      else { const d = a.check.data; box.append(el("p", `verdict ${d.verdict[0]}`, d.verdict[1]));
+        const dl = el("dl"); for (const [k, x] of d.facts) dl.append(el("dt", null, k), el("dd", null, x)); box.append(dl);
+        const c = el("button", "mini", "copy summary"); c.type = "button"; c.onclick = () => navigator.clipboard?.writeText(d.text).then(() => { c.textContent = "copied"; setTimeout(() => (c.textContent = "copy summary"), 1200); }); box.append(c); }
+      out.push(box);
+    }
+
+    // Pay: the bills as the ERP has them now, ticked oldest first, paid by the Dock in the ERP tab
+    if (a.bills) {
+      const box = el("div", "sect");
+      if (a.bills.busy) box.append(busyNote("Loading the bills from the ERP…"));
+      else if (a.bills.err) box.append(el("p", "warn", a.bills.err));
+      else {
+        const d = a.bills.data, f = a.form, paying = a.pay?.busy, results = a.pay?.data ? new Map(a.pay.data.invs.map((v) => [v.no, v.result])) : new Map();
+        const open = d.invs.filter((v) => !results.get(v.no)?.ok);
+        if (d.state !== "found" || !d.invs.length) box.append(el("p", "how", d.state === "found" ? `Nothing unpaid${d.paidTo ? `, paid to ${d.paidTo}` : ""}.` : d.err || "No invoices for this username."));
+        else {
+          d.invs.forEach((v, i) => {
+            const res = results.get(v.no), m = el("label", "mrow"), cb = el("input"); cb.type = "checkbox"; cb.checked = f.on.has(v.no) && !res?.ok; cb.disabled = paying || res?.ok;
+            cb.onchange = () => { d.invs.forEach((x, j) => { if (f.skipOlder ? j === i : cb.checked ? j <= i : j >= i) { if (cb.checked) f.on.add(x.no); else f.on.delete(x.no); } }); act.armed = ""; draw(); };
+            const t = el("span"); t.append(v.period || v.no, v.status === "Jatuh Tempo" ? el("span", "late", " · overdue") : "");
+            m.append(cb, t, el("span", "amt", rupiah(v.amount))); box.append(m);
+            const sub = el("div", "msub");
+            if (v.canRecharge && !res?.ok) { const l = el("label"), rc = el("input"); rc.type = "checkbox"; rc.checked = !!f.recharge[v.no]; rc.disabled = paying;
+              rc.onchange = () => { f.recharge[v.no] = rc.checked; act.armed = ""; draw(); }; l.append(rc, v.covered ? " recharge (already covered)" : ` recharge RADIUS (expires ${v.expiry || "?"})`); sub.append(l); }
+            if (v.hutang) sub.append(el("span", "late", `promised to pay by ${String(v.hutang).slice(0, 10)}`));
+            if (res) sub.append(el("span", res.ok ? "good" : "late", res.text + (res.warn ? ` · ${res.warn}` : "")));
+            if (sub.childNodes.length) box.append(sub);
+          });
+          if (open.length) {
+            const ch = open.filter((v) => f.on.has(v.no)), total = ch.reduce((n, v) => n + (Number(v.amount) || 0), 0);
+            const top = ch.length ? d.invs.indexOf(ch[ch.length - 1]) : -1, skipped = d.invs.filter((v, j) => j < top && !f.on.has(v.no) && !results.get(v.no)?.ok).length;
+            const form = el("div", "bform");
+            const sel = el("select"); for (const m of d.methods) { const o = el("option", null, m); o.value = m; o.selected = m === f.method; sel.append(o); } sel.disabled = paying; sel.onchange = () => { f.method = sel.value; act.armed = ""; draw(); };
+            const date = el("input"); date.type = "date"; date.value = f.date; date.disabled = paying; date.onchange = () => { f.date = date.value; act.armed = ""; };
+            const note = el("input"); note.placeholder = skipped ? "Note: why the older months are skipped (10+ letters)" : "Note (optional)"; note.value = f.note; note.disabled = paying; note.setAttribute("data-bwignore", "true"); note.autocomplete = "off";
+            note.oninput = () => { f.note = note.value; act.armed = ""; };
+            form.append(sel, date, note); box.append(form);
+            if (open.length > 1 && d.maySkip) { const l = el("label", "skipold"), cb = el("input"); cb.type = "checkbox"; cb.checked = f.skipOlder; cb.disabled = paying;
+              cb.onchange = () => { f.skipOlder = cb.checked; act.armed = ""; draw(); }; l.append(cb, " Skip older months (the ERP logs it as an override; the note says why)"); box.append(l); }
+            if (paying) box.append(busyNote(`Paying ${ch.length === 1 ? ch[0].period : `${ch.length} months`} in the ERP tab…`));
+            else if (!ch.length) box.append(el("p", "how", "Tick a month to pay."));
+            else if (skipped && !f.skipOlder) box.append(el("p", "how", "Older months are unpaid: tick them too, or skip older months."));
+            else {
+              const what = ch.length === 1 ? ch[0].period : `${ch.length} months`, rc = ch.filter((v) => f.recharge[v.no]).length;
+              box.append(armed(`Mark ${what} Lunas · ${rupiah(total)}${rc ? " · recharge" : ""}`, `Click again: ${what} paid by ${f.method}, ${rupiah(total)}${skipped ? `, ${skipped} older left unpaid` : ""}`, "pay", () => {
+                if (skipped && f.note.trim().length < 10) { a.pay = { err: "Skipping older months needs a note of 10+ letters." }; return draw(); }
+                run(r, "pay", "pay", { nos: ch.map((v) => v.no), method: f.method, date: f.date, note: f.note, skipOlder: f.skipOlder, recharge: Object.fromEntries(ch.map((v) => [v.no, !!f.recharge[v.no]])) },
+                  (res) => { for (const v of res.invs) if (v.result?.ok) f.on.delete(v.no); });
+              }));
+            }
+            if (a.pay?.err) box.append(el("p", "warn", a.pay.err));
+          } else box.append(el("p", "good", "All paid."));
+        }
+      }
+      out.push(box);
+    }
+
+    // 1× link: made by the ERP, which also sends it on its own WhatsApp; if that fails, it goes into this chat's box
+    if (a.link) {
+      const box = el("div", "sect");
+      if (a.link.busy) box.append(busyNote("Making the link in the ERP…"));
+      else if (a.link.err) box.append(el("p", "warn", `Couldn't make the link: ${a.link.err}`));
+      else { const d = a.link.data;
+        box.append(el("p", d.waSent ? "good" : "warn", d.waSent ? `Sent by the ERP's WhatsApp to ${d.phone}.` : `The ERP's WhatsApp didn't send it${d.waError ? ` (${d.waError})` : ""}: put it in this chat.`));
+        const w = el("div", "row"), put = el("button", d.waSent ? "btn" : "btn main", "Into the message box"); put.type = "button"; put.onclick = () => putInBox(d.message); w.append(put);
+        const c = el("button", "btn", "Copy link"); c.type = "button"; c.onclick = () => navigator.clipboard?.writeText(d.link); w.append(c); box.append(w); }
+      out.push(box);
+    }
+    return out;
   }
 
   // The replies as plain text: a line "## Name", then its text (several lines are fine)
@@ -376,6 +531,7 @@
 
   load(GM_getValue(KEY, null));
   GM_addValueChangeListener(KEY, (k, o, v) => { load(v); current.key = ""; tick(); });
+  GM_addValueChangeListener(RES, (k, o, v) => answers(v));
   addEventListener("keydown", (e) => { if (e.altKey && !e.ctrlKey && !e.metaKey && e.code === "KeyK") { e.preventDefault(); toggle(!panel); } }, true);
   setInterval(tick, 700);
 })();

@@ -485,6 +485,61 @@
       view.card = c; view.sel = 0; view.mode = null; remember(c); draw();
     }
     setTimeout(fromHash, 1500); addEventListener("hashchange", fromHash);
+    // Asked from WhatsApp (erp-whatsapp.user.js passes the request into this tab): check a line, load and pay bills, make
+    // the login link, with the same code as the customer card. Each request has an id, and one already run is answered
+    // from memory instead of run again, so a payment can't go twice.
+    const waDone = new Map();
+    const waReply = (id, res) => postMessage("erp-wa-res:" + JSON.stringify({ id, ...res }), location.origin);
+    addEventListener("message", async (e) => {
+      if (e.source !== window || e.origin !== location.origin || typeof e.data !== "string" || !e.data.startsWith("erp-wa:")) return;
+      let q; try { q = JSON.parse(e.data.slice(7)); } catch { return; }
+      if (!q?.id) return;
+      if (waDone.has(q.id)) { const was = waDone.get(q.id); if (was !== "busy") waReply(q.id, was); return; }
+      waDone.set(q.id, "busy");
+      let res; try { res = { ok: true, data: await waOp(q.op, q.args || {}) }; } catch (err) { res = { ok: false, err: err?.message || String(err) }; }
+      waDone.set(q.id, res); waReply(q.id, res);
+    });
+    const waBill = (row) => ({ state: row.state, err: row.err || "", paidTo: row.paidTo || "", invs: (row.invs || []).map((v) => ({ no: v.no, period: v.period, amount: v.amount, status: v.status,
+      hutang: v.hutang, recharge: !!v.recharge, canRecharge: !!v.radius?.canRecharge, covered: !!v.radius?.alreadyCovered, expiry: v.radius?.expiryDate || "", result: v.result || null })) });
+    async function waOp(op, a) {
+      if (op === "ping") return { version: typeof GM_info !== "undefined" ? GM_info.script?.version : "" };
+      await data(); const u = String(a.username || "").toLowerCase(), r = customers?.find((x) => String(x.username || "").toLowerCase() === u);
+      if (!r) throw new Error("Not in the ERP tab's customer list");
+      if (op === "check") { // fresh sessions, then the card's "Down?" evidence
+        live = null; await liveSessions().catch(() => {});
+        await Promise.all([onts ? 0 : ontIndex().catch(() => {}), acs ? 0 : acsIndex().catch(() => {})]);
+        const d = await forensicLoad(r); hist.set(r.username, { at: Date.now(), d });
+        const { facts, v, text, online } = forensicRead(r, d); return { facts, verdict: v, text, online };
+      }
+      if (op === "bills") {
+        const row = { token: r.username, pick: r.username, state: "looking", invs: [] };
+        await lookup(row); if (row.state === "found") await radius(row.invs);
+        const role = myRole(); return { ...waBill(row), methods: METHODS, today: todayIso(), maySkip: !role || SKIP_ROLES.includes(role) };
+      }
+      if (op === "pay") { // the months asked for, checked against what the ERP says now, under the card's rules
+        const row = { token: r.username, pick: r.username, state: "looking", invs: [] };
+        await lookup(row); if (row.state !== "found") throw new Error(row.err || "No unpaid invoices found");
+        const want = new Set(a.nos || []); for (const v of row.invs) v.on = want.has(v.no);
+        const ch = row.invs.filter((v) => v.on);
+        if (!ch.length || ch.length !== want.size) throw new Error("A month you ticked isn't unpaid any more: load the bills again");
+        if (!METHODS.includes(a.method)) throw new Error("Unknown payment method");
+        const top = row.invs.indexOf(ch[ch.length - 1]), skipped = row.invs.filter((v, j) => j < top && !v.on).length;
+        if (skipped && !a.skipOlder) throw new Error("Older months are unpaid: tick them too, or skip older months with a note");
+        if (skipped && myRole() && !SKIP_ROLES.includes(myRole())) throw new Error("Only a finance manager or admin can skip older months");
+        if (skipped && String(a.note || "").trim().length < 10) throw new Error("Skipping older months needs a note of 10+ letters");
+        if (ch.some((v) => a.recharge?.[v.no])) await radius(ch);
+        for (const v of ch) v.recharge = !!a.recharge?.[v.no] && !!v.radius?.canRecharge;
+        await payQueue(ch.map((v) => [row, v]), { method: a.method, date: a.date || todayIso(), note: String(a.note || ""), skipOlder: !!a.skipOlder }, () => {}, "Lunas (Dock · WhatsApp)");
+        bills.delete(r.username); // the customer card asks the ERP again
+        return waBill(row);
+      }
+      if (op === "link") {
+        if (!r.customerDocId) throw new Error("Needs the customer list refreshed (LDN → Pelanggan → Update)");
+        const j = await api(`/api/admin/customers/${encodeURIComponent(r.customerDocId)}/resend-login-link`, {});
+        return { waSent: !!j.waSent, waError: j.waError || "", link: j.magicLink || "", message: j.waMessageText || j.magicLink || "", phone: j.phone || r.phone };
+      }
+      throw new Error(`Unknown request: ${op}`);
+    }
     setInterval(() => { if (document.visibilityState === "visible") { mount(); place(); learn(); } }, 5000);
     setTimeout(() => radarTick(), 8000); setInterval(() => radarTick(), 60000);
     setTimeout(() => dropTick(), 20000); setInterval(() => dropTick(), 60000);
