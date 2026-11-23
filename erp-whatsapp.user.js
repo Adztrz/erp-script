@@ -2,13 +2,14 @@
 // @name         ERP — Dock in WhatsApp Web
 // @namespace    adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/erp-script/main/icons/dock.png
-// @version      1.0.0
+// @version      1.0.1
 // @description  The Dock's customer card beside the open chat in WhatsApp Web: who is writing (found by their number, a username they sent, or their name), online or not, plan, area, unpaid months and any outage on their router, with replies that fill in their name, username and bill. A reply goes into the message box; you send it yourself. The customer list comes from the ERP tab, through Tampermonkey's storage: nothing is fetched from WhatsApp, and nothing leaves this browser.
 // @match        https://*/*
 // @run-at       document-idle
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_addValueChangeListener
+// @grant        unsafeWindow
 // @homepageURL  https://github.com/Adztrz/erp-script
 // @updateURL    https://raw.githubusercontent.com/Adztrz/erp-script/main/erp-whatsapp.user.js
 // @downloadURL  https://raw.githubusercontent.com/Adztrz/erp-script/main/erp-whatsapp.user.js
@@ -37,14 +38,21 @@
   // has loaded in this site's IndexedDB. Each minute the parts that changed are copied, slimmed, to Tampermonkey's
   // storage, which the same script on WhatsApp Web can read. The site's address goes with them, for "Open in the Dock".
   if (onErp) {
-    const get = (db, key) => new Promise((ok) => { const q = db.transaction("ldn").objectStore("ldn").get(key); q.onsuccess = () => ok(q.result); q.onerror = () => ok(null); });
-    const keys = (db) => new Promise((ok) => { const q = db.transaction("ldn").objectStore("ldn").getAllKeys(); q.onsuccess = () => ok(q.result || []); q.onerror = () => ok([]); });
+    // Firefox runs this script in a sandbox: the site's own IndexedDB is reached through unsafeWindow there, and what it
+    // returns is made plain data (through the page's JSON) before use. Chrome gives the same database either way.
+    const page = typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
+    const plain = (v) => (v == null ? v : JSON.parse(page.JSON.stringify(v)));
+    const get = (db, key) => new Promise((ok) => { const q = db.transaction("ldn").objectStore("ldn").get(key); q.onsuccess = () => ok(plain(q.result)); q.onerror = () => ok(null); });
+    const keys = (db) => new Promise((ok) => { const q = db.transaction("ldn").objectStore("ldn").getAllKeys(); q.onsuccess = () => ok(plain(q.result) || []); q.onerror = () => ok([]); });
+    const openDb = (f) => new Promise((ok, no) => { const r = f.open("erp-fast", 1); r.onupgradeneeded = () => r.result.createObjectStore("ldn"); r.onsuccess = () => ok(r.result); r.onerror = () => no(r.error); });
     let sent = "";
     async function sync() {
-      let db; try { db = await new Promise((ok, no) => { const r = indexedDB.open("erp-fast", 1); r.onupgradeneeded = () => r.result.createObjectStore("ldn"); r.onsuccess = () => ok(r.result); r.onerror = () => no(r.error); }); } catch { return; }
+      let db = null, all = null;
+      for (const f of [...new Set([page.indexedDB, window.indexedDB])]) {
+        try { const d = await openDb(f); const a = d.objectStoreNames.contains("ldn") ? await get(d, "all") : null; if (a?.rows?.length) { db = d; all = a; break; } d.close(); } catch { /* the other one */ }
+      }
+      if (!db) return;
       try {
-        if (!db.objectStoreNames.contains("ldn")) return;
-        const all = await get(db, "all"); if (!all?.rows?.length) return;
         const months = (await keys(db)).filter((k) => /^inv-\d{4}-\d{1,2}$/.test(k));
         const inv = await Promise.all(months.map((k) => get(db, k)));
         const incidents = ((await get(db, "incidents")) || []).filter((x) => x.state === "open");
