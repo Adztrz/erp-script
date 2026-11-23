@@ -2,7 +2,7 @@
 // @name         ERP — Dock in WhatsApp Web
 // @namespace    adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/erp-script/main/icons/dock.png
-// @version      1.2.0
+// @version      1.3.0
 // @description  The Dock's customer card beside the open chat in WhatsApp Web: who is writing (found by their number, a username they sent, or their name), online or not, plan, area, unpaid months and any outage on their router, with replies that fill in their name, username and bill; Check connection, Pay and the 1× login link are done by the Dock in your open ERP tab. A reply goes into the message box; you send it yourself. The customer list comes from the ERP tab, through Tampermonkey's storage: nothing is fetched from WhatsApp, and nothing leaves this browser.
 // @match        https://*/*
 // @run-at       document-idle
@@ -107,6 +107,7 @@
       const r = { username, nama, phone, desa, kec, paket, router, isolir: !!isolir, online: !!online, expirasi, address, inactive: !!inactive };
       r._name = fold(nama); r._user = fold(username).replace(/ /g, "");
       r._hay = ` ${r._name} ${r._user} ${fold(desa)} ${fold(router)} `; r._sound = ` ${r._hay.trim().split(" ").map(sound).join(" ")} `;
+      r._nsound = ` ${r._name.split(" ").map(sound).join(" ")} `;
       return r;
     });
     byPhone = new Map(); byUser = new Map();
@@ -185,8 +186,54 @@
     for (const t of texts.reverse()) for (const w of t.toLowerCase().split(/[^a-z0-9._-]+/)) { const r = byUser.get(w.replace(/[^a-z0-9]/g, "")); if (r && /\d/.test(w) && !found.includes(r)) found.push(r); }
     return found;
   }
+  // ---- group chats ----
+  // A group's messages each carry the sender: their number in the message id (when WhatsApp still shows numbers), and
+  // the name your phone saved them under ("BUDI SANTOSO CONTOH R9"). The group itself is nobody's chat, so it gets a list
+  // of the customers writing in it, newest first, instead of one card.
+  const isGroup = () => !!main()?.querySelector("[data-id*='@g.us']");
+  function msgOf(row) {
+    const id = row.getAttribute("data-id") || "";
+    if (!/@g\.us/.test(id) || id.startsWith("true_")) return null; // only what others sent
+    const pre = row.querySelector("[data-pre-plain-text]")?.getAttribute("data-pre-plain-text") || "";
+    const m = /^\[([^\]]*)\]\s*(.*?):\s*$/.exec(pre), part = /@g\.us_[^_]+_(\d{9,15})@c\.us/.exec(id)?.[1];
+    return { id, phone: part ? phoneKey(part) : "", name: (m?.[2] || "").trim(), at: (m?.[1] || "").split(",")[0].trim(),
+      text: [...row.querySelectorAll(".selectable-text")].map((e) => e.innerText || "").join(" ") };
+  }
+  // the customer a saved name points to: at least two of its words in the record, one of them in the customer's own name
+  const guessMemo = new Map();
+  function nameGuess(display) {
+    if (guessMemo.has(display)) return guessMemo.get(display);
+    const words = [...new Set(fold(display).split(" ").filter((w) => w.length >= 3 && !/\d/.test(w)).map(sound))];
+    let best = 0, out = [];
+    if (words.length >= 2) for (const r of rows) {
+      let all = 0, own = 0; for (const w of words) { if (r._sound.includes(` ${w} `)) all++; if (r._nsound.includes(` ${w} `)) own++; }
+      const n = own ? all : 0; if (n > best) { best = n; out = [r]; } else if (n && n === best) out.push(r);
+    }
+    const res = best >= 2 && out.length <= 3 ? out : [];
+    if (guessMemo.size > 300) guessMemo.clear(); guessMemo.set(display, res); return res;
+  }
+  // a sender → the customer(s) they are, and how that was found
+  function senderOf(msg, texts = msg.text) {
+    if (msg.phone && byPhone.get(msg.phone)?.length) return { list: byPhone.get(msg.phone), how: "their number" };
+    for (const w of String(texts).toLowerCase().split(/[^a-z0-9._-]+/)) { const r = byUser.get(w.replace(/[^a-z0-9]/g, "")); if (r && /\d/.test(w)) return { list: [r], how: "a username they sent" }; }
+    const g = msg.name ? nameGuess(msg.name) : []; return { list: g, how: g.length ? "their saved name" : "" };
+  }
+  function groupPeople() {
+    const m = main(); if (!m) return [];
+    const seen = new Set(), msgs = [...m.querySelectorAll("[data-id]")].map(msgOf).filter((x) => x && !seen.has(x.id) && seen.add(x.id));
+    const people = new Map();
+    for (const x of msgs.reverse()) { // newest first
+      const key = x.phone || fold(x.name); if (!key) continue;
+      const p = people.get(key); if (p) { p.texts += ` ${x.text}`; continue; }
+      if (people.size >= 15) continue;
+      people.set(key, { key, name: x.name, phone: x.phone, at: x.at, texts: x.text });
+    }
+    return [...people.values()].map((p) => ({ ...p, ...senderOf(p, p.texts) }));
+  }
+
   function whoIsIt() {
     const title = chatTitle(); if (!title) return null;
+    if (isGroup()) return { group: true, title, people: groupPeople() };
     const phones = [...chatPhones()], byNum = phones.flatMap((p) => byPhone.get(p) || []);
     if (byNum.length) return { how: "their number", list: byNum, title };
     const sent = chatUsernames(); if (sent.length) return { how: "a username they sent", list: sent, title };
@@ -280,6 +327,8 @@
     .erp-wa .item .t { color: var(--strong); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .erp-wa .item .r { color: var(--muted); font: 12px var(--mono); }
     .erp-wa .item .s { grid-column: 2 / 4; color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .erp-wa .item.miss .t { color: var(--muted); font-weight: 400; }
+    .erp-wa .item .s + .s { color: var(--text); }
     .erp-wa .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
     .erp-wa .dot.on { background: var(--on); } .erp-wa .dot.iso { background: var(--bad); } .erp-wa .dot.off { background: transparent; box-shadow: inset 0 0 0 1.5px var(--muted); }
     .erp-wa .card { display: grid; gap: 16px; }
@@ -449,14 +498,47 @@
       body.append(listOf(hits, (r) => { current.pick = r; query = ""; draw(); }));
       return;
     }
-    const who = current.who, r = current.pick || (who && !who.guess && who.list.length === 1 ? who.list[0] : null);
+    const who = current.who;
+    if (who?.group && !current.pick) return drawGroup(body, who);
+    const r = current.pick || (who && !who.guess && who.list.length === 1 ? who.list[0] : null);
     if (!who && !r) { shown.card = ""; body.append(el("p", "empty", "Open a chat: the customer writing shows here.")); return; }
-    if (r) return drawCard(body, r, current.pick ? "picked" : who.how, !current.pick && who?.list.length > 1);
+    if (r) return drawCard(body, r, current.pick ? current.pickHow || "picked" : who.how, !current.pick && who?.list.length > 1);
     // more than one, or only a guess by name: let the choice be made
     shown.card = "";
     body.append(el("p", "how", who.list.length ? `${who.title}: ${who.guess ? "maybe" : `found by ${who.how}`}, pick one` : `${who.title}: not found by number or name. Search above.`));
     if (who.list.length) body.append(listOf(who.list, (c) => { current.pick = c; draw(); }));
   }
+  function drawGroup(body, who) {
+    shown.card = "";
+    const found = who.people.filter((p) => p.list.length);
+    body.append(el("p", "how", `Group · ${who.title}. ${found.length ? `${found.length} of the ${who.people.length} people writing here ${found.length === 1 ? "is a customer" : "are customers"}, newest first` : who.people.length ? "Nobody writing here was found as a customer" : "No messages from others on screen yet"}. Click a message to show its sender.`));
+    if (current.note) body.append(el("p", "warn", current.note));
+    const wrap = el("div", "list"), sig = who.people.map((p) => p.key + p.list.length).join(",");
+    if (sig !== shown.list) { wrap.classList.add("arrive"); shown.list = sig; }
+    for (const p of who.people) {
+      const who2 = p.name || p.phone;
+      if (p.list.length) for (const r of p.list) {
+        const b = item(r, () => { current.pick = r; current.pickHow = `${who2} in this group (${p.how})`; current.note = ""; draw(); });
+        b.append(el("span", "s", `${p.at ? `${p.at} · ` : ""}${who2}${p.list.length > 1 ? " · maybe" : ""}`)); wrap.append(b);
+      } else {
+        const b = el("button", "item miss"); b.type = "button"; b.title = "Search the customer list for this name";
+        b.append(el("span", "dot off"), el("span", "t", who2), el("span", "r", p.at || ""), el("span", "s", "not found as a customer · search"));
+        b.onclick = () => { query = fold(p.name).split(" ").filter((w) => !/\d/.test(w)).slice(0, 2).join(" ") || p.phone; current.note = ""; draw(); };
+        wrap.append(b);
+      }
+    }
+    if (who.people.length) body.append(wrap);
+  }
+  // click a message in a group: the panel shows whoever sent it
+  addEventListener("click", (e) => {
+    if (!panel || !current.who?.group || e.target.closest?.(".erp-wa")) return;
+    const row = e.target.closest?.("#main [data-id]"); if (!row) return;
+    const x = msgOf(row); if (!x) return;
+    const hit = senderOf(x), name = x.name || x.phone || "this sender";
+    if (hit.list.length === 1) { current.pick = hit.list[0]; current.pickHow = `${name} in this group (${hit.how})`; current.note = ""; }
+    else { current.pick = null; current.note = hit.list.length ? `${name}: more than one customer fits, pick below.` : `${name} isn't found as a customer.`; }
+    draw();
+  }, true);
   // a list of customers rises in one after another when it's a new list, and stays still while you keep typing into it
   function listOf(rows, onPick) {
     const wrap = el("div", "list"), sig = rows.map((r) => r.username).join(",");
@@ -487,7 +569,7 @@
     const live = act.user === r.username && act.check?.data ? act.check.data : null, on = live ? live.online : r.online;
     const pill = el("span", "pill"); pill.append(el("span", `dot ${r.isolir ? "iso" : on ? "on" : "off"}`), r.isolir ? "Isolir" : on ? "Online" : "Offline");
     if (live) { pill.title = "As the ERP's sessions said at the last Check"; if (shown.check !== live) { shown.check = live; pill.classList.add("swipe"); } }
-    top.append(copyable(el("h3", null, r.nama || r.username), r.nama || r.username), (() => { const w = el("div", "row"); w.style.alignItems = "center"; w.append(pill, el("span", "how", how === "picked" ? "picked by you" : `found by ${how}`)); return w; })());
+    top.append(copyable(el("h3", null, r.nama || r.username), r.nama || r.username), (() => { const w = el("div", "row"); w.style.alignItems = "center"; w.append(pill, el("span", "how", how === "picked" ? "picked by you" : /in this group/.test(how) ? how : `found by ${how}`)); return w; })());
     card.append(top);
     const out = outageOf(r);
     if (out) card.append(el("div", "alert", `Outage open: ${out.title}, since ${hhmm(out.start)}`));
@@ -506,7 +588,7 @@
     card.append(dl);
     const acts = el("div", "row");
     if (data.origin) { const a = el("a", "btn main", "Open in the Dock"), go = svgIcon("M7 17 17 7M9 7h8v8"); go.setAttribute("fill", "none"); go.setAttribute("stroke", "currentColor"); go.setAttribute("stroke-width", "1.8"); go.setAttribute("stroke-linecap", "round"); go.style.cssText = "width:14px;height:14px"; a.append(go); a.href = `${data.origin}/ldn-radius#dock=${encodeURIComponent(r.username)}`; a.target = "erp-dock"; a.rel = "noopener"; acts.append(a); }
-    if (others || current.pick) { const o = el("button", "btn", others ? "Not them?" : "Back"); o.type = "button"; o.onclick = () => { current.pick = null; if (others) current.who = { ...current.who, guess: true }; draw(); }; acts.append(o); }
+    if (others || current.pick) { const o = el("button", "btn", others ? "Not them?" : current.who?.group ? "Back to the group" : "Back"); o.type = "button"; o.onclick = () => { current.pick = null; current.note = ""; if (others) current.who = { ...current.who, guess: true }; draw(); }; acts.append(o); }
     card.append(acts);
     const lab = tagDot("Replies", fresh);
     const ed = el("button", "mini sp", "edit"); ed.type = "button"; ed.onclick = () => { editing = true; draw(); }; lab.append(ed);
@@ -657,11 +739,11 @@
   function tick() {
     if (!document.body) return;
     mount();
-    const m = main(), key = m ? `${chatTitle()}|${m.querySelector("[data-id]")?.getAttribute("data-id") || ""}|${rows.length}` : "";
+    const m = main(), ids = m ? m.querySelectorAll("[data-id]") : [], key = m ? `${chatTitle()}|${ids[0]?.getAttribute("data-id") || ""}|${ids[ids.length - 1]?.getAttribute("data-id") || ""}|${rows.length}` : "";
     if (key === current.key) return;
     const sameChat = key.split("|")[0] === current.key.split("|")[0];
     current.key = key;
-    if (!sameChat) { current.pick = null; query = ""; editing = false; }
+    if (!sameChat) { current.pick = null; current.note = ""; query = ""; editing = false; }
     current.who = m ? whoIsIt() : null;
     if (document.activeElement?.closest?.(".erp-wa textarea")) return; // don't redraw over the reply editor
     draw();

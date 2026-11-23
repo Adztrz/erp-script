@@ -298,3 +298,14 @@ test("whatsapp: numbers, bills and replies", () => {
   assert.equal(fill("Kak {nama}, {username}: {bulan} {tagihan} di {desa} {x}", r), "Kak Budi, budi0101: Oktober 2026, November 2026 Rp 300.000 di Sukamaju {x}");
   assert.deepEqual(parseReplies("## A\none\ntwo\n\n## B\nthree\n## C\n"), [["A", "one\ntwo"], ["B", "three"]]);
 });
+
+test("whatsapp: a group message's sender and the customer their saved name points to", () => {
+  const waSrc = readFileSync("erp-whatsapp.user.js", "utf8");
+  const fold = (s) => String(s ?? "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const mk = (nama, username, desa, router) => { const r = { nama, username, desa, router, _name: fold(nama), _user: username };
+    r._hay = ` ${r._name} ${username} ${fold(desa)} ${fold(router)} `; r._sound = ` ${r._hay.trim().split(" ").join(" ")} `; r._nsound = ` ${r._name} `; return r; };
+  const rows = [mk("BUDI SANTOSO", "budi0101", "CONTOH", "RO CONTOH"), mk("SANTOSO WIBOWO", "santo0102", "CONTOH", "RO CONTOH"), mk("SITI AMINAH", "siti0201", "LAINNYA", "RO LAINNYA")];
+  const { nameGuess } = load(waSrc, ["sound", "nameGuess"], { fold, rows, guessMemo: new Map() }, ["nameGuess"]);
+  assert.deepEqual(nameGuess("BUDI SANTOSO CONTOH R9 Budi").map((r) => r.username), ["budi0101"]);
+  assert.deepEqual(nameGuess("Pak RT Contoh"), []); // only the village: nobody's name
+});
