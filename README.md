@@ -141,6 +141,19 @@ The script is built from `src/`: parts of the one script cut at its own section 
 
 Install it like the main script: open the raw file URL, `https://raw.githubusercontent.com/Adztrz/erp-script/main/erp-router-bridge.user.js`, and Tampermonkey offers to install it. The first time it contacts a router, Tampermonkey asks you to allow that address.
 
+## Dock in WhatsApp Web
+
+`erp-whatsapp.user.js` is a second, optional userscript. It puts the Dock's customer card beside the open chat in WhatsApp Web (Alt+K shows or hides it):
+
+- **Who is writing**, found by their number, then by a username they sent in their last messages, then by the contact's name (offered to pick, not assumed). A search box finds anyone else.
+- **Their state**: online, offline or isolir, plan, area, router, address, expiry, unpaid months with the total, and an open outage on their router or PON port.
+- **Replies** that fill in `{nama}`, `{username}`, `{desa}`, `{bulan}`, `{tagihan}` and more. Click one and it goes into WhatsApp's message box; you send it yourself. Shift+click copies. **edit** changes them.
+- **Open in the Dock ↗** opens that customer's card in the ERP (`#dock=<username>`, Dock 3.17.0), reusing the same tab.
+
+WhatsApp can't read the ERP's storage, so the script runs in both places: in an ERP tab it copies what the Dock keeps (the customer list and the invoice months it has loaded) to Tampermonkey's storage once a minute when it changed, and on WhatsApp it reads that copy. Nothing is fetched from WhatsApp and nothing leaves the browser. The card is as fresh as your open ERP tab (its age shows at the top); bills show for the invoice months the Dock has loaded (Finance → Invoices once a day brings this month's).
+
+Install it like the main script: `https://raw.githubusercontent.com/Adztrz/erp-script/main/erp-whatsapp.user.js`.
+
 ## Monochrome theme
 
 The half-circle button at the top of the Dock turns the whole ERP black and bone, like Faust: near-black pages, graphite cards, bone for primary buttons, links and focus. Panels with hard-coded blue, violet or cyan (BOQ box, route cards, badges) turn to warm greys of the same lightness. Red, green and amber stay, so errors and status still read. It's applied before the page draws (no flash), remembered in this browser, and the button turns it off again.

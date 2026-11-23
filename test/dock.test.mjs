@@ -285,3 +285,16 @@ test("search: Indonesian spellings of one name sound the same", () => {
   assert.notEqual(sound("sugiarti"), sound("sugiarto"));
   assert.equal(sound("mulyadi"), "mulyadi"); // a y after a consonant stays
 });
+
+test("whatsapp: numbers, bills and replies", () => {
+  const waSrc = readFileSync("erp-whatsapp.user.js", "utf8");
+  const data = { bills: { budi0101: [["Oktober 2026", 150000, "Belum Lunas"], ["November 2026", 150000, "Jatuh Tempo"], ["September 2026", 150000, "Lunas"]] } };
+  const { phoneKey, fill, parseReplies, billsOf } = load(waSrc, ["phoneKey", "rupiah", "paid", "titleCase", "periodTime", "billsOf", "fill", "parseReplies"],
+    { data, MONTHS: ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"] }, ["phoneKey", "fill", "parseReplies", "billsOf"]);
+  for (const p of ["+62 812-3456-7890", "6281234567890", "081234567890", "81234567890"]) assert.equal(phoneKey(p), "081234567890");
+  assert.equal(phoneKey("12345"), "");
+  const r = { nama: "BUDI SANTOSO", username: "budi0101", desa: "SUKAMAJU", _user: "budi0101" };
+  assert.deepEqual(billsOf(r).unpaid.map((b) => b.period), ["Oktober 2026", "November 2026"]);
+  assert.equal(fill("Kak {nama}, {username}: {bulan} {tagihan} di {desa} {x}", r), "Kak Budi, budi0101: Oktober 2026, November 2026 Rp 300.000 di Sukamaju {x}");
+  assert.deepEqual(parseReplies("## A\none\ntwo\n\n## B\nthree\n## C\n"), [["A", "one\ntwo"], ["B", "three"]]);
+});

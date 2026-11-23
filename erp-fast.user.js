@@ -2,7 +2,7 @@
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/erp-script/main/icons/dock.png
-// @version      3.16.5
+// @version      3.17.0
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -5207,6 +5207,17 @@
     for (const m of ["pushState", "replaceState"]) { const orig = history[m]; history[m] = function () { const r = orig.apply(this, arguments); setTimeout(tick, 300); setTimeout(runPending, 1200); return r; }; }
     addEventListener("popstate", () => setTimeout(tick, 300));
     if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", () => setTimeout(tick, 600)); else setTimeout(tick, 600);
+    // Opened from WhatsApp (erp-whatsapp.user.js, "Open in the Dock"): #dock=<username> opens that customer's card. The
+    // address is cleaned at once, so a reload doesn't open it again; the same tab is reused for the next customer.
+    async function fromHash() {
+      const m = /^#dock=([^&]+)/.exec(location.hash); if (!m || !document.body) return;
+      const u = decodeURIComponent(m[1]).toLowerCase();
+      history.replaceState(history.state, "", location.pathname + location.search);
+      await data(); const c = customers?.find((r) => String(r.username || "").toLowerCase() === u); if (!c) return;
+      mount(); if (!panel) await open();
+      view.card = c; view.sel = 0; view.mode = null; remember(c); draw();
+    }
+    setTimeout(fromHash, 1500); addEventListener("hashchange", fromHash);
     setInterval(() => { if (document.visibilityState === "visible") { mount(); place(); learn(); } }, 5000);
     setTimeout(() => radarTick(), 8000); setInterval(() => radarTick(), 60000);
     setTimeout(() => dropTick(), 20000); setInterval(() => dropTick(), 60000);

@@ -474,6 +474,17 @@
     for (const m of ["pushState", "replaceState"]) { const orig = history[m]; history[m] = function () { const r = orig.apply(this, arguments); setTimeout(tick, 300); setTimeout(runPending, 1200); return r; }; }
     addEventListener("popstate", () => setTimeout(tick, 300));
     if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", () => setTimeout(tick, 600)); else setTimeout(tick, 600);
+    // Opened from WhatsApp (erp-whatsapp.user.js, "Open in the Dock"): #dock=<username> opens that customer's card. The
+    // address is cleaned at once, so a reload doesn't open it again; the same tab is reused for the next customer.
+    async function fromHash() {
+      const m = /^#dock=([^&]+)/.exec(location.hash); if (!m || !document.body) return;
+      const u = decodeURIComponent(m[1]).toLowerCase();
+      history.replaceState(history.state, "", location.pathname + location.search);
+      await data(); const c = customers?.find((r) => String(r.username || "").toLowerCase() === u); if (!c) return;
+      mount(); if (!panel) await open();
+      view.card = c; view.sel = 0; view.mode = null; remember(c); draw();
+    }
+    setTimeout(fromHash, 1500); addEventListener("hashchange", fromHash);
     setInterval(() => { if (document.visibilityState === "visible") { mount(); place(); learn(); } }, 5000);
     setTimeout(() => radarTick(), 8000); setInterval(() => radarTick(), 60000);
     setTimeout(() => dropTick(), 20000); setInterval(() => dropTick(), 60000);
