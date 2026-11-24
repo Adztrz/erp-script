@@ -568,6 +568,10 @@
           modem: o ? { olt: o.olt, pon: o.pon, st: o.st || "", rx: o.rx ?? null, seen: o.seen || "", sn: o.sn || "" } : null, tr069: dev ? { inform: dev.inform || "", model: dev.model || dev.productClass || "" } : null,
           port: port.length ? { all: port.length, off: port.filter((x) => !/online|working/i.test(x.st || "")).length } : null };
       }
+      if (op === "traffic") { // the card's Traffic: the rate now against the plan, this session, since the start
+        const t = await trafficRead(r, false), say = trafficSay(t, r);
+        return { ...say, plan: t.plan, down: t.rate?.down ?? null, watching: t.watching };
+      }
       if (op === "remote") { // the ERP's 5-minute port on the RO to the modem's own page (logged, as the card's Remote)
         const j = await api(`/api/noc/remote-onu?q=${encodeURIComponent(r.username)}`), c = (j.hasil || []).find((x) => lower(x.username) === u);
         if (!c) throw new Error("The ERP's Remote ONU doesn't know this username");

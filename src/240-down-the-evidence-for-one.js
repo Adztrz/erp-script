@@ -85,6 +85,65 @@
 
     // the outage report for the technicians, the notice for customers and their numbers (the radar's report box, and
     // WhatsApp's outage list)
+    // ---- Traffic: how much a customer uses, now and over time ----
+    // RADIUS counts each session's bytes and reports them every 5 minutes. Now: the bytes between two reports (the ERP's
+    // usage total checked every 30 s while the card is open: a change is one 5-minute report; or two session readings
+    // this tab took), against the plan's speed. A line used near its plan's speed is slow because it's full, not broken.
+    const usageSeen = new Map(); // username → { tot: [in, out], rate, at }
+    const planMbps = (p) => { const m = /(\d+(?:[.,]\d+)?)\s*_?\s*MBPS/i.exec(String(p || "")); return m ? Number(m[1].replace(",", ".")) : 0; };
+    const bytes = (n) => { n = Number(n) || 0; const u = ["B", "KB", "MB", "GB", "TB"]; let i = 0; while (n >= 1000 && i < 4) { n /= 1000; i++; } return `${n >= 100 || i === 0 ? Math.round(n) : n.toFixed(1)} ${u[i]}`.replace(".", ","); };
+    const bits = (bps) => (bps >= 1e6 ? `${(bps / 1e6).toFixed(bps >= 1e7 ? 0 : 1).replace(".", ",")} Mbit/s` : `${Math.round(bps / 1000)} kbit/s`);
+    async function trafficRead(r, refresh) {
+      const u = lower(r.username), now = Date.now();
+      if (refresh || !live || now - live.at > 5 * 60000) { live = null; await liveSessions().catch(() => {}); }
+      const j = await api(`/api/admin/ldn-radius/panel?view=usage&username=${encodeURIComponent(r.username)}`).catch(() => null), use = j?.usage?.ok ? j.usage : null;
+      const seen = usageSeen.get(u);
+      if (use) {
+        const tot = [Number(use.in) || 0, Number(use.out) || 0];
+        if (seen && (tot[0] !== seen.tot[0] || tot[1] !== seen.tot[1]) && tot[1] >= seen.tot[1]) // one 5-minute report came in since the last look
+          usageSeen.set(u, { tot, at: now, rate: { down: ((tot[1] - seen.tot[1]) * 8) / 300, up: ((tot[0] - seen.tot[0]) * 8) / 300, to: now, how: "report" }, since: seen.since });
+        else if (!seen) usageSeen.set(u, { tot, at: now, since: now });
+      }
+      const s = live?.by.get(u), lr = liveRates.get(u), us = usageSeen.get(u)?.rate;
+      const rate = us && now - us.to < 10 * 60000 ? us : lr && now - lr.to < 20 * 60000 ? { ...lr, how: "sessions" } : null;
+      return { use, sess: s ? { dl: s.dl, ul: s.ul, start: s.start, upd: s.upd, up: s.up } : null, rate, plan: planMbps(r.paket), watching: usageSeen.get(u)?.since || now };
+    }
+    function trafficSay(t, r) {
+      const lines = [], plan = t.plan, pct = t.rate && plan ? t.rate.down / (plan * 1e6) : null;
+      const verdict = !t.sess ? (r.isolir ? "Isolir: no session, so no traffic." : "Not online: no session to measure.")
+        : !t.rate ? null
+        : pct != null && pct >= 0.85 ? `Using ${Math.round(pct * 100)}% of the ${plan} Mbps plan: slow because the line is full (streaming, downloads, many devices), not a fault.`
+        : pct != null && pct >= 0.5 ? `Busy: ${Math.round(pct * 100)}% of the ${plan} Mbps plan in use.`
+        : t.rate.down < 50000 ? "Online but hardly any traffic: if they say it's down, their WiFi or devices may not be reaching the modem."
+        : `Light use${plan ? `: ${Math.round(pct * 100)}% of the ${plan} Mbps plan` : ""}.`;
+      if (t.rate) lines.push(["Now", `↓ ${bits(t.rate.down)} · ↑ ${bits(t.rate.up)}${t.rate.how === "report" ? ` · the 5 minutes to ${hhmm(t.rate.to)}` : ` · ${hhmm(t.rate.from)}–${hhmm(t.rate.to)}`}`]);
+      if (t.sess) lines.push(["This session", `↓ ${bytes(t.sess.dl)} · ↑ ${bytes(t.sess.ul)} · online ${t.sess.up >= 86400 ? `${Math.floor(t.sess.up / 86400)} d ${Math.floor((t.sess.up % 86400) / 3600)} h` : t.sess.up >= 3600 ? `${Math.floor(t.sess.up / 3600)} h ${Math.floor((t.sess.up % 3600) / 60)} min` : `${Math.floor(t.sess.up / 60)} min`}${t.sess.up > 600 ? ` · average ↓ ${bits((t.sess.dl * 8) / t.sess.up)}` : ""}`]);
+      if (t.use) lines.push([`Since ${t.use.firstSeen && !isNaN(Date.parse(t.use.firstSeen)) ? new Date(t.use.firstSeen).toLocaleDateString("id-ID", { month: "short", year: "numeric" }) : "the start"}`, `↓ ${bytes(t.use.out)} · ↑ ${bytes(t.use.in)} · ${t.use.sessions} session${t.use.sessions === 1 ? "" : "s"}`]);
+      return { verdict, lines, pct, waiting: !!t.sess && !t.rate };
+    }
+    function trafficBox(r) {
+      const box = el("div", "near hist traffic rise"); box.style.setProperty("--i", "2");
+      const head = () => { const e = el("div", "eyebrow"); e.style.margin = "0 0 8px"; e.append("Traffic"); return e; };
+      let timer = null, polls = 0;
+      const show = (t) => {
+        const say = trafficSay(t, r), parts = [head()];
+        if (say.verdict) parts.push(el("p", `verdict ${say.pct >= 0.85 ? "warn" : !t.sess ? "off" : "ok"}`, say.verdict));
+        if (t.rate && t.plan) { const bar = el("div", "tbar"), fill = el("span"); fill.style.width = `${Math.min(100, Math.round((t.rate.down / (t.plan * 1e6)) * 100))}%`; if (say.pct >= 0.85) bar.classList.add("full");
+          bar.title = `${bits(t.rate.down)} of ${t.plan} Mbps`; bar.append(fill); parts.push(bar); }
+        const dl = el("dl", "facts"); for (const [k, v] of say.lines) dl.append(el("dt", null, k), el("dd", null, v)); parts.push(dl);
+        if (say.waiting) parts.push(el("p", "note ld", `Watching for the next 5-minute report (since ${hhmm(t.watching)}): the rate shows when it comes in.`));
+        box.replaceChildren(...parts);
+      };
+      const poll = async (refresh) => {
+        if (!box.isConnected && polls) return clearInterval(timer);
+        polls++; try { show(await trafficRead(r, refresh)); } catch (e) { box.replaceChildren(head(), el("p", "note late", e.message)); }
+        if (polls > 24) clearInterval(timer); // 12 minutes, then it rests
+      };
+      box.append(head(), el("p", "note ld", "Reading the session and its traffic…"));
+      setTimeout(() => { poll(false); timer = setInterval(() => poll(false), 30000); }, 0);
+      return box;
+    }
+
     function reportText({ title, down, total, since, custs, age }) {
       const title1 = (d) => String(d).toLowerCase().replace(/(^|\s)\S/g, (x) => x.toUpperCase()); // KASIHAN and Kasihan are one village
       const vil = new Map(); for (const c of custs) { const d = c.desa ? title1(c.desa.trim()) : "?"; vil.set(d, (vil.get(d) || 0) + 1); }

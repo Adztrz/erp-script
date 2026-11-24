@@ -5,6 +5,8 @@
     // which of its customers are offline, by village and on a map.
     const RADAR_AT = "erpDock.radarAt", RADAR_EVERY = 5 * 60000, RADAR_KEEP = 48 * 3600000;
     let radar = null, radarOff = "", radarDrawn = 0, areas = null, live = null, liveLoading = null;
+    // each session's byte counters at the last two readings give its rate between them (see Traffic)
+    let lastLive = null; const liveRates = new Map();
     const median = (a) => { const x = a.filter((v) => v != null).sort((p, q) => p - q); return x.length ? x[Math.floor(x.length / 2)] : null; };
     const hhmm = (t) => new Date(t).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
     async function radarTick(force) {
@@ -69,7 +71,9 @@
       if (live && Date.now() - live.at < 2 * 60000) return Promise.resolve(live);
       return (liveLoading ||= api("/api/admin/ldn-radius/panel?view=online").then((j) => {
         const by = new Map(); for (const x of j.sessions || []) by.set(String(x.username).toLowerCase(), { ip: x.nasipaddress, up: Number(x.uptimeSec) || 0, addr: x.framedipaddress, ro: x.router, type: x.userType,
-          start: Date.parse(x.acctstarttime) || 0, upd: Date.parse(x.acctupdatetime) || 0, mac: x.mac || "" });
-        return (live = { at: Date.now(), by });
+          start: Date.parse(x.acctstarttime) || 0, upd: Date.parse(x.acctupdatetime) || 0, mac: x.mac || "", dl: Number(x.download) || 0, ul: Number(x.upload) || 0, sid: x.acctsessionid || "" });
+        if (lastLive) for (const [u, s] of by) { const p = lastLive.by.get(u);
+          if (p && p.sid === s.sid && s.upd > p.upd && s.dl >= p.dl && s.ul >= p.ul) liveRates.set(u, { down: ((s.dl - p.dl) * 8000) / (s.upd - p.upd), up: ((s.ul - p.ul) * 8000) / (s.upd - p.upd), from: p.upd, to: s.upd }); }
+        return (live = lastLive = { at: Date.now(), by });
       }).finally(() => { liveLoading = null; }));
     }

@@ -2,7 +2,7 @@
 // @name         ERP — Dock in WhatsApp Web
 // @namespace    adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/erp-script/main/icons/dock.png
-// @version      1.5.0
+// @version      1.6.0
 // @description  The Dock's customer card beside the open chat in WhatsApp Web: who is writing (found by their number, a username they sent, or their name), online or not, plan, area, unpaid months and any outage on their router, with replies that fill in their name, username and bill; Check connection, Pay and the 1× login link are done by the Dock in your open ERP tab. A reply goes into the message box; you send it yourself. The customer list comes from the ERP tab, through Tampermonkey's storage: nothing is fetched from WhatsApp, and nothing leaves this browser.
 // @match        https://*/*
 // @run-at       document-idle
@@ -441,6 +441,9 @@
     @keyframes erp-wa-ping { from { opacity: .8; transform: scale(.6); } to { opacity: 0; transform: scale(1.8); } }
     .erp-wa .nme { position: absolute; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%; background: var(--bone); box-shadow: 0 0 0 3px rgba(7,9,11,.85), 0 0 0 6px rgba(var(--bone-rgb), .25); z-index: 3; pointer-events: none; }
     .erp-wa .nattr { position: absolute; right: 6px; bottom: 4px; font-size: 10px; color: rgba(255,255,255,.55); text-shadow: 0 1px 2px #000; z-index: 3; pointer-events: none; }
+    .erp-wa .tbar { height: 6px; border-radius: 3px; background: var(--raised); overflow: hidden; }
+    .erp-wa .tbar span { display: block; height: 100%; border-radius: 3px; background: var(--on); transition: width .4s var(--ease-out); }
+    .erp-wa .tbar.full span { background: var(--amber); }
     .erp-wa .sect { display: grid; gap: 10px; padding: 16px; border-radius: 8px; background: var(--bg); box-shadow: var(--shadow-card); }
     .erp-wa .verdict { margin: 0; color: var(--strong); font-weight: 500; font-size: 14px; }
     .erp-wa .verdict.ok { color: var(--on); } .erp-wa .verdict.net, .erp-wa .verdict.cut, .erp-wa .verdict.iso { color: #f6b3ab; } .erp-wa .verdict.warn, .erp-wa .verdict.off { color: var(--amber); }
@@ -631,7 +634,7 @@
     else bill.append(el("b", null, "Bills not loaded"), el("span", null, "Open Finance → Invoices in the ERP once to bring this month's"));
     if (data.monthsLoaded) bill.title = `From the ${data.monthsLoaded} invoice month${data.monthsLoaded > 1 ? "s" : ""} the Dock has loaded, ${ago(data.billsAt)}`;
     card.append(bill);
-    card.append(...actionsFor(r), ...extrasFor(r), ...nearFor(r));
+    card.append(...actionsFor(r), ...trafficFor(r), ...extrasFor(r), ...nearFor(r));
     const dl = el("dl");
     const fact = (k, v, mono) => { if (!v) return; dl.append(el("dt", null, k), copyable(el("dd", mono ? "mono" : null, v), v)); };
     fact("Username", r.username, true); fact("Plan", r.paket); fact("Area", [titleCase(r.desa), titleCase(r.kec)].filter(Boolean).join(", ")); fact("Router", r.router);
@@ -747,6 +750,28 @@
     })));
     out.push(m);
     return out;
+  }
+
+  // ---------- Traffic: the rate now against their plan ----------
+  // Read by the Dock in the ERP tab every 30 seconds while this card is open (RADIUS reports every 5 minutes, so the rate
+  // appears with the next report), for 12 minutes at most.
+  function trafficFor(r) {
+    const a = actFor(r);
+    if (!a.trafficTimer) {
+      let n = 0; const poll = () => { if (act !== a || n++ > 24) return clearInterval(a.trafficTimer);
+        rpc("traffic", { username: r.username }, 30000).then((d) => { if (act !== a) return; const was = JSON.stringify(a.traffic?.data); a.traffic = { data: d, at: a.traffic?.at || Date.now() }; if (was !== JSON.stringify(d)) draw(); })
+          .catch((e) => { if (act === a && !a.traffic?.data) { a.traffic = { err: e.message, at: Date.now() }; draw(); } }); };
+      a.trafficTimer = setInterval(poll, 30000); setTimeout(poll, 0);
+    }
+    const t = a.traffic, d = t?.data;
+    const box = sectEl(r, "traffic", "Traffic", t ? (t.err ? "err" : "ok") : "busy", d && d.pct >= 0.85 ? "warn" : d?.lines?.length ? "good" : "");
+    if (!t) { box.append(busyNote("Reading the session and its traffic…")); return [box]; }
+    if (t.err) { box.append(el("p", "warn", t.err)); return [box]; }
+    if (d.verdict) box.append(el("p", `verdict ${d.pct >= 0.85 ? "warn" : d.lines.length > 1 ? "ok" : "off"}`, d.verdict));
+    if (d.down != null && d.plan) { const bar = el("div", `tbar${d.pct >= 0.85 ? " full" : ""}`), fill = el("span"); fill.style.width = `${Math.min(100, Math.round(d.pct * 100))}%`; bar.append(fill); box.append(bar); }
+    const dl = el("dl"); for (const [k, v] of d.lines) dl.append(el("dt", null, k), el("dd", null, v)); box.append(dl);
+    if (d.waiting) box.append(el("p", "how ld", `Watching for the next 5-minute report (since ${hhmm(d.watching)})`));
+    return [box];
   }
 
   // ---------- Nearby: the customers around them on a map ----------

@@ -92,6 +92,9 @@
       .erp-dock .map { position: relative; height: 340px; margin: 10px 0 6px; border-radius: 8px; overflow: hidden; background: #0f1214; box-shadow: inset 0 0 0 1px var(--hair); }
       .erp-dock .map { cursor: grab; touch-action: none; user-select: none; overflow: clip; } /* clip, not hidden: a hidden box can still be scrolled (by focus or the share panel), sliding the strip and legend away */ .erp-dock .map.panning { cursor: grabbing; } .erp-dock .map.panning .mdot { pointer-events: none; }
       .erp-dock .map .tiles { position: absolute; inset: 0; pointer-events: none; }
+      .erp-dock .tbar { height: 6px; border-radius: 3px; background: #1a1d1e; overflow: hidden; margin: 0 0 10px; }
+      .erp-dock .tbar span { display: block; height: 100%; background: #55bc82; border-radius: 3px; transition: width .4s cubic-bezier(.22,1,.36,1); }
+      .erp-dock .tbar.full span { background: #e0b04f; }
       .erp-dock .map .tiles img { position: absolute; width: 256px; height: 256px; max-width: none; pointer-events: none; user-select: none; }
       @property --ht-r { syntax: "<length>"; inherits: false; initial-value: 6px; }
       @property --ht-w { syntax: "<length>"; inherits: false; initial-value: 9000px; }
