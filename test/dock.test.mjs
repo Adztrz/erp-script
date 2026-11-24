@@ -379,3 +379,12 @@ test("peaks: the hours a link reaches 90% on most days, and how it's said", () =
   assert.equal(peakText(x), "90%+ at 19–22 on 6 of the last 7 days");
   assert.equal(peakText({ full: 0, busy: 1, of: 3 }), "");
 });
+
+test("open from anywhere: the ERP's WireGuard link moved to the RO's public address, only when one is saved", () => {
+  const saved = { contoh: "203.0.113.7" };
+  const fold = (s) => String(s ?? "").toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+  const { publicUrl } = load(dock, ["publicUrl", "roPubKey", "innerUrl", "roPublic"], { RO_PUBLIC: "x", ls: { get: () => saved }, fold, nameNorm: (n) => String(n || "").toUpperCase().replace(/^RO[\s-]+/, "").trim() }, ["publicUrl"]);
+  assert.equal(publicUrl("http://10.99.98.21:20417/", "RO CONTOH"), "http://203.0.113.7:20417/");
+  assert.equal(publicUrl("http://10.99.98.21:20417/", "RO LAIN"), null); // nothing saved for that RO
+  assert.equal(publicUrl("http://198.51.100.4:20417/", "RO CONTOH"), null); // already public: left as it is
+});

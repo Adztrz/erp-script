@@ -578,7 +578,8 @@
         const j = await api(`/api/noc/remote-onu?q=${encodeURIComponent(r.username)}`), c = (j.hasil || []).find((x) => lower(x.username) === u);
         if (!c) throw new Error("The ERP's Remote ONU doesn't know this username");
         const t = await api("/api/noc/remote-modem", { customerId: c.customerId });
-        return { url: String(t.url || ""), secs: Number(t.kedaluwarsaDetik) || (Number(t.menit) > 0 ? Number(t.menit) : 5) * 60, ro: c.ro || "" };
+        const url = String(t.url || ""), ro = String(t.ro || c.ro || ""), pub = publicUrl(url, ro); // the RO's public address when saved: opens from any network
+        return { url: pub || url, wg: pub ? url : "", anywhere: !!pub, inner: !pub && innerUrl(url), secs: Number(t.kedaluwarsaDetik) || (Number(t.menit) > 0 ? Number(t.menit) : 5) * 60, ro };
       }
       if (op === "link") {
         if (!r.customerDocId) throw new Error("Needs the customer list refreshed (LDN → Pelanggan → Update)");

@@ -25,6 +25,37 @@
       }
       modemDraw(m); return true;
     }
+    // ---- Open from anywhere: the ERP's port on the RO's public address ----
+    // The ERP's 5-minute access gives the RO's WireGuard address, which loads only on a PC on the NOC WireGuard. The
+    // port it opens is on the RO itself, so with the RO's public address saved (once per RO, in this browser only) the
+    // same port opens from any network. While open, anyone who knows the address and port reaches the modem's login
+    // page, as with the ERP's own link; it closes after 5 minutes.
+    const RO_PUBLIC = "erpDock.roPublic";
+    const roPubKey = (ro) => fold(nameNorm(ro || "")).trim();
+    const innerUrl = (url) => /^https?:\/\/(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.)/.test(url || "");
+    function roPublic(ro) { // saved for this RO, else for the one RO with the same main word (PUNUNG NEW is PUNUNG)
+      if (!ro) return ""; const all = ls.get(RO_PUBLIC, {}), k = roPubKey(ro); if (all[k]) return all[k];
+      const same = Object.keys(all).filter((x) => x.split(" ")[0] === k.split(" ")[0]); return same.length === 1 ? all[same[0]] : "";
+    }
+    function publicUrl(url, ro) {
+      const host = roPublic(ro); if (!host || !innerUrl(url)) return null;
+      try { const u = new URL(url); u.hostname = host.replace(/^\w+:\/\//, "").replace(/[:/].*$/, ""); return u.toString(); } catch { return null; }
+    }
+    // the RO's public address: shown with Edit, or a field to add it
+    function roPublicRow(m, ro, redraw) {
+      const box = el("p", "note pubrow"), cur = roPublic(ro), f = (m.pubEdit ||= {});
+      if (f.ro === ro) {
+        const i = el("input", "field"); i.placeholder = "public IP or hostname"; i.value = f.v ?? cur; i.dataset.k = `${m.key}pub`; i.autocomplete = "off"; i.spellcheck = false; i.oninput = () => { f.v = i.value; };
+        const save = el("button", "copy", "Save"); save.type = "button";
+        save.onclick = () => { const v = String(f.v ?? cur).trim().replace(/^\w+:\/\//, "").replace(/[:/].*$/, ""); const all = ls.get(RO_PUBLIC, {});
+          if (v) all[roPubKey(ro)] = v; else delete all[roPubKey(ro)]; ls.set(RO_PUBLIC, all); m.pubEdit = {}; if (m.web?.tunnel) m.web.tunnel.pub = publicUrl(m.web.tunnel.url, m.web.tunnel.ro); redraw(); };
+        const cancel = el("button", "copy", "Cancel"); cancel.type = "button"; cancel.onclick = () => { m.pubEdit = {}; redraw(); };
+        box.append(`${ro}'s public address: `, i, save, cancel); return box;
+      }
+      const ed = el("button", "copy", cur ? "Edit" : `Add ${ro}'s public address`); ed.type = "button"; ed.onclick = () => { m.pubEdit = { ro, v: cur }; redraw(); };
+      if (cur) box.append("Open from anywhere: ", el("span", "mono", cur), " ", ed); else box.append("To open from any network, not only the NOC WireGuard: ", ed);
+      return box;
+    }
     async function remoteGo(r) {
       const key = `u:${r.username}`, m = mods.get(key); if (!m) return;
       let win = null; try { win = window.open("about:blank", "_blank"); if (win) win.opener = null; } catch { /* blocked: the access opens in a new tab instead */ }
@@ -41,8 +72,8 @@
         w.tunnel = null; await openTunnel(m, w, win);
         if (ls.get(KEEP_OPEN, false)) { w.keep = true; keepTick(m, w); }
         // the ERP's "from anywhere" address is often inside the NOC WireGuard (10.99.98.x), so it opens only on a PC on it
-        const inner = /^https?:\/\/(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(w.tunnel?.url || "");
-        m.msg = { good: !inner, text: `Remote: opened through the ERP's 5-minute access${w.keep ? ", kept open while this tab is" : ""}.${inner ? ` Its address (${w.tunnel.url}) is inside the NOC WireGuard, so it only loads on a PC connected to it; elsewhere it times out. The router bridge opens on the RO's public address instead.` : ""}${copied}` };
+        const inner = innerUrl(w.tunnel?.url) && !w.tunnel?.pub;
+        m.msg = { good: !inner, text: `Remote: opened through the ERP's 5-minute access${w.tunnel?.pub ? ` on ${w.tunnel.ro || "the RO"}'s public address, so it loads from any network` : ""}${w.keep ? ", kept open while this tab is" : ""}.${inner ? ` Its address (${w.tunnel.url}) is inside the NOC WireGuard, so it only loads on a PC connected to it. Add ${w.tunnel.ro || "the RO"}'s public address under Web page to open it from anywhere.` : ""}${copied}` };
       } catch (err) { win?.close(); m.msg = { bad: true, text: `Remote: access not opened (${err.message}).` }; }
       redraw();
     }
@@ -53,10 +84,11 @@
     async function openTunnel(m, w, win) {
       const j = await api("/api/noc/remote-modem", { customerId: w.id }), min = Number(j.menit) > 0 ? Number(j.menit) : 5, secs = Number(j.kedaluwarsaDetik) || min * 60;
       const url = String(j.url), moved = w.tunnel && w.tunnel.url !== url;
-      w.tunnel = { url, until: Date.now() + secs * 1000, note: j.keterangan || "", since: w.tunnel?.since || Date.now() };
+      const ro = String(j.ro || w.erpRo || ""), pub = publicUrl(url, ro), go = pub || url; // from anywhere when the RO's public address is saved
+      w.tunnel = { url, pub, ro, until: Date.now() + secs * 1000, note: j.keterangan || "", since: w.tunnel?.since || Date.now() };
       if (win) w.win = win;
-      if (w.win && !w.win.closed) { if (!w.renewing || moved) try { w.win.location.replace(url); } catch { window.open(url, "_blank", "noopener"); } }
-      else if (!w.renewing) window.open(url, "_blank", "noopener");
+      if (w.win && !w.win.closed) { if (!w.renewing || moved) try { w.win.location.replace(go); } catch { window.open(go, "_blank", "noopener"); } }
+      else if (!w.renewing) window.open(go, "_blank", "noopener");
       return moved;
     }
     function keepTick(m, w) {

@@ -2,7 +2,7 @@
 // @name         ERP — Dock in WhatsApp Web
 // @namespace    adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/erp-script/main/icons/dock.png
-// @version      1.8.0
+// @version      1.9.0
 // @description  The Dock's customer card beside the open chat in WhatsApp Web: who is writing (found by their number, a username they sent, or their name), online or not, plan, area, unpaid months and any outage on their router, with replies that fill in their name, username and bill; Check connection, Pay and the 1× login link are done by the Dock in your open ERP tab. A reply goes into the message box; you send it yourself. The customer list comes from the ERP tab, through Tampermonkey's storage: nothing is fetched from WhatsApp, and nothing leaves this browser.
 // @match        https://*/*
 // @run-at       document-idle
@@ -748,7 +748,8 @@
     if (rem?.busy) m.append(busyNote("Opening a 5-minute port on the RO…"));
     else if (rem?.err) m.append(el("p", "warn", `Access not opened: ${rem.err}`));
     else if (rem?.data && rem.data.until > Date.now()) { const p = el("p", "good"), l = el("a", null, "the modem's page"); l.href = rem.data.url; l.target = "_blank"; l.rel = "noreferrer noopener";
-      p.append("Open: ", l, ` · closes ${hhmm(rem.data.until)}${rem.data.ro ? ` · via ${rem.data.ro}` : ""}`); m.append(p); }
+      p.append(rem.data.anywhere ? "Open from anywhere: " : "Open: ", l, ` · closes ${hhmm(rem.data.until)}${rem.data.ro ? ` · via ${rem.data.ro}` : ""}`); m.append(p);
+      if (rem.data.inner) m.append(el("p", "how", `This address is inside the NOC WireGuard, so it loads only on a PC connected to it. Add ${rem.data.ro || "the RO"}'s public address in the ERP Dock (Modem → Web page) to open it from anywhere.`)); }
     m.append(wide(armed("Remote: the modem's page", "Click again: open a 5-minute port on the RO (logged)", "remote", () => {
       let win = null; try { win = window.open("about:blank", "_blank"); if (win) win.opener = null; } catch { /* blocked */ }
       const a2 = actFor(r); a2.remote = { busy: true }; draw();

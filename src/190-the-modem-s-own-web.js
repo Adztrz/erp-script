@@ -59,7 +59,7 @@
           w.probing = false; redraw(); };
         acts.append(t);
         if (!w.tunnel || w.tunnel.until < Date.now()) {
-          const go = armButton(w.st, "Open from anywhere · 5 min", "Click again: open a 5-minute port on the RO (logged)", () => {
+          const go = armButton(w.st, roPublic(w.erpRo) ? "Open from anywhere · 5 min" : "Open on the NOC WireGuard · 5 min", "Click again: open a 5-minute port on the RO (logged)", () => {
             let win = null; try { win = window.open("about:blank", "_blank"); if (win) win.opener = null; } catch { /* blocked */ }
             w.st.armed = 0; w.opening = true; redraw();
             w.tunnel = null;
@@ -69,9 +69,11 @@
         }
       } else if (!w.id) acts.append(el("span", "sub", "The ERP's Remote ONU doesn't know this username, so there's no 5-minute access."));
       box.append(acts);
+      if (w.id && (w.tunnel?.ro || w.erpRo)) box.append(roPublicRow(m, w.tunnel?.ro || w.erpRo, redraw));
       if (w.tunnel && w.tunnel.until > Date.now()) {
-        const p = el("p", "note good"), a = el("a", null, w.tunnel.url); a.href = w.tunnel.url; a.target = "_blank"; a.rel = "noreferrer noopener";
-        const left = el("b"); p.append("Open now: ", a, w.keep ? " · renews in " : " · closes in ", left); box.append(p);
+        const go = w.tunnel.pub || w.tunnel.url, p = el("p", "note good"), a = el("a", null, go); a.href = go; a.target = "_blank"; a.rel = "noreferrer noopener";
+        const left = el("b"); p.append(w.tunnel.pub ? "Open from anywhere: " : "Open now: ", a, w.keep ? " · renews in " : " · closes in ", left); box.append(p);
+        if (w.tunnel.pub) { const wg = el("p", "note"), b = el("a", null, w.tunnel.url); b.href = w.tunnel.url; b.target = "_blank"; b.rel = "noreferrer noopener"; wg.append("On the NOC WireGuard: ", b); box.append(wg); }
         const kp = el("button", `copy${w.keep ? " on" : ""}`, w.keep ? "Keep open: on" : "Keep open: off"); kp.type = "button"; kp.dataset.k = `${m.key}keep`;
         kp.title = "Ask for the access again before it closes, up to 30 minutes, until the modem's tab is closed (each renewal is logged like a press)";
         kp.onclick = () => { w.keep = !w.keep; ls.set(KEEP_OPEN, w.keep); if (w.keep) { w.tunnel.since = Date.now(); keepTick(m, w); } else clearInterval(w.keepTimer); redraw(); };
