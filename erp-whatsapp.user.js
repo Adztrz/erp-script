@@ -2,7 +2,7 @@
 // @name         ERP — Dock in WhatsApp Web
 // @namespace    adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/erp-script/main/icons/dock.png
-// @version      1.3.0
+// @version      1.4.0
 // @description  The Dock's customer card beside the open chat in WhatsApp Web: who is writing (found by their number, a username they sent, or their name), online or not, plan, area, unpaid months and any outage on their router, with replies that fill in their name, username and bill; Check connection, Pay and the 1× login link are done by the Dock in your open ERP tab. A reply goes into the message box; you send it yourself. The customer list comes from the ERP tab, through Tampermonkey's storage: nothing is fetched from WhatsApp, and nothing leaves this browser.
 // @match        https://*/*
 // @run-at       document-idle
@@ -141,7 +141,15 @@
     const k = m[1].slice(0, 3).toLowerCase(), i = Math.max(id.indexOf(k), en.indexOf(k));
     return Number(m[2]) * 12 + Math.max(0, i);
   }
-  const outageOf = (r) => (data?.incidents || []).find((x) => (x.users && x.users.some((u) => fold(u).replace(/ /g, "") === r._user)) || (x.kind === "router" && r.router && fold(x.title).endsWith(fold(r.router))));
+  const roWord = (x) => fold(x).replace(/^ro /, "").split(" ")[0];
+  // an outage this customer is in: their router on the radar (same name, or the same main word: RO PUNUNG NEW is PUNUNG),
+  // else an open incident on their PON port or router
+  function outageOf(r) {
+    const rt = outs.data?.routers.find((x) => r.router && (fold(x.name) === fold(r.router) || roWord(x.name) === roWord(r.router)));
+    if (rt) return { kind: "router", key: rt.ip, title: rt.name, start: rt.since, level: rt.level };
+    const inc = (data?.incidents || []).find((x) => (x.users && x.users.some((u) => fold(u).replace(/ /g, "") === r._user)) || (x.kind === "router" && r.router && fold(x.title).endsWith(fold(r.router))));
+    return inc ? { kind: inc.kind, key: inc.id, title: inc.title, start: inc.start } : null;
+  }
 
   // ---------- asking the ERP tab ----------
   // Check, Pay and the 1× link are done by the Dock in an open ERP tab, with its own code and your ERP sign-in: the
@@ -318,7 +326,7 @@
     .erp-wa input:focus, .erp-wa textarea:focus, .erp-wa select:focus { border-color: var(--rule); box-shadow: 0 0 0 3px rgba(var(--bone-rgb), .08); }
     .erp-wa input[type=search]::-webkit-search-cancel-button { display: none; }
     .erp-wa .q { padding: 0 16px 12px; }
-    .erp-wa .body { flex: 1; overflow: auto; overflow-x: hidden; padding: 4px 16px 24px; display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; gap: 16px; }
+    .erp-wa .body { flex: 1; overflow: auto; overflow-x: hidden; padding: 4px 16px 24px; display: grid; grid-template-columns: minmax(0, 1fr); grid-auto-rows: max-content; align-content: start; gap: 16px; }
     .erp-wa .how { margin: 0; color: var(--muted); font-size: 13px; }
     .erp-wa .list { display: grid; gap: 2px; }
     .erp-wa .item { display: grid; grid-template-columns: 10px 1fr auto; gap: 2px 10px; align-items: center; width: 100%; text-align: left; border: 0; background: none; color: var(--text);
@@ -393,6 +401,21 @@
     .erp-wa .cp.did::after { content: "copied"; position: absolute; right: 4px; top: 50%; translate: 0 -50%; padding: 1px 7px; border-radius: 999px;
       background: var(--bone); color: var(--canvas); font: 500 11px Inter, system-ui, sans-serif; letter-spacing: .02em; animation: erp-wa-pop .18s var(--ease-out); }
     @keyframes erp-wa-pop { from { opacity: 0; scale: .9; } }
+    .erp-wa .outs { border-radius: 8px; background: rgba(241,38,20,.08); box-shadow: inset 0 0 0 1px rgba(241,38,20,.3); overflow: hidden; }
+    .erp-wa .outs-head { display: grid; grid-template-columns: 10px auto 1fr; gap: 10px; align-items: center; width: 100%; border: 0; background: none; color: #f6b3ab; padding: 10px 12px; cursor: pointer; text-align: left; }
+    .erp-wa .outs-head b { font-weight: 600; font-size: 13px; color: #f6b3ab; }
+    .erp-wa .outs-head .s { font-size: 12px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .erp-wa .pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--bad); box-shadow: 0 0 0 0 rgba(241,38,20,.5); animation: erp-wa-pulse 2s var(--ease-out) infinite; }
+    @keyframes erp-wa-pulse { 70% { box-shadow: 0 0 0 6px rgba(241,38,20,0); } 100% { box-shadow: 0 0 0 0 rgba(241,38,20,0); } }
+    .erp-wa .outs-list { display: grid; gap: 2px; padding: 0 6px 6px; animation: erp-wa-quick .2s var(--ease-out); }
+    .erp-wa .outs-rep { display: grid; gap: 10px; padding: 4px 12px 12px; animation: erp-wa-quick .22s var(--ease-out); }
+    .erp-wa pre.msg { margin: 0; padding: 10px 12px; border-radius: 8px; background: var(--bg); box-shadow: inset 0 0 0 1px var(--line); color: var(--text); font: 12px/1.55 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 220px; overflow: auto; }
+    .erp-wa .team { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; align-items: baseline; }
+    .erp-wa .team .k { font-size: 11px; font-weight: 500; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+    .erp-wa .team .k-field { color: var(--on); } .erp-wa .team .k-area { color: var(--amber); }
+    .erp-wa .team b { color: var(--strong); font-weight: 500; font-size: 13px; justify-self: start; }
+    .erp-wa .team .s { grid-column: 2; color: var(--muted); font-size: 12px; }
+    .erp-wa .alert .mini { color: #f6b3ab; text-decoration-color: rgba(246,179,171,.4); }
     .erp-wa .sect { display: grid; gap: 10px; padding: 16px; border-radius: 8px; background: var(--bg); box-shadow: var(--shadow-card); }
     .erp-wa .verdict { margin: 0; color: var(--strong); font-weight: 500; font-size: 14px; }
     .erp-wa .verdict.ok { color: var(--on); } .erp-wa .verdict.net, .erp-wa .verdict.cut, .erp-wa .verdict.iso { color: #f6b3ab; } .erp-wa .verdict.warn, .erp-wa .verdict.off { color: var(--amber); }
@@ -435,7 +458,7 @@
     @media (prefers-reduced-motion: reduce) {
       .erp-wa, .erp-wa .arrive > *, .erp-wa .sect.arrive, .erp-wa-tab { animation: erp-wa-quick .15s linear backwards; }
       .erp-wa.out { animation: erp-wa-quick .1s linear reverse forwards; }
-      .erp-wa .pill.swipe, .erp-wa .btn.armed::after, .erp-wa .ld::after, .erp-wa .cur { animation: none; }
+      .erp-wa .pill.swipe, .erp-wa .btn.armed::after, .erp-wa .ld::after, .erp-wa .cur, .erp-wa .pulse { animation: none; }
       .erp-wa .btn:active { transform: none; }
       .erp-wa input[type=checkbox].just:checked, .erp-wa input[type=checkbox].just:checked::after { animation: none; }
     }`;
@@ -467,7 +490,7 @@
       if (p) { p.classList.add("out"); setTimeout(() => p.remove(), 220); } return; }
     tab.hidden = true; document.documentElement.classList.add("erp-wa-wide");
     if (!panel) { panel = el("aside", "erp-wa"); panel.setAttribute("aria-label", "Dock"); document.body.append(panel); }
-    current.key = ""; draw();
+    current.key = ""; draw(); readOutages();
   }
 
   function draw() {
@@ -491,6 +514,7 @@
     const body = el("div", "body"); panel.append(body); queueMicrotask(() => { body.scrollTop = scrolled; });
 
     if (editing) return drawEditor(body);
+    const strip = outageStrip(); if (strip) body.append(strip);
     if (!data) { body.append(el("p", "empty", "Open the ERP in another tab of this browser (with this script installed there too). Its customer list shows up here within a minute.")); return; }
     if (query.trim()) {
       const hits = search(query, 12);
@@ -572,14 +596,17 @@
     top.append(copyable(el("h3", null, r.nama || r.username), r.nama || r.username), (() => { const w = el("div", "row"); w.style.alignItems = "center"; w.append(pill, el("span", "how", how === "picked" ? "picked by you" : /in this group/.test(how) ? how : `found by ${how}`)); return w; })());
     card.append(top);
     const out = outageOf(r);
-    if (out) card.append(el("div", "alert", `Outage open: ${out.title}, since ${hhmm(out.start)}`));
+    if (out) { const al = el("div", "alert"); al.append(`${out.level === "nofeed" ? "No session data from" : "Outage on"} ${out.title}${out.start ? `, since ${hhmm(out.start)}` : ""}. `);
+      const sel = outs.data?.routers.find((x) => x.ip === out.key) ? `r:${out.key}` : outs.data?.pons.find((x) => x.id === out.key) ? `p:${out.key}` : "";
+      if (sel) { const go = el("button", "mini", "report and notice"); go.type = "button"; go.onclick = () => { outOpen = true; pickOutage(sel); panel.querySelector(".body").scrollTop = 0; }; al.append(go); }
+      card.append(al); }
     const b = billsOf(r), bill = el("div", `bill${b.unpaid.length ? " due" : ""}`);
     if (b.unpaid.length) bill.append(el("b", null, `${rupiah(b.total)} unpaid`), el("span", null, b.unpaid.map((x) => x.period).join(", ")));
     else if (b.last) bill.append(el("b", null, "Paid up"), el("span", null, `${b.last.period}: ${b.last.status}`));
     else bill.append(el("b", null, "Bills not loaded"), el("span", null, "Open Finance → Invoices in the ERP once to bring this month's"));
     if (data.monthsLoaded) bill.title = `From the ${data.monthsLoaded} invoice month${data.monthsLoaded > 1 ? "s" : ""} the Dock has loaded, ${ago(data.billsAt)}`;
     card.append(bill);
-    card.append(...actionsFor(r));
+    card.append(...actionsFor(r), ...extrasFor(r));
     const dl = el("dl");
     const fact = (k, v, mono) => { if (!v) return; dl.append(el("dt", null, k), copyable(el("dd", mono ? "mono" : null, v), v)); };
     fact("Username", r.username, true); fact("Plan", r.paket); fact("Area", [titleCase(r.desa), titleCase(r.kec)].filter(Boolean).join(", ")); fact("Router", r.router);
@@ -602,6 +629,99 @@
     const rep = el("div"); rep.style.cssText = "display:grid;gap:10px"; rep.append(lab, list);
     card.append(rep);
     body.append(card);
+  }
+
+  // ---------- outages: the ERP Dock's radar, here ----------
+  // The ERP tab's radar alerts (routers down, dropping or without session data) and open PON incidents, read each minute
+  // while this panel is open. Each one gives the report for the technicians and the notice for customers, made by the
+  // Dock from who is offline right now.
+  let outs = { data: null, at: 0 }, outOpen = false, outSel = "", outRep = null;
+  function readOutages() {
+    if (!panel || document.hidden || outs.busy) return;
+    outs.busy = true;
+    rpc("outages", {}, 30000).then((d) => { const was = JSON.stringify(outs.data?.routers?.map((x) => x.ip + x.level)) + JSON.stringify(outs.data?.pons?.map((x) => x.id));
+      outs = { data: d, at: Date.now() }; const now = JSON.stringify(d.routers.map((x) => x.ip + x.level)) + JSON.stringify(d.pons.map((x) => x.id));
+      if (was !== now) draw(); })
+      .catch(() => { outs = { data: outs.data, at: outs.at }; });
+  }
+  setInterval(readOutages, 60000);
+  const levelText = (x) => (x.level === "down" ? "down" : x.level === "drop" ? "dropping" : "no session data");
+  function pickOutage(sel) {
+    outSel = sel; outRep = { busy: true }; draw();
+    const [k, id] = [sel.slice(0, 1), sel.slice(2)];
+    rpc("outage", k === "r" ? { kind: "router", ip: id } : { kind: "pon", id }, 90000)
+      .then((d) => { if (outSel === sel) { outRep = { data: d, at: Date.now() }; draw(); } })
+      .catch((e) => { if (outSel === sel) { outRep = { err: e.message, at: Date.now() }; draw(); } });
+  }
+  function outageStrip() {
+    const d = outs.data; if (!d || (!d.routers.length && !d.pons.length)) return null;
+    const n = d.routers.length + d.pons.length, box = el("div", `outs${outOpen ? " open" : ""}`);
+    const head = el("button", "outs-head"); head.type = "button"; head.setAttribute("aria-expanded", String(outOpen));
+    const first = d.routers[0] ? `${d.routers[0].name} ${levelText(d.routers[0])}` : d.pons[0].title;
+    head.append(el("span", "pulse"), el("b", null, `${n} outage${n > 1 ? "s" : ""}`), el("span", "s", `${first}${n > 1 ? ` · +${n - 1}` : ""}${d.wide ? " · most routers at once: central" : ""}`));
+    head.onclick = () => { outOpen = !outOpen; draw(); };
+    box.append(head);
+    if (!outOpen) return box;
+    const list = el("div", "outs-list");
+    const row = (sel, title, sub) => { const b = el("button", `item${outSel === sel ? " sel" : ""}`); b.type = "button";
+      b.append(el("span", "dot iso"), el("span", "t", title), el("span", "r", ""), el("span", "s", sub)); b.onclick = () => pickOutage(sel); list.append(b); };
+    for (const x of d.routers) row(`r:${x.ip}`, x.name, `${levelText(x)}${x.since ? ` since ${hhmm(x.since)}` : ""}${x.level !== "nofeed" && x.usual != null ? ` · ${x.open} sessions, usually ${Math.round(x.usual)}` : ""}`);
+    for (const x of d.pons) row(`p:${x.id}`, x.title, `PON port · ${x.affected} of ${x.users} down · since ${hhmm(x.start)}`);
+    box.append(list);
+    if (outSel && outRep) {
+      const rep = el("div", "outs-rep");
+      if (outRep.busy) rep.append(el("p", "how ld", "Reading who is offline now…"));
+      else if (outRep.err) rep.append(el("p", "warn", outRep.err));
+      else { const r = outRep.data; rep.append(el("p", "how", `${r.down} of ${r.total} offline now`));
+        const pre = el("pre", "msg", r.text); rep.append(pre);
+        const acts = el("div", "row"), b = (label, cls, fn) => { const x = el("button", cls, label); x.type = "button"; x.onclick = () => fn(x); acts.append(x); };
+        b("Notice into message box", "btn main", () => putInBox(r.notice));
+        b("Copy report", "btn", (x) => navigator.clipboard?.writeText(r.text).then(() => { x.textContent = "Copied"; setTimeout(() => (x.textContent = "Copy report"), 1200); }));
+        if (r.phones?.length) b(`Copy ${r.phones.length} numbers`, "btn", (x) => navigator.clipboard?.writeText(r.phones.join("\n")).then(() => { x.textContent = "Copied"; setTimeout(() => (x.textContent = `Copy ${r.phones.length} numbers`), 1200); }));
+        rep.append(acts); }
+      box.append(rep);
+    }
+    return box;
+  }
+
+  // ---------- the card's technicians and modem (and Remote) ----------
+  function extrasFor(r) {
+    const a = actFor(r);
+    if (!a.extras) setTimeout(() => { if (act === a && !a.extras) run(r, "extras", "extras"); }, 0); // read once per customer
+    const out = [];
+    if (!a.extras || a.extras.busy) { const s = sectEl(r, "tech", "Technicians · modem", phaseOf(a.extras)); s.append(busyNote("Reading the technician map and the OLT…")); return [s]; }
+    if (a.extras.err) { const s = sectEl(r, "tech", "Technicians · modem", phaseOf(a.extras), "warn"); s.append(el("p", "warn", a.extras.err)); return [s]; }
+    const d = a.extras.data;
+    // who covers their village
+    const t = sectEl(r, "tech", `Technicians${r.desa ? ` · ${titleCase(r.desa)}` : ""}`, phaseOf(a.extras));
+    if (d.how) t.append(el("p", "warn", d.how));
+    if (!d.teams.length) t.append(el("p", "how", "No team found for this area."));
+    for (const tm of d.teams) { const row = el("div", "team"), kind = { field: "Field", area: "Area head", backbone: "Backbone", office: "Office" }[tm.kind] || tm.kind;
+      row.append(el("span", `k k-${tm.kind}`, kind), copyable(el("b", null, tm.name === "Tanpa tim" ? "Placed individually" : tm.name), tm.name), el("span", "s", tm.members.join(", ") || "no members")); t.append(row); }
+    out.push(t);
+    // the modem: ONT, signal, port; Remote opens its own page through the ERP's 5-minute port
+    const m = sectEl(r, "modem", "Modem", `${phaseOf(a.extras)}|${phaseOf(a.remote)}`, d.modem && d.modem.rx != null && d.modem.rx < -28 ? "bad" : d.modem && d.modem.rx != null && d.modem.rx < -26 ? "warn" : "");
+    const dl = el("dl"), f = (k, v, mono) => { if (v) dl.append(el("dt", null, k), copyable(el("dd", mono ? "mono" : null, v), v)); };
+    if (d.modem) { const rx = d.modem.rx; f("ONT", `${d.modem.olt} · PON ${d.modem.pon} · ${d.modem.st || "?"}`); f("Signal", rx != null ? `${rx} dBm${rx < -28 ? " (critical)" : rx < -26 ? " (weak)" : ""}` : ""); f("Serial", d.modem.sn, true);
+      if (d.modem.seen && !isNaN(Date.parse(d.modem.seen))) f("Read", new Date(Date.parse(d.modem.seen)).toLocaleString("id-ID", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })); }
+    if (d.port) f("Same port", `${d.port.off} of ${d.port.all} modems offline`);
+    if (d.tr069) f("TR-069", `${d.tr069.model ? `${d.tr069.model} · ` : ""}last report ${d.tr069.inform && !isNaN(Date.parse(d.tr069.inform)) ? new Date(Date.parse(d.tr069.inform)).toLocaleString("id-ID", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "?"}`);
+    if (!d.modem && !d.tr069) m.append(el("p", "how", "This modem isn't in the OLT list or on TR-069."));
+    m.append(dl);
+    const rem = a.remote;
+    if (rem?.busy) m.append(busyNote("Opening a 5-minute port on the RO…"));
+    else if (rem?.err) m.append(el("p", "warn", `Access not opened: ${rem.err}`));
+    else if (rem?.data && rem.data.until > Date.now()) { const p = el("p", "good"), l = el("a", null, "the modem's page"); l.href = rem.data.url; l.target = "_blank"; l.rel = "noreferrer noopener";
+      p.append("Open: ", l, ` · closes ${hhmm(rem.data.until)}${rem.data.ro ? ` · via ${rem.data.ro}` : ""}`); m.append(p); }
+    m.append(wide(armed("Remote: the modem's page", "Click again: open a 5-minute port on the RO (logged)", "remote", () => {
+      let win = null; try { win = window.open("about:blank", "_blank"); if (win) win.opener = null; } catch { /* blocked */ }
+      const a2 = actFor(r); a2.remote = { busy: true }; draw();
+      rpc("remote", { username: r.username }, 60000).then((x) => { if (act !== a2) return; a2.remote = { data: { ...x, until: Date.now() + x.secs * 1000 }, at: Date.now() };
+        if (win && !win.closed && x.url) win.location.replace(x.url); else if (x.url) window.open(x.url, "_blank", "noopener"); draw(); })
+        .catch((e) => { win?.close(); if (act === a2) { a2.remote = { err: e.message, at: Date.now() }; draw(); } });
+    })));
+    out.push(m);
+    return out;
   }
 
   // ---------- Check, Pay, 1× link ----------

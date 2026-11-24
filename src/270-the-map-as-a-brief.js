@@ -503,6 +503,26 @@
       hutang: v.hutang, recharge: !!v.recharge, canRecharge: !!v.radius?.canRecharge, covered: !!v.radius?.alreadyCovered, expiry: v.radius?.expiryDate || "", result: v.result || null })) });
     async function waOp(op, a) {
       if (op === "ping") return { version: typeof GM_info !== "undefined" ? GM_info.script?.version : "" };
+      if (op === "outages") { // the radar's alerts and the open PON incidents, as the Dock's home shows them
+        if (!radar) await radarTick().catch(() => {});
+        await incList();
+        return { at: radar?.at || 0, off: radarOff || "", wide: !!radar?.wide,
+          routers: (radar?.alerts || []).map((x) => ({ ip: x.ip, name: x.name, level: x.level, since: x.since, gap: x.gap, open: x.open, usual: x.usual })),
+          pons: incOpen().filter((x) => x.kind === "pon").map((x) => ({ id: x.id, title: x.title, start: x.start, affected: x.affected, users: x.users.length, size: x.size || 0 })) };
+      }
+      if (op === "outage") { // one outage's report for the technicians and the notice for customers, from who is offline now
+        await data(); if (!customers) throw new Error("The ERP tab has no customer list yet");
+        if (!techMap) await techIndex().catch(() => {});
+        if (a.kind === "router") {
+          if (!live || Date.now() - live.at > 60000) { live = null; await liveSessions(); }
+          const { mine, off } = routerOff(a.ip, live), rx = radar?.list.find((x) => x.ip === a.ip);
+          return { ...reportText({ title: x_name(a.ip), down: off.length, total: mine.length, since: rx?.level === "down" || rx?.level === "drop" ? rx.since : null, custs: off }), down: off.length, total: mine.length };
+        }
+        const inc = (await incList()).find((x) => x.id === a.id); if (!inc) throw new Error("This incident isn't open any more");
+        drops = (await idbGet("drops")) || drops;
+        const by = new Map(customers.map((c) => [lower(c.username), c])), custs = inc.users.map((x) => by.get(x)).filter(Boolean), down = custs.filter((c) => drops?.off[lower(c.username)]);
+        return { ...reportText({ title: inc.title, down: down.length, total: inc.size || custs.length, since: inc.start, custs: down }), down: down.length, total: inc.size || custs.length };
+      }
       await data(); const u = String(a.username || "").toLowerCase(), r = customers?.find((x) => String(x.username || "").toLowerCase() === u);
       if (!r) throw new Error("Not in the ERP tab's customer list");
       if (op === "check") { // fresh sessions, then the card's "Down?" evidence
@@ -532,6 +552,20 @@
         await payQueue(ch.map((v) => [row, v]), { method: a.method, date: a.date || todayIso(), note: String(a.note || ""), skipOlder: !!a.skipOlder }, () => {}, "Lunas (Dock · WhatsApp)");
         bills.delete(r.username); // the customer card asks the ERP again
         return waBill(row);
+      }
+      if (op === "extras") { // the card's technicians and modem: who covers the village, the ONT and its PON port
+        await Promise.all([techMap ? 0 : techIndex().catch(() => {}), onts ? 0 : ontIndex().catch(() => {}), acs ? 0 : acsIndex().catch(() => {})]);
+        const { teams, how } = techMap ? guessTeams(r) : { teams: [], how: "The technician map couldn't be read" };
+        const { ont: o, dev } = modemOf(r), port = o && onts ? onts.rows.filter((x) => x.pid === o.pid && x.pon === o.pon) : [];
+        return { how, teams: teams.map((t) => ({ name: t.name, kind: teamKind(t.name), members: t.members.map((m) => `${titleCase(m.n)}${m.lead ? " (lead)" : ""}`) })),
+          modem: o ? { olt: o.olt, pon: o.pon, st: o.st || "", rx: o.rx ?? null, seen: o.seen || "", sn: o.sn || "" } : null, tr069: dev ? { inform: dev.inform || "", model: dev.model || dev.productClass || "" } : null,
+          port: port.length ? { all: port.length, off: port.filter((x) => !/online|working/i.test(x.st || "")).length } : null };
+      }
+      if (op === "remote") { // the ERP's 5-minute port on the RO to the modem's own page (logged, as the card's Remote)
+        const j = await api(`/api/noc/remote-onu?q=${encodeURIComponent(r.username)}`), c = (j.hasil || []).find((x) => lower(x.username) === u);
+        if (!c) throw new Error("The ERP's Remote ONU doesn't know this username");
+        const t = await api("/api/noc/remote-modem", { customerId: c.customerId });
+        return { url: String(t.url || ""), secs: Number(t.kedaluwarsaDetik) || (Number(t.menit) > 0 ? Number(t.menit) : 5) * 60, ro: c.ro || "" };
       }
       if (op === "link") {
         if (!r.customerDocId) throw new Error("Needs the customer list refreshed (LDN → Pelanggan → Update)");

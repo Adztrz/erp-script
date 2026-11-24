@@ -131,7 +131,7 @@
     }
     // which customers belong to this router: online ones by their session, offline ones by their LDN router name
     // (each name goes to the router most of its online customers are on)
-    function offlineView(box, back15, ip, lv) {
+    function routerOff(ip, lv) {
       const votes = {};
       for (const c of customers) { const s = lv.by.get(String(c.username).toLowerCase()); if (s) { const v = (votes[c.router] ||= {}); v[s.ip] = (v[s.ip] || 0) + 1; } }
       const home = {}; for (const [r, v] of Object.entries(votes)) home[r] = Object.entries(v).sort((a, b) => b[1] - a[1])[0][0];
@@ -141,6 +141,10 @@
         const s = lv.by.get(String(c.username).toLowerCase());
         if (s ? s.ip === ip : home[c.router] === ip) { mine.push(c); if (!s) off.push(c); else if (s.up < 900) fresh++; }
       }
+      return { mine, off, fresh };
+    }
+    function offlineView(box, back15, ip, lv) {
+      const { mine, off, fresh } = routerOff(ip, lv);
       back15.querySelector("b").textContent = String(fresh);
       const parts = [];
       const e = el("div", "eyebrow"); e.style.margin = "0 0 8px"; e.append(`Offline now `, el("b", null, `${off.length} of ${mine.length} active customers`)); parts.push(e);

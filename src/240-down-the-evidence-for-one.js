@@ -83,9 +83,9 @@
       return { facts, v, text, online };
     }
 
-    function reportBox({ title, down, total, since, custs, age }) {
-      if (!techMap) techIndex().then(() => {}).catch(() => {}); // the team line appears once the map is in
-      const box = el("div", "near report"), e = el("div", "eyebrow"); e.style.margin = "0 0 8px"; e.append("Outage report"); box.append(e);
+    // the outage report for the technicians, the notice for customers and their numbers (the radar's report box, and
+    // WhatsApp's outage list)
+    function reportText({ title, down, total, since, custs, age }) {
       const title1 = (d) => String(d).toLowerCase().replace(/(^|\s)\S/g, (x) => x.toUpperCase()); // KASIHAN and Kasihan are one village
       const vil = new Map(); for (const c of custs) { const d = c.desa ? title1(c.desa.trim()) : "?"; vil.set(d, (vil.get(d) || 0) + 1); }
       const villages = [...vil].sort((a, b) => b[1] - a[1]), pts = custs.map(where).filter(Boolean);
@@ -96,6 +96,12 @@
         (() => { const t = [...new Set(villages.slice(0, 3).flatMap(([d]) => teamsFor(d).filter((x) => teamKind(x.name) === "field").map((x) => x.name)))]; return t.length ? `Tim: ${t.join(", ")}` : ""; })(), mid ? `Lokasi: https://www.google.com/maps?q=${mid.lat.toFixed(6)},${mid.lng.toFixed(6)}` : "", `Dilaporkan ${wib()} WIB`].filter(Boolean).join("\n");
       const notice = `Pelanggan Yth, saat ini sedang ada gangguan jaringan di area ${villages.slice(0, 3).map(([d]) => d).filter((d) => d !== "?").join(", ") || "Anda"}. Tim teknisi kami sedang menanganinya. Mohon maaf atas ketidaknyamanannya. Terima kasih.`;
       const phones = [...new Set(custs.map((c) => phone62(c.phone)).filter(Boolean))];
+      return { text, notice, phones };
+    }
+    function reportBox({ title, down, total, since, custs, age }) {
+      if (!techMap) techIndex().then(() => {}).catch(() => {}); // the team line appears once the map is in
+      const box = el("div", "near report"), e = el("div", "eyebrow"); e.style.margin = "0 0 8px"; e.append("Outage report"); box.append(e);
+      const { text, notice, phones } = reportText({ title, down, total, since, custs, age });
       const pre = el("div", "pw msg"); pre.textContent = text; box.append(pre);
       const acts = el("div", "actions"), btn = (label, fn) => { const b = el("button", "btn", label); b.type = "button"; b.onclick = () => fn(b); acts.append(b); return b; };
       btn("Copy report", (b) => { copy(text, b); incidentNote("Outage report copied for the technicians"); });

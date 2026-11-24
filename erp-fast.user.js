@@ -2,7 +2,7 @@
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/erp-script/main/icons/dock.png
-// @version      3.18.0
+// @version      3.19.0
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -3090,7 +3090,7 @@
     }
     // which customers belong to this router: online ones by their session, offline ones by their LDN router name
     // (each name goes to the router most of its online customers are on)
-    function offlineView(box, back15, ip, lv) {
+    function routerOff(ip, lv) {
       const votes = {};
       for (const c of customers) { const s = lv.by.get(String(c.username).toLowerCase()); if (s) { const v = (votes[c.router] ||= {}); v[s.ip] = (v[s.ip] || 0) + 1; } }
       const home = {}; for (const [r, v] of Object.entries(votes)) home[r] = Object.entries(v).sort((a, b) => b[1] - a[1])[0][0];
@@ -3100,6 +3100,10 @@
         const s = lv.by.get(String(c.username).toLowerCase());
         if (s ? s.ip === ip : home[c.router] === ip) { mine.push(c); if (!s) off.push(c); else if (s.up < 900) fresh++; }
       }
+      return { mine, off, fresh };
+    }
+    function offlineView(box, back15, ip, lv) {
+      const { mine, off, fresh } = routerOff(ip, lv);
       back15.querySelector("b").textContent = String(fresh);
       const parts = [];
       const e = el("div", "eyebrow"); e.style.margin = "0 0 8px"; e.append(`Offline now `, el("b", null, `${off.length} of ${mine.length} active customers`)); parts.push(e);
@@ -4212,9 +4216,9 @@
       return { facts, v, text, online };
     }
 
-    function reportBox({ title, down, total, since, custs, age }) {
-      if (!techMap) techIndex().then(() => {}).catch(() => {}); // the team line appears once the map is in
-      const box = el("div", "near report"), e = el("div", "eyebrow"); e.style.margin = "0 0 8px"; e.append("Outage report"); box.append(e);
+    // the outage report for the technicians, the notice for customers and their numbers (the radar's report box, and
+    // WhatsApp's outage list)
+    function reportText({ title, down, total, since, custs, age }) {
       const title1 = (d) => String(d).toLowerCase().replace(/(^|\s)\S/g, (x) => x.toUpperCase()); // KASIHAN and Kasihan are one village
       const vil = new Map(); for (const c of custs) { const d = c.desa ? title1(c.desa.trim()) : "?"; vil.set(d, (vil.get(d) || 0) + 1); }
       const villages = [...vil].sort((a, b) => b[1] - a[1]), pts = custs.map(where).filter(Boolean);
@@ -4225,6 +4229,12 @@
         (() => { const t = [...new Set(villages.slice(0, 3).flatMap(([d]) => teamsFor(d).filter((x) => teamKind(x.name) === "field").map((x) => x.name)))]; return t.length ? `Tim: ${t.join(", ")}` : ""; })(), mid ? `Lokasi: https://www.google.com/maps?q=${mid.lat.toFixed(6)},${mid.lng.toFixed(6)}` : "", `Dilaporkan ${wib()} WIB`].filter(Boolean).join("\n");
       const notice = `Pelanggan Yth, saat ini sedang ada gangguan jaringan di area ${villages.slice(0, 3).map(([d]) => d).filter((d) => d !== "?").join(", ") || "Anda"}. Tim teknisi kami sedang menanganinya. Mohon maaf atas ketidaknyamanannya. Terima kasih.`;
       const phones = [...new Set(custs.map((c) => phone62(c.phone)).filter(Boolean))];
+      return { text, notice, phones };
+    }
+    function reportBox({ title, down, total, since, custs, age }) {
+      if (!techMap) techIndex().then(() => {}).catch(() => {}); // the team line appears once the map is in
+      const box = el("div", "near report"), e = el("div", "eyebrow"); e.style.margin = "0 0 8px"; e.append("Outage report"); box.append(e);
+      const { text, notice, phones } = reportText({ title, down, total, since, custs, age });
       const pre = el("div", "pw msg"); pre.textContent = text; box.append(pre);
       const acts = el("div", "actions"), btn = (label, fn) => { const b = el("button", "btn", label); b.type = "button"; b.onclick = () => fn(b); acts.append(b); return b; };
       btn("Copy report", (b) => { copy(text, b); incidentNote("Outage report copied for the technicians"); });
@@ -5242,6 +5252,26 @@
       hutang: v.hutang, recharge: !!v.recharge, canRecharge: !!v.radius?.canRecharge, covered: !!v.radius?.alreadyCovered, expiry: v.radius?.expiryDate || "", result: v.result || null })) });
     async function waOp(op, a) {
       if (op === "ping") return { version: typeof GM_info !== "undefined" ? GM_info.script?.version : "" };
+      if (op === "outages") { // the radar's alerts and the open PON incidents, as the Dock's home shows them
+        if (!radar) await radarTick().catch(() => {});
+        await incList();
+        return { at: radar?.at || 0, off: radarOff || "", wide: !!radar?.wide,
+          routers: (radar?.alerts || []).map((x) => ({ ip: x.ip, name: x.name, level: x.level, since: x.since, gap: x.gap, open: x.open, usual: x.usual })),
+          pons: incOpen().filter((x) => x.kind === "pon").map((x) => ({ id: x.id, title: x.title, start: x.start, affected: x.affected, users: x.users.length, size: x.size || 0 })) };
+      }
+      if (op === "outage") { // one outage's report for the technicians and the notice for customers, from who is offline now
+        await data(); if (!customers) throw new Error("The ERP tab has no customer list yet");
+        if (!techMap) await techIndex().catch(() => {});
+        if (a.kind === "router") {
+          if (!live || Date.now() - live.at > 60000) { live = null; await liveSessions(); }
+          const { mine, off } = routerOff(a.ip, live), rx = radar?.list.find((x) => x.ip === a.ip);
+          return { ...reportText({ title: x_name(a.ip), down: off.length, total: mine.length, since: rx?.level === "down" || rx?.level === "drop" ? rx.since : null, custs: off }), down: off.length, total: mine.length };
+        }
+        const inc = (await incList()).find((x) => x.id === a.id); if (!inc) throw new Error("This incident isn't open any more");
+        drops = (await idbGet("drops")) || drops;
+        const by = new Map(customers.map((c) => [lower(c.username), c])), custs = inc.users.map((x) => by.get(x)).filter(Boolean), down = custs.filter((c) => drops?.off[lower(c.username)]);
+        return { ...reportText({ title: inc.title, down: down.length, total: inc.size || custs.length, since: inc.start, custs: down }), down: down.length, total: inc.size || custs.length };
+      }
       await data(); const u = String(a.username || "").toLowerCase(), r = customers?.find((x) => String(x.username || "").toLowerCase() === u);
       if (!r) throw new Error("Not in the ERP tab's customer list");
       if (op === "check") { // fresh sessions, then the card's "Down?" evidence
@@ -5271,6 +5301,20 @@
         await payQueue(ch.map((v) => [row, v]), { method: a.method, date: a.date || todayIso(), note: String(a.note || ""), skipOlder: !!a.skipOlder }, () => {}, "Lunas (Dock · WhatsApp)");
         bills.delete(r.username); // the customer card asks the ERP again
         return waBill(row);
+      }
+      if (op === "extras") { // the card's technicians and modem: who covers the village, the ONT and its PON port
+        await Promise.all([techMap ? 0 : techIndex().catch(() => {}), onts ? 0 : ontIndex().catch(() => {}), acs ? 0 : acsIndex().catch(() => {})]);
+        const { teams, how } = techMap ? guessTeams(r) : { teams: [], how: "The technician map couldn't be read" };
+        const { ont: o, dev } = modemOf(r), port = o && onts ? onts.rows.filter((x) => x.pid === o.pid && x.pon === o.pon) : [];
+        return { how, teams: teams.map((t) => ({ name: t.name, kind: teamKind(t.name), members: t.members.map((m) => `${titleCase(m.n)}${m.lead ? " (lead)" : ""}`) })),
+          modem: o ? { olt: o.olt, pon: o.pon, st: o.st || "", rx: o.rx ?? null, seen: o.seen || "", sn: o.sn || "" } : null, tr069: dev ? { inform: dev.inform || "", model: dev.model || dev.productClass || "" } : null,
+          port: port.length ? { all: port.length, off: port.filter((x) => !/online|working/i.test(x.st || "")).length } : null };
+      }
+      if (op === "remote") { // the ERP's 5-minute port on the RO to the modem's own page (logged, as the card's Remote)
+        const j = await api(`/api/noc/remote-onu?q=${encodeURIComponent(r.username)}`), c = (j.hasil || []).find((x) => lower(x.username) === u);
+        if (!c) throw new Error("The ERP's Remote ONU doesn't know this username");
+        const t = await api("/api/noc/remote-modem", { customerId: c.customerId });
+        return { url: String(t.url || ""), secs: Number(t.kedaluwarsaDetik) || (Number(t.menit) > 0 ? Number(t.menit) : 5) * 60, ro: c.ro || "" };
       }
       if (op === "link") {
         if (!r.customerDocId) throw new Error("Needs the customer list refreshed (LDN → Pelanggan → Update)");
