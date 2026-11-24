@@ -572,6 +572,7 @@
         const t = await trafficRead(r, false), say = trafficSay(t, r);
         return { ...say, plan: t.plan, down: t.rate?.down ?? null, watching: t.watching };
       }
+      if (op === "triage") return triageLoad(r, !!a.fresh); // the card's Answer: one verdict, the next step and the reply to send
       if (op === "path") return pathFor(r); // the card's Way up: the links from their OLT to the internet, where it's down or full
       if (op === "remote") { // the ERP's 5-minute port on the RO to the modem's own page (logged, as the card's Remote)
         const j = await api(`/api/noc/remote-onu?q=${encodeURIComponent(r.username)}`), c = (j.hasil || []).find((x) => lower(x.username) === u);

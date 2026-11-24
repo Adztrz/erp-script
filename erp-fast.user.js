@@ -2,7 +2,7 @@
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/erp-script/main/icons/dock.png
-// @version      3.22.0
+// @version      3.23.0
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -1889,6 +1889,9 @@
       .erp-dock .tbar.full span { background: #e0b04f; }
       .erp-dock .tbar.busy span { background: #e0b252; }
       .erp-dock .path .tbar.full span { background: var(--red); }
+      .erp-dock .answer .verdict { display: grid; gap: 4px; } .erp-dock .answer .verdict b { font-weight: 600; font-size: 14px; }
+      .erp-dock .answer .step { margin: 0 0 8px; color: var(--paper); font-size: 13px; }
+      .erp-dock .answer .reply { margin: 0 0 8px; padding: 8px 10px; border-radius: 6px; border: 1px solid #2a2e30; color: var(--muted); font-size: 12.5px; line-height: 1.5; white-space: pre-wrap; }
       .erp-dock .chain { display: grid; gap: 0; margin: 0 0 8px; font-size: 13px; }
       .erp-dock .chain .hop { display: grid; grid-template-columns: 12px minmax(0, auto) minmax(0, 1fr); align-items: center; gap: 8px; padding: 4px 0; }
       .erp-dock .chain .hop b { color: var(--paper); font-weight: 500; overflow-wrap: anywhere; } .erp-dock .chain .n { color: var(--muted); font-size: 12px; }
@@ -2818,6 +2821,7 @@
       const hist = await idbGet("radar");
       radar = hist ? assess(hist) : null;
       feedStuck.clear(); for (const x of radar?.list || []) if (x.level === "nofeed") feedStuck.set(roWord(x.name), x.since || hist.at);
+      if (fetched) pathMapLoad().then((m) => { const text = erpTopoText(m); if (text) { ls.set(TOPO_ERP, { text, at: Date.now() }); topoMemo = null; } }).catch(() => {}); // the ERP's router map, for the radar's topology
       if (fetched) incRadar(radar).catch(() => {}); // only the tab that took the reading: one alert, not one per tab
       if (fab) { const a = radar?.alerts ?? []; fab.classList.toggle("alert", a.length > 0); fab.title = a.length ? `Dock (Alt+K): outage on ${a.map((x) => x.name).join(", ")}` : "Dock (Alt+K)"; }
       if (panel && (view.mode === "radar" || (!view.q.trim() && !view.card && !view.mode)) && radar?.at !== radarDrawn) drawBody();
@@ -2870,11 +2874,11 @@
     // nothing below it. With the map, routers that fall together are read as one fault: the highest one down and
     // everything behind it, rather than an alert each. A router the feed doesn't report (an aggregation router with no
     // customers of its own) still links what's below it; two or more of its branches failing at once points at it.
-    const TOPO = "erpDock.topology";
+    const TOPO = "erpDock.topology", TOPO_ERP = "erpDock.topologyErp"; // pasted by hand; else the ERP's router map, as text (kept by the radar)
     const topoKey = (s) => String(s || "").toUpperCase().replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim().replace(/^RO /, "");
     let topoMemo = null;
     function topology() {
-      const text = String(ls.get(TOPO, "") || "");
+      const own = String(ls.get(TOPO, "") || ""), text = own || String(ls.get(TOPO_ERP)?.text || "");
       if (topoMemo?.text === text) return topoMemo;
       const up = new Map(), down = new Map(), names = new Map(), add = (s) => { const k = topoKey(s); if (k && !names.has(k)) names.set(k, s.trim().toUpperCase()); return k; };
       for (const line of text.split("\n")) {
@@ -2882,7 +2886,7 @@
         for (const c of b.split(",")) { const k = add(c); if (!k || k === p) continue;
           (up.get(k) || up.set(k, []).get(k)).push(p); const d = down.get(p) || down.set(p, []).get(p); if (!d.includes(k)) d.push(k); }
       }
-      return (topoMemo = { text, up, down, names });
+      return (topoMemo = { text, up, down, names, erp: !own && !!text });
     }
     // each node's reading in the feed: the same name, else the longest name it starts with (RO PUNUNG NEW is PUNUNG),
     // else the only node starting with the same word (RO PACITAN 2116 is PACITAN KOTA); of several feed routers on one node, the busiest (an old one sits at 0)
@@ -2968,7 +2972,8 @@
       const acts = el("div", "actions"), save = el("button", "btn primary", "Save"), cancel = el("button", "btn", "Cancel"); save.type = cancel.type = "button";
       save.onclick = () => { ls.set(TOPO, ta.value.trim()); topoMemo = null; done(); }; cancel.onclick = done;
       acts.append(save, cancel);
-      box.append(el("div", "eyebrow", "Network topology"), el("p", "note", "Kept in this browser only. Each line: a router, then > and what's below it."), ta, said, acts);
+      const erp = ls.get(TOPO_ERP);
+      box.append(el("div", "eyebrow", "Network topology"), el("p", "note", erp?.text ? `Empty: the ERP's router map is used (Network → Topology, read ${ago(erp.at)}). Text here replaces it, in this browser only. Each line: a router, then > and what's below it.` : "Kept in this browser only. Each line: a router, then > and what's below it."), ta, said, acts);
       return box;
     }
     // ---- Drop log ----
@@ -4334,6 +4339,24 @@
       return (pathLiveLoading ||= api("/api/network/peta-router/live").then((j) => (pathLive = { at: Date.now(), port: j.port || {}, router: j.router || {} }))
         .catch(() => pathLive || { at: 0, port: {}, router: {} }).finally(() => { pathLiveLoading = null; }));
     }
+    // the radar's topology from the map: routers and switches, each link pointing away from the core. Which end is
+    // up is taken from the distance to the top (routers with nothing above them), so a link the map draws backwards
+    // doesn't put a switch above the router feeding it; the map's own direction decides a tie
+    function erpTopoText(map) {
+      const links = [...(map.peta.link || []), ...(map.peta.sambungan || [])].filter((l) => l.roA && l.roB && !/^olt:/.test(l.roA) && !/^olt:/.test(l.roB));
+      const name = (id) => String(map.sws.find((x) => x.id === id)?.nama || id).replace(/[,>]/g, " ").trim().toUpperCase();
+      const upOf = (l) => (l.hulu === "a" ? l.roA : l.hulu === "b" ? l.roB : null);
+      const routers = (map.peta.node || []).map((n) => n.ro), dist = new Map();
+      const q = routers.filter((ro) => links.some((l) => l.roA === ro || l.roB === ro) && !links.some((l) => upOf(l) && upOf(l) !== ro && (l.roA === ro || l.roB === ro)));
+      for (const t of q) dist.set(t, 0);
+      for (let i = 0; i < q.length; i++) for (const l of links) { const o = l.roA === q[i] ? l.roB : l.roB === q[i] ? l.roA : null; if (o && !dist.has(o)) { dist.set(o, dist.get(q[i]) + 1); q.push(o); } }
+      const below = new Map();
+      for (const l of links) {
+        const da = dist.get(l.roA) ?? 99, db = dist.get(l.roB) ?? 99, up = da < db ? l.roA : db < da ? l.roB : upOf(l); if (!up) continue;
+        const dn = up === l.roA ? l.roB : l.roA, list = below.get(up) || below.set(up, []).get(up); if (!list.includes(dn)) list.push(dn);
+      }
+      return [...below].map(([u, d]) => `${name(u)} > ${d.map(name).join(", ")}`).join("\n");
+    }
     const capText = (mbps) => (mbps >= 1000 ? `${String(+(mbps / 1000).toFixed(1)).replace(".", ",")} Gbit/s` : `${mbps} Mbit/s`);
     const rateText = (bps) => (bps >= 1e9 ? `${(bps / 1e9).toFixed(1).replace(".", ",")} Gbit/s` : bits(bps));
     // the climb, as data: the hops from the customer's end up, each with the link to the next one up, and a verdict
@@ -4440,6 +4463,69 @@
         if (polls > 10) clearInterval(timer); // 5 minutes, then it rests
       };
       box.append(head(), el("p", "note ld", "Following the links up from their OLT…"));
+      setTimeout(() => { poll(); timer = setInterval(poll, 30000); }, 0);
+      return box;
+    }
+
+    // ---- Answer: one verdict for a complaint, and the reply to send ----
+    // The card's three readings joined, in the order a NOC checks them. Offline: the way up (a router, switch or link
+    // down is an area outage), then the PON port and the neighbours, then the signal (their cable), then the modem's
+    // power. Online: an uplink that's full (the area is busy), then their own line full (their use), then reconnects
+    // (power or connector), then hardly any traffic (WiFi or devices). Each answer has the next step and a reply in
+    // Indonesian to send the customer.
+    function triageRead(r, f, t, p, due) {
+      const kak = `Kak ${titleCase(String(r.nama || r.username).split(/\s+/).slice(0, 2).join(" "))}`, area = r.desa ? titleCase(r.desa.trim()) : "Anda";
+      const say = (tone, kind, cause, step, reply, waiting = false) => ({ tone, kind, cause, step, reply, waiting });
+      const rate = t?.rate || null, plan = t?.plan || 0, pct = rate && plan ? rate.down / (plan * 1e6) : null;
+      const pathNet = p?.v[0] === "net", pathFull = p?.v[0] === "warn" && / is full /.test(p.v[1]);
+      const AREA = `Mohon maaf ${kak}, saat ini sedang ada gangguan jaringan di area ${area}. Tim teknisi kami sedang menanganinya dan kami kabari kembali setelah normal. Terima kasih atas kesabarannya.`;
+      if (r.isolir) {
+        const owed = due?.ok && due.jumlahTagihan ? ` (${due.jumlahTagihan} tagihan, Rp ${Number(due.totalTunggakan || 0).toLocaleString("id-ID")})` : "";
+        return say("iso", "Isolir", `Cut off for the bill${owed ? `: ${due.jumlahTagihan} overdue` : ""}, not a network fault.`, "Confirm the payment, or mark it paid with Pay.",
+          `${kak}, layanan internet sedang terisolir karena ada tagihan yang belum terbayar${owed}. Setelah pembayaran, layanan akan aktif kembali. Terima kasih.`);
+      }
+      if (!f.online) {
+        if (pathNet) return say("net", "Down · area outage", p.v[1], "Send the outage notice to the area (Outage radar → report) and dispatch to that link or router.", AREA);
+        if (f.v[0] === "net") return say("net", "Down · area outage", f.v[1], "Send the outage notice to the area and dispatch to the port or FAT.", AREA);
+        if (f.v[0] === "cut") return say("cut", "Down · their cable", f.v[1], "Schedule a technician for the drop cable or connector at the house.",
+          `Mohon maaf ${kak}, dari pantauan kami ada kendala pada kabel menuju rumah ${kak}. Kami jadwalkan teknisi untuk pengecekan. Terima kasih.`);
+        return say("off", "Down · their modem", f.v[1], "Ask whether the modem is on and which lights show (a red LOS is the cable), then a restart.",
+          `${kak}, modem ${kak} terpantau offline dari sisi kami, sementara jaringan di area ${area} normal. Mohon cek apakah modem menyala dan lampu apa saja yang menyala (apakah ada lampu LOS merah?). Coba cabut listrik modem 10 detik lalu nyalakan lagi, lalu kabari kami ya.`);
+      }
+      if (pathFull) return say("warn", "Slow · the area is busy", p.v[1], "Not their line: tell them it's peak time in their area, and log the link for more capacity.",
+        `Mohon maaf ${kak}, saat ini jalur jaringan di area ${area} sedang padat sehingga kecepatan bisa menurun di jam sibuk. Tim kami sedang menanganinya. Terima kasih atas pengertiannya.`);
+      if (pct != null && pct >= 0.85) return say("warn", "Slow · their line is full", `Using ${Math.round(pct * 100)}% of the ${plan} Mbps plan right now: their own use fills it.`, "Fewer downloads or devices at once, or a bigger plan.",
+        `${kak}, dari pantauan kami pemakaian internet ${kak} saat ini sedang penuh (sekitar ${bits(rate.down)} dari paket ${plan} Mbps), sehingga terasa lambat. Biasanya karena streaming, download, atau banyak perangkat sekaligus. Jika sering terjadi, ${kak} bisa upgrade paket.`);
+      if (f.v[0] === "warn") return say("warn", "Unstable", f.v[1], "Check the modem's power first (loose socket, shared power strip), then the connector.",
+        `${kak}, koneksi ${kak} terpantau sering putus-sambung. Mohon pastikan listrik modem stabil (colokan tidak longgar, tidak berbagi terminal dengan alat lain). Jika masih terjadi, kami jadwalkan teknisi untuk pengecekan.`);
+      if (rate && rate.down < 50000) return say("off", "Slow · WiFi or devices", "Online and the way up is clear, but almost no traffic reaches the modem.", "A modem restart; their device near the modem; 5 GHz WiFi if they have it.",
+        `${kak}, koneksi internet sampai ke modem ${kak} normal dari sisi kami. Mohon coba restart modem (cabut listrik 10 detik lalu nyalakan lagi) dan gunakan perangkat di dekat modem. Jika masih lambat, kabari kami ya.`);
+      const CLEAR = `${kak}, dari sisi kami koneksi ${kak} normal dan jaringan di area ${area} lancar. Boleh dibantu kirim screenshot speedtest di dekat modem, dan perangkat mana yang terasa lambat?`;
+      if (!rate) return say("ok", "Online", `Online and steady${p && p.v[0] === "ok" ? ", the way up clear" : ""}; the traffic reading comes with the next 5-minute report.`, "Ask for a speed test near the modem meanwhile.", CLEAR, true);
+      return say("ok", "Line is fine", `Online, steady, the way up clear${pct != null ? `, using ${Math.round(pct * 100)}% of the plan` : ""}.`, "Most likely WiFi or one device: a speed test near the modem tells which.", CLEAR);
+    }
+    async function triageLoad(r, fresh) {
+      await Promise.all([onts ? 0 : ontIndex().catch(() => {}), acs ? 0 : acsIndex().catch(() => {})]);
+      const kept = hist.get(r.username);
+      const d = !fresh && kept && Date.now() - kept.at < 2 * 60000 ? kept.d : await forensicLoad(r).then((x) => { hist.set(r.username, { at: Date.now(), d: x }); return x; });
+      const [t, p] = await Promise.all([trafficRead(r, false).catch(() => null), pathFor(r).catch(() => null)]);
+      return triageRead(r, forensicRead(r, d), t, p, d.due);
+    }
+    function answerBox(r) {
+      const box = el("div", "near hist answer rise"); box.style.setProperty("--i", "1");
+      const head = () => { const e = el("div", "eyebrow"); e.style.margin = "0 0 8px"; e.append("Answer"); return e; };
+      let timer = null, polls = 0;
+      const show = (a) => {
+        const v = el("div", `verdict ${a.tone}`); v.append(el("b", null, a.kind), el("span", null, a.cause));
+        const reply = el("blockquote", "reply", a.reply), acts = el("div", "actions"), c = el("button", "btn", "Copy reply"); c.type = "button"; c.onclick = () => copy(a.reply, c); acts.append(c);
+        box.replaceChildren(head(), v, el("p", "step", `Next: ${a.step}`), reply, acts, ...(a.waiting ? [el("p", "note ld", "Watching for the traffic reading…")] : []));
+      };
+      const poll = async () => {
+        if (!box.isConnected && polls) return clearInterval(timer);
+        polls++; try { show(await triageLoad(r, false)); } catch (e) { box.replaceChildren(head(), el("p", "note late", e.message)); }
+        if (polls > 10) clearInterval(timer);
+      };
+      box.append(head(), el("p", "note ld", "Reading the line, its traffic and the way up…"));
       setTimeout(() => { poll(); timer = setInterval(poll, 30000); }, 0);
       return box;
     }
@@ -4651,7 +4737,7 @@
       lb.title = !r.customerDocId ? "Needs the customer list refreshed (LDN → Pelanggan → Update)" : !digits(r.phone) ? "No phone number: the ERP needs one to send the link" : "Make the one-click login link and send it on WhatsApp, as Master Pelanggan does";
       lb.disabled = !r.customerDocId || !digits(r.phone); acts.append(lb);
       const bill = payBox(r); billDraw(bills.get(r.username));
-      wrap.append(back, who, facts, tech, acts, link, forensicBox(r), trafficBox(r), pathBox(r), bill, modemBox(`u:${r.username}`, r), nearView(r));
+      wrap.append(back, who, facts, tech, acts, link, answerBox(r), forensicBox(r), trafficBox(r), pathBox(r), bill, modemBox(`u:${r.username}`, r), nearView(r));
       return wrap;
     }
     // Master Pelanggan's "Link 1× Klik": one press makes the customer's one-click login link and the ERP tries to send it
@@ -5521,6 +5607,7 @@
         const t = await trafficRead(r, false), say = trafficSay(t, r);
         return { ...say, plan: t.plan, down: t.rate?.down ?? null, watching: t.watching };
       }
+      if (op === "triage") return triageLoad(r, !!a.fresh); // the card's Answer: one verdict, the next step and the reply to send
       if (op === "path") return pathFor(r); // the card's Way up: the links from their OLT to the internet, where it's down or full
       if (op === "remote") { // the ERP's 5-minute port on the RO to the modem's own page (logged, as the card's Remote)
         const j = await api(`/api/noc/remote-onu?q=${encodeURIComponent(r.username)}`), c = (j.hasil || []).find((x) => lower(x.username) === u);

@@ -331,3 +331,27 @@ test("way up: climbs from the OLT to the core, crosses a backwards link, names t
   assert.match(pathRead({ router: "RO CONTOH NEW" }, map, lv, "A").v[1], /^Router DIST .* unreachable/);
   assert.equal(pathRead({ router: "RO CONTOH NEW" }, map, lv, null).hops[0].name, "CONTOH"); // no modem found: from their router
 });
+
+test("radar topology from the router map: links point away from the core, even one the map draws backwards", () => {
+  const { erpTopoText } = load(dock, ["erpTopoText"]);
+  const map = { peta: { node: [{ ro: "CORE" }, { ro: "DIST" }, { ro: "CONTOH" }, { ro: "CONTOH DUA" }],
+    link: [{ roA: "CORE", roB: "DIST", hulu: "a" }, { roA: "DIST", roB: "sw:1", hulu: "b" }, // the switch marked above DIST
+      { roA: "CONTOH", roB: "sw:1", hulu: "b" }, { roA: "CONTOH DUA", roB: "sw:1", hulu: "b" }, { roA: "CONTOH", roB: "olt:A", hulu: "a" }], sambungan: [] },
+    sws: [{ id: "sw:1", nama: "SW-CONTOH, LAMA" }] };
+  assert.equal(erpTopoText(map), "CORE > DIST\nDIST > SW-CONTOH  LAMA\nSW-CONTOH  LAMA > CONTOH, CONTOH DUA");
+});
+
+test("answer: the first cause in the NOC's order, with a reply that names the customer and village", () => {
+  const titleCase = (x) => String(x).toLowerCase().replace(/(^|[\s(])[^\s(]/g, (c) => c.toUpperCase());
+  const { triageRead } = load(dock, ["triageRead"], { titleCase, bits: (b) => `${b / 1e6} Mbit/s` }, ["triageRead"]);
+  const r = { username: "budi0101", nama: "BUDI CONTOH SANTOSO", desa: "CONTOH", isolir: false };
+  const ok = { online: true, v: ["ok", "Online and steady"] }, clear = { v: ["ok", "The way up is clear"] };
+  const down = triageRead(r, { online: false, v: ["off", "Only this customer"] }, null, { v: ["net", "The link X → Y is down since 10:00"] });
+  assert.equal(down.kind, "Down · area outage"); assert.match(down.reply, /^Mohon maaf Kak Budi Contoh, .* area Contoh\./);
+  assert.equal(triageRead(r, { online: false, v: ["off", "Only this customer"] }, null, clear).kind, "Down · their modem");
+  assert.equal(triageRead(r, ok, { rate: { down: 9e6 }, plan: 10 }, { v: ["warn", "The link X → Y is full (95% of 1 Gbit/s): …"] }).kind, "Slow · the area is busy");
+  assert.equal(triageRead(r, ok, { rate: { down: 9e6 }, plan: 10 }, clear).kind, "Slow · their line is full");
+  assert.equal(triageRead(r, ok, { rate: { down: 2e4 }, plan: 10 }, clear).kind, "Slow · WiFi or devices");
+  const wait = triageRead(r, ok, { rate: null, plan: 10 }, clear); assert.equal(wait.waiting, true);
+  assert.equal(triageRead({ ...r, isolir: true }, ok, null, clear, { ok: true, jumlahTagihan: 2, totalTunggakan: 220000 }).tone, "iso");
+});

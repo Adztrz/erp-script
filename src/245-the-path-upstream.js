@@ -15,6 +15,24 @@
       return (pathLiveLoading ||= api("/api/network/peta-router/live").then((j) => (pathLive = { at: Date.now(), port: j.port || {}, router: j.router || {} }))
         .catch(() => pathLive || { at: 0, port: {}, router: {} }).finally(() => { pathLiveLoading = null; }));
     }
+    // the radar's topology from the map: routers and switches, each link pointing away from the core. Which end is
+    // up is taken from the distance to the top (routers with nothing above them), so a link the map draws backwards
+    // doesn't put a switch above the router feeding it; the map's own direction decides a tie
+    function erpTopoText(map) {
+      const links = [...(map.peta.link || []), ...(map.peta.sambungan || [])].filter((l) => l.roA && l.roB && !/^olt:/.test(l.roA) && !/^olt:/.test(l.roB));
+      const name = (id) => String(map.sws.find((x) => x.id === id)?.nama || id).replace(/[,>]/g, " ").trim().toUpperCase();
+      const upOf = (l) => (l.hulu === "a" ? l.roA : l.hulu === "b" ? l.roB : null);
+      const routers = (map.peta.node || []).map((n) => n.ro), dist = new Map();
+      const q = routers.filter((ro) => links.some((l) => l.roA === ro || l.roB === ro) && !links.some((l) => upOf(l) && upOf(l) !== ro && (l.roA === ro || l.roB === ro)));
+      for (const t of q) dist.set(t, 0);
+      for (let i = 0; i < q.length; i++) for (const l of links) { const o = l.roA === q[i] ? l.roB : l.roB === q[i] ? l.roA : null; if (o && !dist.has(o)) { dist.set(o, dist.get(q[i]) + 1); q.push(o); } }
+      const below = new Map();
+      for (const l of links) {
+        const da = dist.get(l.roA) ?? 99, db = dist.get(l.roB) ?? 99, up = da < db ? l.roA : db < da ? l.roB : upOf(l); if (!up) continue;
+        const dn = up === l.roA ? l.roB : l.roA, list = below.get(up) || below.set(up, []).get(up); if (!list.includes(dn)) list.push(dn);
+      }
+      return [...below].map(([u, d]) => `${name(u)} > ${d.map(name).join(", ")}`).join("\n");
+    }
     const capText = (mbps) => (mbps >= 1000 ? `${String(+(mbps / 1000).toFixed(1)).replace(".", ",")} Gbit/s` : `${mbps} Mbit/s`);
     const rateText = (bps) => (bps >= 1e9 ? `${(bps / 1e9).toFixed(1).replace(".", ",")} Gbit/s` : bits(bps));
     // the climb, as data: the hops from the customer's end up, each with the link to the next one up, and a verdict

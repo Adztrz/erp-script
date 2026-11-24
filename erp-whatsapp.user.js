@@ -2,7 +2,7 @@
 // @name         ERP — Dock in WhatsApp Web
 // @namespace    adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/erp-script/main/icons/dock.png
-// @version      1.7.0
+// @version      1.8.0
 // @description  The Dock's customer card beside the open chat in WhatsApp Web: who is writing (found by their number, a username they sent, or their name), online or not, plan, area, unpaid months and any outage on their router, with replies that fill in their name, username and bill; Check connection, Pay and the 1× login link are done by the Dock in your open ERP tab. A reply goes into the message box; you send it yourself. The customer list comes from the ERP tab, through Tampermonkey's storage: nothing is fetched from WhatsApp, and nothing leaves this browser.
 // @match        https://*/*
 // @run-at       document-idle
@@ -445,6 +445,7 @@
     .erp-wa .tbar span { display: block; height: 100%; border-radius: 3px; background: var(--on); transition: width .4s var(--ease-out); }
     .erp-wa .tbar.full span { background: var(--amber); }
     .erp-wa .tbar.bad span { background: var(--bad); }
+    .erp-wa .step { margin: 0; color: var(--text); font-size: 13px; }
     .erp-wa .chain { display: grid; font-size: 13px; }
     .erp-wa .chain .hop { display: grid; grid-template-columns: 8px minmax(0, auto) minmax(0, 1fr); align-items: center; gap: 8px; padding: 3px 0; }
     .erp-wa .chain .hop b { color: var(--strong); font-weight: 500; overflow-wrap: anywhere; } .erp-wa .chain .n { color: var(--muted); font-size: 12px; }
@@ -647,7 +648,7 @@
     else bill.append(el("b", null, "Bills not loaded"), el("span", null, "Open Finance → Invoices in the ERP once to bring this month's"));
     if (data.monthsLoaded) bill.title = `From the ${data.monthsLoaded} invoice month${data.monthsLoaded > 1 ? "s" : ""} the Dock has loaded, ${ago(data.billsAt)}`;
     card.append(bill);
-    card.append(...actionsFor(r), ...trafficFor(r), ...pathFor(r), ...extrasFor(r), ...nearFor(r));
+    card.append(...answerFor(r), ...actionsFor(r), ...trafficFor(r), ...pathFor(r), ...extrasFor(r), ...nearFor(r));
     const acts = el("div", "row");
     if (data.origin) { const a = el("a", "btn main", "Open in the Dock"), go = svgIcon("M7 17 17 7M9 7h8v8"); go.setAttribute("fill", "none"); go.setAttribute("stroke", "currentColor"); go.setAttribute("stroke-width", "1.8"); go.setAttribute("stroke-linecap", "round"); go.style.cssText = "width:14px;height:14px"; a.append(go); a.href = `${data.origin}/ldn-radius#dock=${encodeURIComponent(r.username)}`; a.target = "erp-dock"; a.rel = "noopener"; acts.append(a); }
     if (others || current.pick) { const o = el("button", "btn", others ? "Not them?" : current.who?.group ? "Back to the group" : "Back"); o.type = "button"; o.onclick = () => { current.pick = null; current.note = ""; if (others) current.who = { ...current.who, guess: true }; draw(); }; acts.append(o); }
@@ -778,6 +779,30 @@
     if (d.down != null && d.plan) { const bar = el("div", `tbar${d.pct >= 0.85 ? " full" : ""}`), fill = el("span"); fill.style.width = `${Math.min(100, Math.round(d.pct * 100))}%`; bar.append(fill); box.append(bar); }
     const dl = el("dl"); for (const [k, v] of d.lines) dl.append(el("dt", null, k), el("dd", null, v)); box.append(dl);
     if (d.waiting) box.append(el("p", "how ld", `Watching for the next 5-minute report (since ${hhmm(d.watching)})`));
+    return [box];
+  }
+
+  // ---------- Answer: one verdict and the reply to send ----------
+  // The Dock joins the line (Down?), its traffic and the way up into one cause, the next step and a reply in
+  // Indonesian. Read again every 30 s for 5 minutes, so the traffic reading can come in.
+  function answerFor(r) {
+    const a = actFor(r);
+    if (!a.answerTimer) {
+      let n = 0; const poll = () => { if (act !== a || n++ > 10) return clearInterval(a.answerTimer);
+        rpc("triage", { username: r.username }, 45000).then((d) => { if (act !== a) return; const was = JSON.stringify(a.answer?.data); a.answer = { data: d, at: a.answer?.at || Date.now() }; if (was !== JSON.stringify(d)) draw(); })
+          .catch((e) => { if (act === a && !a.answer?.data) { a.answer = { err: e.message, at: Date.now() }; draw(); } }); };
+      a.answerTimer = setInterval(poll, 30000); setTimeout(poll, 0);
+    }
+    const t = a.answer, d = t?.data;
+    const box = sectEl(r, "answer", "Answer", t ? (t.err ? "err" : `ok${d?.kind}`) : "busy", d ? (d.tone === "ok" ? "good" : "warn") : "");
+    if (!t) { box.append(busyNote("Reading the line, its traffic and the way up…")); return [box]; }
+    if (t.err) { box.append(el("p", "warn", t.err)); return [box]; }
+    box.append(el("p", `verdict ${d.tone}`, d.kind), el("p", "how", d.cause), el("p", "step", `Next: ${d.step}`));
+    const b = el("button", "reply"); b.type = "button"; b.title = "Click: into the message box (you send it). Shift+click: copy.";
+    b.append(el("b", null, "Reply"), el("span", null, d.reply));
+    b.onclick = (e) => { const ok = e.shiftKey ? (navigator.clipboard?.writeText(d.reply), true) : putInBox(d.reply); b.classList.toggle("did", !!ok); b.classList.toggle("copied", e.shiftKey); setTimeout(() => b.classList.remove("did", "copied"), 1400); };
+    box.append(b);
+    if (d.waiting) box.append(el("p", "how ld", "Watching for the traffic reading…"));
     return [box];
   }
 

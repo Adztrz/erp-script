@@ -4,11 +4,11 @@
     // nothing below it. With the map, routers that fall together are read as one fault: the highest one down and
     // everything behind it, rather than an alert each. A router the feed doesn't report (an aggregation router with no
     // customers of its own) still links what's below it; two or more of its branches failing at once points at it.
-    const TOPO = "erpDock.topology";
+    const TOPO = "erpDock.topology", TOPO_ERP = "erpDock.topologyErp"; // pasted by hand; else the ERP's router map, as text (kept by the radar)
     const topoKey = (s) => String(s || "").toUpperCase().replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim().replace(/^RO /, "");
     let topoMemo = null;
     function topology() {
-      const text = String(ls.get(TOPO, "") || "");
+      const own = String(ls.get(TOPO, "") || ""), text = own || String(ls.get(TOPO_ERP)?.text || "");
       if (topoMemo?.text === text) return topoMemo;
       const up = new Map(), down = new Map(), names = new Map(), add = (s) => { const k = topoKey(s); if (k && !names.has(k)) names.set(k, s.trim().toUpperCase()); return k; };
       for (const line of text.split("\n")) {
@@ -16,7 +16,7 @@
         for (const c of b.split(",")) { const k = add(c); if (!k || k === p) continue;
           (up.get(k) || up.set(k, []).get(k)).push(p); const d = down.get(p) || down.set(p, []).get(p); if (!d.includes(k)) d.push(k); }
       }
-      return (topoMemo = { text, up, down, names });
+      return (topoMemo = { text, up, down, names, erp: !own && !!text });
     }
     // each node's reading in the feed: the same name, else the longest name it starts with (RO PUNUNG NEW is PUNUNG),
     // else the only node starting with the same word (RO PACITAN 2116 is PACITAN KOTA); of several feed routers on one node, the busiest (an old one sits at 0)
@@ -102,6 +102,7 @@
       const acts = el("div", "actions"), save = el("button", "btn primary", "Save"), cancel = el("button", "btn", "Cancel"); save.type = cancel.type = "button";
       save.onclick = () => { ls.set(TOPO, ta.value.trim()); topoMemo = null; done(); }; cancel.onclick = done;
       acts.append(save, cancel);
-      box.append(el("div", "eyebrow", "Network topology"), el("p", "note", "Kept in this browser only. Each line: a router, then > and what's below it."), ta, said, acts);
+      const erp = ls.get(TOPO_ERP);
+      box.append(el("div", "eyebrow", "Network topology"), el("p", "note", erp?.text ? `Empty: the ERP's router map is used (Network → Topology, read ${ago(erp.at)}). Text here replaces it, in this browser only. Each line: a router, then > and what's below it.` : "Kept in this browser only. Each line: a router, then > and what's below it."), ta, said, acts);
       return box;
     }

@@ -97,6 +97,9 @@
       .erp-dock .tbar.full span { background: #e0b04f; }
       .erp-dock .tbar.busy span { background: #e0b252; }
       .erp-dock .path .tbar.full span { background: var(--red); }
+      .erp-dock .answer .verdict { display: grid; gap: 4px; } .erp-dock .answer .verdict b { font-weight: 600; font-size: 14px; }
+      .erp-dock .answer .step { margin: 0 0 8px; color: var(--paper); font-size: 13px; }
+      .erp-dock .answer .reply { margin: 0 0 8px; padding: 8px 10px; border-radius: 6px; border: 1px solid #2a2e30; color: var(--muted); font-size: 12.5px; line-height: 1.5; white-space: pre-wrap; }
       .erp-dock .chain { display: grid; gap: 0; margin: 0 0 8px; font-size: 13px; }
       .erp-dock .chain .hop { display: grid; grid-template-columns: 12px minmax(0, auto) minmax(0, 1fr); align-items: center; gap: 8px; padding: 4px 0; }
       .erp-dock .chain .hop b { color: var(--paper); font-weight: 500; overflow-wrap: anywhere; } .erp-dock .chain .n { color: var(--muted); font-size: 12px; }
