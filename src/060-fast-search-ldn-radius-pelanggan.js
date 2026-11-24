@@ -50,7 +50,14 @@
   }
   const fuzzyHit = (w, words, max) => words.some((x) => x[0] === w[0] && (near(w, x.slice(0, w.length), max) || near(w, x.slice(0, w.length + 1), max) || near(w, x, max)));
 
-  const idb = () => new Promise((ok, no) => { const r = indexedDB.open(IDB, 1); r.onupgradeneeded = () => r.result.createObjectStore(IDB_STORE); r.onsuccess = () => ok(r.result); r.onerror = () => no(r.error); });
+  // the Dock's database; one of that name without the store (left empty by something else) gets the store at the next
+  // version, instead of every read and save failing from then on
+  const idb = () => new Promise((ok, no) => {
+    const r = indexedDB.open(IDB); r.onupgradeneeded = () => r.result.createObjectStore(IDB_STORE); r.onerror = () => no(r.error);
+    r.onsuccess = () => { const db = r.result; if (db.objectStoreNames.contains(IDB_STORE)) return ok(db);
+      const v = db.version + 1; db.close(); const r2 = indexedDB.open(IDB, v);
+      r2.onupgradeneeded = () => { if (!r2.result.objectStoreNames.contains(IDB_STORE)) r2.result.createObjectStore(IDB_STORE); }; r2.onsuccess = () => ok(r2.result); r2.onerror = () => no(r2.error); };
+  });
   async function idbGet(key) { try { const db = await idb(); return await new Promise((ok) => { const q = db.transaction(IDB_STORE).objectStore(IDB_STORE).get(key); q.onsuccess = () => ok(q.result); q.onerror = () => ok(null); }); } catch { return null; } }
   // the search's working fields (_name, _hay, …) are rebuilt on load, so they're left out of what's saved
   const bare = (r) => { const o = {}; for (const k in r) if (k[0] !== "_") o[k] = r[k]; return o; };

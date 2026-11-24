@@ -70,7 +70,7 @@
       if (rad) facts.push(["Router", `${rad.name}: ${radBad ? `${rad.level === "down" ? "down" : "dropping"} since ${hhmm(rad.since)}` : "at its usual level"}`]);
       const ss = sess || rec; if (ss && (ss.addr || ss.ip)) facts.push(["Session", [ss.addr || ss.ip, ss.mac, ss.nas || sess?.ip].filter(Boolean).join(" · ")]);
       const pk = d?.path?.peaks?.[0];
-      if (d?.path?.hops.length) facts.push(["Way up", `${d.path.v[1].split(": ")[0]}${pk ? `; ${pk.name} 90%+ at ${pk.span} most days` : ""}`]);
+      if (d?.path?.hops.length) facts.push(["Way up", `${d.path.v[1].split(": ")[0]}${pk ? `; ${pk.say}` : ""}`]);
       if (d?.tix.length) facts.push(["Complaints", `${d.tix.length} open · ${d.tix[0].ticketId || ""} ${d.tix[0].issue || ""}`.trim()]);
       if (d?.due?.ok && d.due.jumlahTagihan) facts.push(["Arrears", `${d.due.jumlahTagihan} overdue · Rp ${Number(d.due.totalTunggakan || 0).toLocaleString("id-ID")}`]);
       // the verdict

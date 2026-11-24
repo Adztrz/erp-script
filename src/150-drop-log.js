@@ -60,6 +60,9 @@
       if (radar.wide) out.push(el("div", "ralert", "Most routers dropped at once: more likely the central link or the RADIUS server than one area."));
       const stuck = radar.alerts.filter((x) => x.level === "nofeed");
       if (stuck.length > 1 && new Set(stuck.map((x) => x.since)).size === 1) out.push(el("div", "ralert drop", `${stuck.length} routers stopped reporting at the same moment (${hhmm(stuck[0].since)}): more likely the RADIUS accounting link or the ERP's reader than ${stuck.length} outages.`));
+      // the backbone fibre toward the upstream (the ERP's Bandwidth page): faded light warns before the span breaks
+      if (!bw.fibreAt) bwLoad(true).then(() => { if (panel && bw.fibreAt) drawBody(); }).catch(() => {});
+      for (const a of fibreAlerts(bw)) { const b = el("a", `ralert item${a.down ? "" : " drop"}`); b.href = "/noc-dashboard/bandwidth"; b.append(el("b", null, a.head), el("span", null, a.body)); out.push(b); }
       // with the map: one card per fault, and the routers behind it aren't repeated as alerts of their own
       const tf = topoFaults(radar), covered = new Set();
       for (const f of tf?.faults || []) {
@@ -87,6 +90,7 @@
       if (!linkHist) linkHistLoad().then(() => { if (panel) drawBody(); }).catch(() => {});
       else { const lk = linkPeaks(linkHist), days = Math.max(0, ...lk.map((x) => x.of)), hot = lk.filter((x) => x.full >= 2 || x.busy >= 2).slice(0, 8);
         const e4 = el("div", "eyebrow"); e4.append("Uplinks at peak"); out.push(e4);
+        for (const x of upstreamRows(bw)) { const row = el("a", "peak"); row.href = "/noc-dashboard/bandwidth"; row.append(el("b", null, `${x.full ? "● " : ""}${x.name}`), el("span", null, x.text)); out.push(row); }
         if (days < 2) out.push(el("p", "note", "Each link's load is noted every 5 minutes while an ERP tab is open; the hours it fills up show after two days."));
         else if (!hot.length) out.push(el("div", "rok", `No link reached 75% on two or more of the last ${days} days.`));
         for (const x of hot) { const row = el("div", "peak"); row.append(el("b", null, x.name), el("span", null, `${peakText(x)} · ${capText(x.cap)}`), hourStrip(x.hours)); out.push(row); }

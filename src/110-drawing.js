@@ -102,6 +102,7 @@
       .erp-dock .answer .verdict { display: grid; gap: 4px; } .erp-dock .answer .verdict b { font-weight: 600; font-size: 14px; }
       .erp-dock .answer .step { margin: 0 0 8px; color: var(--paper); font-size: 13px; }
       .erp-dock .answer .reply { margin: 0 0 8px; padding: 8px 10px; border-radius: 6px; border: 1px solid #2a2e30; color: var(--muted); font-size: 12.5px; line-height: 1.5; white-space: pre-wrap; }
+      .erp-dock a.peak { color: inherit; text-decoration: none; } .erp-dock a.peak:hover b { text-decoration: underline; }
       .erp-dock .peak { display: grid; gap: 4px; padding: 8px 6px 10px; border-bottom: 1px solid #1d2022; font-size: 13px; } .erp-dock .peak b { font-weight: 500; color: var(--paper); } .erp-dock .peak > span { color: var(--muted); font-size: 12px; }
       .erp-dock .hours .hrow { display: grid; grid-template-columns: repeat(24, minmax(0, 1fr)); gap: 2px; } .erp-dock .hours i { height: 10px; border-radius: 2px; background: #1a1d1e; }
       .erp-dock .hours i.ok { background: rgba(85, 188, 130, var(--v)); } .erp-dock .hours i.busy { background: #e0b252; } .erp-dock .hours i.full { background: var(--red); }

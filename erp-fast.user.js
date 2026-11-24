@@ -2,7 +2,7 @@
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/erp-script/main/icons/dock.png
-// @version      3.26.0
+// @version      3.27.0
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -1247,7 +1247,14 @@
   }
   const fuzzyHit = (w, words, max) => words.some((x) => x[0] === w[0] && (near(w, x.slice(0, w.length), max) || near(w, x.slice(0, w.length + 1), max) || near(w, x, max)));
 
-  const idb = () => new Promise((ok, no) => { const r = indexedDB.open(IDB, 1); r.onupgradeneeded = () => r.result.createObjectStore(IDB_STORE); r.onsuccess = () => ok(r.result); r.onerror = () => no(r.error); });
+  // the Dock's database; one of that name without the store (left empty by something else) gets the store at the next
+  // version, instead of every read and save failing from then on
+  const idb = () => new Promise((ok, no) => {
+    const r = indexedDB.open(IDB); r.onupgradeneeded = () => r.result.createObjectStore(IDB_STORE); r.onerror = () => no(r.error);
+    r.onsuccess = () => { const db = r.result; if (db.objectStoreNames.contains(IDB_STORE)) return ok(db);
+      const v = db.version + 1; db.close(); const r2 = indexedDB.open(IDB, v);
+      r2.onupgradeneeded = () => { if (!r2.result.objectStoreNames.contains(IDB_STORE)) r2.result.createObjectStore(IDB_STORE); }; r2.onsuccess = () => ok(r2.result); r2.onerror = () => no(r2.error); };
+  });
   async function idbGet(key) { try { const db = await idb(); return await new Promise((ok) => { const q = db.transaction(IDB_STORE).objectStore(IDB_STORE).get(key); q.onsuccess = () => ok(q.result); q.onerror = () => ok(null); }); } catch { return null; } }
   // the search's working fields (_name, _hay, …) are rebuilt on load, so they're left out of what's saved
   const bare = (r) => { const o = {}; for (const k in r) if (k[0] !== "_") o[k] = r[k]; return o; };
@@ -1894,6 +1901,7 @@
       .erp-dock .answer .verdict { display: grid; gap: 4px; } .erp-dock .answer .verdict b { font-weight: 600; font-size: 14px; }
       .erp-dock .answer .step { margin: 0 0 8px; color: var(--paper); font-size: 13px; }
       .erp-dock .answer .reply { margin: 0 0 8px; padding: 8px 10px; border-radius: 6px; border: 1px solid #2a2e30; color: var(--muted); font-size: 12.5px; line-height: 1.5; white-space: pre-wrap; }
+      .erp-dock a.peak { color: inherit; text-decoration: none; } .erp-dock a.peak:hover b { text-decoration: underline; }
       .erp-dock .peak { display: grid; gap: 4px; padding: 8px 6px 10px; border-bottom: 1px solid #1d2022; font-size: 13px; } .erp-dock .peak b { font-weight: 500; color: var(--paper); } .erp-dock .peak > span { color: var(--muted); font-size: 12px; }
       .erp-dock .hours .hrow { display: grid; grid-template-columns: repeat(24, minmax(0, 1fr)); gap: 2px; } .erp-dock .hours i { height: 10px; border-radius: 2px; background: #1a1d1e; }
       .erp-dock .hours i.ok { background: rgba(85, 188, 130, var(--v)); } .erp-dock .hours i.busy { background: #e0b252; } .erp-dock .hours i.full { background: var(--red); }
@@ -2827,7 +2835,7 @@
       const hist = await idbGet("radar");
       radar = hist ? assess(hist) : null;
       feedStuck.clear(); for (const x of radar?.list || []) if (x.level === "nofeed") feedStuck.set(roWord(x.name), x.since || hist.at);
-      if (fetched) linkSample().catch(() => {}); // each link's load, for its peak hours
+      if (fetched) { linkSample().catch(() => {}); bwLoad(true).catch(() => {}); } // each link's load, for its peak hours
       if (fetched) pathMapLoad().then((m) => { const text = erpTopoText(m); if (text) { ls.set(TOPO_ERP, { text, at: Date.now() }); topoMemo = null; } }).catch(() => {}); // the ERP's router map, for the radar's topology
       if (fetched) incRadar(radar).catch(() => {}); // only the tab that took the reading: one alert, not one per tab
       if (fab) { const a = radar?.alerts ?? []; fab.classList.toggle("alert", a.length > 0); fab.title = a.length ? `Dock (Alt+K): outage on ${a.map((x) => x.name).join(", ")}` : "Dock (Alt+K)"; }
@@ -3056,6 +3064,9 @@
       if (radar.wide) out.push(el("div", "ralert", "Most routers dropped at once: more likely the central link or the RADIUS server than one area."));
       const stuck = radar.alerts.filter((x) => x.level === "nofeed");
       if (stuck.length > 1 && new Set(stuck.map((x) => x.since)).size === 1) out.push(el("div", "ralert drop", `${stuck.length} routers stopped reporting at the same moment (${hhmm(stuck[0].since)}): more likely the RADIUS accounting link or the ERP's reader than ${stuck.length} outages.`));
+      // the backbone fibre toward the upstream (the ERP's Bandwidth page): faded light warns before the span breaks
+      if (!bw.fibreAt) bwLoad(true).then(() => { if (panel && bw.fibreAt) drawBody(); }).catch(() => {});
+      for (const a of fibreAlerts(bw)) { const b = el("a", `ralert item${a.down ? "" : " drop"}`); b.href = "/noc-dashboard/bandwidth"; b.append(el("b", null, a.head), el("span", null, a.body)); out.push(b); }
       // with the map: one card per fault, and the routers behind it aren't repeated as alerts of their own
       const tf = topoFaults(radar), covered = new Set();
       for (const f of tf?.faults || []) {
@@ -3083,6 +3094,7 @@
       if (!linkHist) linkHistLoad().then(() => { if (panel) drawBody(); }).catch(() => {});
       else { const lk = linkPeaks(linkHist), days = Math.max(0, ...lk.map((x) => x.of)), hot = lk.filter((x) => x.full >= 2 || x.busy >= 2).slice(0, 8);
         const e4 = el("div", "eyebrow"); e4.append("Uplinks at peak"); out.push(e4);
+        for (const x of upstreamRows(bw)) { const row = el("a", "peak"); row.href = "/noc-dashboard/bandwidth"; row.append(el("b", null, `${x.full ? "● " : ""}${x.name}`), el("span", null, x.text)); out.push(row); }
         if (days < 2) out.push(el("p", "note", "Each link's load is noted every 5 minutes while an ERP tab is open; the hours it fills up show after two days."));
         else if (!hot.length) out.push(el("div", "rok", `No link reached 75% on two or more of the last ${days} days.`));
         for (const x of hot) { const row = el("div", "peak"); row.append(el("b", null, x.name), el("span", null, `${peakText(x)} · ${capText(x.cap)}`), hourStrip(x.hours)); out.push(row); }
@@ -4284,7 +4296,7 @@
       if (rad) facts.push(["Router", `${rad.name}: ${radBad ? `${rad.level === "down" ? "down" : "dropping"} since ${hhmm(rad.since)}` : "at its usual level"}`]);
       const ss = sess || rec; if (ss && (ss.addr || ss.ip)) facts.push(["Session", [ss.addr || ss.ip, ss.mac, ss.nas || sess?.ip].filter(Boolean).join(" · ")]);
       const pk = d?.path?.peaks?.[0];
-      if (d?.path?.hops.length) facts.push(["Way up", `${d.path.v[1].split(": ")[0]}${pk ? `; ${pk.name} 90%+ at ${pk.span} most days` : ""}`]);
+      if (d?.path?.hops.length) facts.push(["Way up", `${d.path.v[1].split(": ")[0]}${pk ? `; ${pk.say}` : ""}`]);
       if (d?.tix.length) facts.push(["Complaints", `${d.tix.length} open · ${d.tix[0].ticketId || ""} ${d.tix[0].issue || ""}`.trim()]);
       if (d?.due?.ok && d.due.jumlahTagihan) facts.push(["Arrears", `${d.due.jumlahTagihan} overdue · Rp ${Number(d.due.totalTunggakan || 0).toLocaleString("id-ID")}`]);
       // the verdict
@@ -4402,7 +4414,10 @@
     }
     function pathLiveLoad() {
       if (pathLive && Date.now() - pathLive.at < 20000) return Promise.resolve(pathLive);
-      return (pathLiveLoading ||= api("/api/network/peta-router/live").then((j) => (pathLive = { at: Date.now(), port: j.port || {}, router: j.router || {} }))
+      // the map's first reading after a quiet spell has every rate at 0 (a rate needs two counter samples): read again
+      const allZero = (j) => { const v = Object.values(j.port || {}).flatMap((p) => Object.values(p)); return v.length > 0 && v.every((x) => !Number(x.inBps) && !Number(x.outBps)); };
+      return (pathLiveLoading ||= api("/api/network/peta-router/live").then(async (j) => { for (let i = 0; i < 2 && allZero(j); i++) { await new Promise((ok) => setTimeout(ok, 4000)); j = await api("/api/network/peta-router/live"); }
+        return (pathLive = { at: Date.now(), port: j.port || {}, router: j.router || {} }); })
         .catch(() => pathLive || { at: 0, port: {}, router: {} }).finally(() => { pathLiveLoading = null; }));
     }
     // the radar's topology from the map: routers and switches, each link pointing away from the core. Which end is
@@ -4423,6 +4438,10 @@
       }
       return [...below].map(([u, d]) => `${name(u)} > ${d.map(name).join(", ")}`).join("\n");
     }
+    function linkText(k) {
+      return k.unknown ? "through its router (no measured link)" : k.dead ? `down${k.since ? ` since ${hhmm(Date.parse(k.since))}` : ""}` : k.down == null ? "no fresh reading on the map"
+        : `↓ ${rateText(k.down)}${k.cap ? ` of ${capText(k.cap)}` : ""}${k.pct != null ? ` · ${Math.round(k.pct * 100)}%` : ""}${k.stale ? " · old reading" : ""}`;
+    }
     const capText = (mbps) => (mbps >= 1000 ? `${String(+(mbps / 1000).toFixed(1)).replace(".", ",")} Gbit/s` : `${mbps} Mbit/s`);
     const rateText = (bps) => (bps >= 1e9 ? `${(bps / 1e9).toFixed(1).replace(".", ",")} Gbit/s` : bits(bps));
     // the climb, as data: the hops from the customer's end up, each with the link to the next one up, and a verdict
@@ -4442,10 +4461,13 @@
       const measure = (l, upper) => { // traffic toward the customer, now: the port the map reads is at one end of the link
         if (l.pseudo) return { down: null, cap: null, pct: null, dead: false, stale: false, port: "", unknown: true };
         const p = lv.port?.[l.sumberRo]?.[l.sumberIf], atUp = l.sumberRo === upper, same = upper === upOf(l);
-        const down = p ? Number(atUp ? p.outBps : p.inBps) : l.status === "basi" ? NaN : Number(same ? l.keHilirBps : l.keHuluBps), cap = Number(p?.kapMbps) || null;
-        const pct = cap && Number.isFinite(down) ? down / (cap * 1e6) : l.utilPct != null && !p && same && l.status !== "basi" ? l.utilPct / 100 : null;
+        // a VLAN reports its trunk's speed, not its own size (a 10G VLAN on 40G reads 118%), so it gets no %: the
+        // Bandwidth page's POP sizes fill that in later
+        const vlan = !!(l.logis || l.jenis === "vlan" || /^(vid|vlan)/i.test(l.sumberIf || ""));
+        const down = p ? Number(atUp ? p.outBps : p.inBps) : l.status === "basi" ? NaN : Number(same ? l.keHilirBps : l.keHuluBps), cap = vlan ? null : Number(p?.kapMbps) || null;
+        const pct = cap && Number.isFinite(down) ? down / (cap * 1e6) : !vlan && l.utilPct != null && !p && same && l.status !== "basi" ? l.utilPct / 100 : null;
         const dead = l.status === "port_mati" || /down/i.test(p?.oper || "");
-        return { key: `${l.roA}|${l.roB}`, down: Number.isFinite(down) ? down : null, cap, pct, dead, stale: l.status === "basi", since: l.portMati?.sejak || null, port: l.sumberRo ? `${name(l.sumberRo)} ${l.sumberIf || ""}`.trim() : "" };
+        return { key: `${l.roA}|${l.roB}`, vlan, down: Number.isFinite(down) ? down : null, cap, pct, dead, stale: l.status === "basi", since: l.portMati?.sejak || null, port: l.sumberRo ? `${name(l.sumberRo)} ${l.sumberIf || ""}`.trim() : "" };
       };
       const state = (id) => {
         if (id.startsWith("olt:")) { const o = olt.get(id), old = o?.diperbarui && Date.now() - Date.parse(o.diperbarui) > 86400000;
@@ -4495,9 +4517,8 @@
       if (!goal) notes.push(`The map has no link up from ${name(start)}`);
       if (!start.startsWith("olt:")) notes.push("Their modem's OLT wasn't found, so the way starts at their router");
       const show = hops.map((h) => ({ name: h.name, kind: h.kind, bad: h.bad, note: h.note, also: h.also || null,
-        link: h.link ? { pct: h.link.pct, dead: h.link.dead, stale: h.link.stale, unknown: !!h.link.unknown,
-          text: h.link.unknown ? "through its router (no measured link)" : h.link.dead ? `down${h.link.since ? ` since ${hhmm(Date.parse(h.link.since))}` : ""}` : h.link.down == null ? "no fresh reading on the map" : `↓ ${rateText(h.link.down)}${h.link.cap ? ` of ${capText(h.link.cap)}` : ""}${h.link.pct != null ? ` · ${pc(h.link.pct)}` : ""}${h.link.stale ? " · old reading" : ""}`,
-          port: h.link.port, key: h.link.key || null } : null }));
+        link: h.link ? { pct: h.link.pct, dead: h.link.dead, stale: h.link.stale, unknown: !!h.link.unknown, since: h.link.since || null, vlan: !!h.link.vlan,
+          text: linkText(h.link), down: h.link.down, cap: h.link.cap, port: h.link.port, key: h.link.key || null } : null }));
       return { hops: show, v, notes };
     }
     async function pathFor(r) {
@@ -4511,7 +4532,8 @@
       // each link's pattern over the last week: one that fills up at the same hours most days is said on its line
       const pk = new Map(linkPeaks(await linkHistLoad()).map((x) => [x.key, x])); p.peaks = [];
       for (const h of p.hops) { const x = h.link?.key && pk.get(h.link.key), t = peakText(x);
-        if (t) { h.link.text += ` · ${t}`; if (x.full >= 2 && x.span) p.peaks.push({ name: `${h.name} → ${p.hops[p.hops.indexOf(h) + 1]?.name || "upstream"}`, span: x.span, full: x.full, of: x.of }); } }
+        if (t) { h.link.text += ` · ${t}`; if (x.full >= 2 && x.span) { const nm = `${h.name} → ${p.hops[p.hops.indexOf(h) + 1]?.name || "upstream"}`; p.peaks.push({ name: nm, span: x.span, hrs: x.hrs, say: `their uplink ${nm} reaches 90%+ at ${x.span} on ${x.full} of the last ${x.of} days` }); } } }
+      await aboveCore(p).catch(() => {}); // the POP's busy hours and the upstream, from the ERP's Bandwidth page
       return p;
     }
     // ---- Peaks: how full each link gets, by hour, over two weeks ----
@@ -4555,7 +4577,8 @@
         if (!byDay.size) continue;
         const of = byDay.size, vals = [...byDay.values()], need = Math.max(2, Math.ceil(of / 2));
         out.push({ key, name: x.name, cap: x.cap, of, full: vals.filter((v) => v >= 90).length, busy: vals.filter((v) => v >= 75).length,
-          hours, span: spanText(hot.map((n, i) => (n >= need ? i : -1)).filter((i) => i >= 0)), worst: Math.max(...vals) });
+          hours, hrs: hot.map((n, i) => (n >= need ? i : -1)).filter((i) => i >= 0), worst: Math.max(...vals) });
+        out.at(-1).span = spanText(out.at(-1).hrs);
       }
       return out.sort((a, b) => b.full - a.full || b.busy - a.busy || b.worst - a.worst);
     }
@@ -4604,13 +4627,69 @@
       return box;
     }
 
+    // ---- Above the core: the upstream, the POPs' busy hours and the backbone fibre ----
+    // The ERP's Bandwidth page (NOC → Bandwidth) measures what the router map doesn't: the metro and IX links above the
+    // core, each POP's VLAN in the busy hours over 14 days, and the fibre toward the upstream. Way up ends with the
+    // upstream; a POP or upstream link that's full most evenings is a peak the Answer can name; the radar warns when the
+    // backbone fibre's light fades, before it breaks. Read only: the page's own switches are never touched.
+    let bw = { at: 0, histAt: 0, fibreAt: 0 }, bwLoading = null;
+    function bwLoad(fibre) {
+      const now = Date.now(), want = [now - bw.at > 2 * 60000, now - bw.histAt > 30 * 60000, !!fibre && now - bw.fibreAt > 5 * 60000];
+      if (!want.some(Boolean)) return Promise.resolve(bw);
+      return (bwLoading ||= Promise.all([want[0] ? api("/api/noc/bandwidth").catch(() => null) : null, want[1] ? api("/api/noc/bandwidth/history?hari=14").catch(() => null) : null,
+        want[2] ? api("/api/noc/bandwidth/demarkasi").catch(() => null) : null]).then(([n, h, f]) => {
+        if (n?.data) bw = { ...bw, now: n.data, at: Date.now() }; if (h?.data) bw = { ...bw, hist: h.data, histAt: Date.now() }; if (f?.data) bw = { ...bw, fibre: f.data, fibreAt: Date.now() };
+        return bw; }).finally(() => { bwLoading = null; }));
+    }
+    const busyHours = (b) => (b?.hist?.jam_sibuk || []).map(Number).filter((h) => h >= 0 && h < 24).sort((x, y) => x - y);
+    // Way up, from the ERP: the POP link's busy hours on each hop, the upstream at the top, and its peaks
+    async function aboveCore(p) {
+      const b = await bwLoad(); if (!b.now || !p.hops.length) return;
+      const hrs = busyHours(b), span = spanText(hrs);
+      // a POP's VLAN: its size from the Bandwidth page, so its % means something; full now is said as the map's full links are
+      for (const h of p.hops) {
+        const pop = h.link?.vlan !== false && h.link?.down != null ? (b.now.pops || []).find((x) => x.nama && x.cap && (h.link.port || "").includes(x.nama)) : null; if (!pop) continue;
+        h.link.cap = pop.cap; h.link.pct = h.link.down / (pop.cap * 1e6); h.link.text = linkText(h.link);
+        if (h.link.pct >= 0.9 && (p.v[0] === "ok" || / is busy /.test(p.v[1]))) p.v = ["warn", `The link ${h.name} → ${p.hops[p.hops.indexOf(h) + 1]?.name || "upstream"} is full (${Math.round(h.link.pct * 100)}% of ${capText(pop.cap)}): everyone behind it is slow now, not just this customer.`];
+      }
+      if (p.v[0] === "ok") { const top = Math.max(-1, ...p.hops.map((h) => (h.link?.pct != null ? h.link.pct : -1))); if (top >= 0) p.v = ["ok", p.v[1].replace(/\(busiest link \d+%\)/, `(busiest link ${Math.round(top * 100)}%)`)]; }
+      for (const h of p.hops) {
+        const port = h.link?.port || "", st = (b.hist?.pop_sibuk_stat || []).find((x) => x.label && port.includes(x.label)); if (!st || !(st.pakai_p95_pct >= 75)) continue;
+        h.link.text += ` · ${Math.round(st.pakai_p95_pct)}% in the busy hours (${span})`;
+        if (st.pakai_p95_pct >= 90) p.peaks.push({ name: st.label, span, hrs, say: `their POP link ${st.label} runs at ${Math.round(st.pakai_p95_pct)}% in the busy hours (${span}) most days` });
+      }
+      const ups = (b.now.links || []).filter((l) => l.grup === "metro" || l.grup === "upstream"); if (!ups.length) return;
+      const top = p.hops[p.hops.length - 1], metro = b.now.metro, full = ups.filter((l) => l.util >= 90), busy = (b.hist?.jam_sibuk_stat || []).filter((x) => x.pakai_p95_pct >= 90);
+      top.link = { pct: metro?.util != null ? metro.util / 100 : null, dead: false, stale: false, unknown: false, key: null, port: ups.map((l) => `${l.label} ${Math.round(l.util)}%`).join(" · "),
+        text: `metro ${Math.round(metro?.util ?? 0)}% now${busy.length ? ` · ${busy.map((x) => `${x.label} ${Math.round(x.pakai_p95_pct)}%`).join(", ")} in the busy hours (${span})` : ""}` };
+      p.hops.push({ name: "Upstream (metro + IX)", kind: "Internet", bad: false, note: full.length ? `${full.map((l) => l.label).join(", ")} full now` : `${ups.length} links, the busiest ${Math.round(Math.max(...ups.map((l) => l.util)))}%`, also: null, link: null });
+      if (full.length && (p.v[0] === "ok" || / is busy /.test(p.v[1]))) p.v = ["warn", `The upstream is full now (${full.map((l) => `${l.label} ${Math.round(l.util)}%`).join(", ")}): everyone on the network is slow, not just this customer.`];
+      for (const x of busy) p.peaks.push({ name: x.label, span, hrs, up: true, say: `the upstream ${x.label} runs at ${Math.round(x.pakai_p95_pct)}% in the busy hours (${span}) most days` });
+    }
+    // the radar: the upstream links that fill up in the busy hours, and the ERP's capacity verdicts
+    function upstreamRows(b) {
+      const span = spanText(busyHours(b)), keb = new Map((b.now?.kebutuhan || []).map((k) => [k.label, k])), out = [];
+      for (const x of b.hist?.jam_sibuk_stat || []) {
+        const k = keb.get(x.label); if (!(x.pakai_p95_pct >= 75) && k?.status !== "crit") continue;
+        out.push({ name: x.label, full: x.pakai_p95_pct >= 90, text: `${Math.round(x.pakai_p95_pct)}% in the busy hours (${span}, p95)${k ? ` · peaked ${Math.round(k.pakai_puncak_pct)}% this week · ${k.rekom}` : ""}` });
+      }
+      for (const x of b.hist?.pop_sibuk_stat || []) if (x.pakai_p95_pct >= 75) out.push({ name: x.label, full: x.pakai_p95_pct >= 90, text: `POP link · ${Math.round(x.pakai_p95_pct)}% in the busy hours (${span}, p95) · ${x.vonis}` });
+      return out.sort((a, c) => c.full - a.full);
+    }
+    // the backbone fibre toward the upstream: a span whose light has faded, or that is down
+    function fibreAlerts(b) {
+      const f = b.fibre; if (!f) return [];
+      const step = (f.rinci?.verdict?.langkah || [])[0] || "";
+      return (f.rinci?.ruas || []).filter((x) => x.kode && x.kode !== "ok").map((x) => ({ down: x.status !== "link-ok", head: `Fibre ${x.nama}: ${x.label}`, body: `${x.sebab}${x.link_downs ? ` Dropped ${x.link_downs}× since ${x.sejak}.` : ""}${step ? ` ${step}` : ""}` }));
+    }
+
     // ---- Answer: one verdict for a complaint, and the reply to send ----
     // The card's three readings joined, in the order a NOC checks them. Offline: the way up (a router, switch or link
     // down is an area outage), then the PON port and the neighbours, then the signal (their cable), then the modem's
     // power. Online: an uplink that's full (the area is busy), then their own line full (their use), then reconnects
     // (power or connector), then hardly any traffic (WiFi or devices). Each answer has the next step and a reply in
     // Indonesian to send the customer.
-    function triageRead(r, f, t, p, due) {
+    function triageRead(r, f, t, p, due, now = Date.now()) {
       const kak = `Kak ${titleCase(String(r.nama || r.username).split(/\s+/).slice(0, 2).join(" "))}`, area = r.desa ? titleCase(r.desa.trim()) : "Anda";
       const say = (tone, kind, cause, step, reply, waiting = false) => ({ tone, kind, cause, step, reply, waiting });
       const rate = t?.rate || null, plan = t?.plan || 0, pct = rate && plan ? rate.down / (plan * 1e6) : null;
@@ -4637,12 +4716,16 @@
         `${kak}, koneksi ${kak} terpantau sering putus-sambung. Mohon pastikan listrik modem stabil (colokan tidak longgar, tidak berbagi terminal dengan alat lain). Jika masih terjadi, kami jadwalkan teknisi untuk pengecekan.`);
       if (rate && rate.down < 50000) return say("off", "Slow · WiFi or devices", "Online and the way up is clear, but almost no traffic reaches the modem.", "A modem restart; their device near the modem; 5 GHz WiFi if they have it.",
         `${kak}, koneksi internet sampai ke modem ${kak} normal dari sisi kami. Mohon coba restart modem (cabut listrik 10 detik lalu nyalakan lagi) dan gunakan perangkat di dekat modem. Jika masih lambat, kabari kami ya.`);
-      const pk = p?.peaks?.[0];
-      if (pk) return say("warn", "Slow at peak hours", `Fine right now, but their uplink ${pk.name} reaches 90%+ at ${pk.span} on ${pk.full} of the last ${pk.of} days: if it's slow mostly then, that's the cause.`, "Not their line: log the link for more capacity; tell them it's the busy hours in their area.",
-        `${kak}, dari sisi kami koneksi ${kak} normal. Namun jalur jaringan di area ${area} memang sering padat pada jam ${pk.span} sehingga kecepatan bisa menurun di jam tersebut. Tim kami sedang menanganinya. Terima kasih atas pengertiannya.`);
+      // a peak counts when it's the busy hour now (or the hour around it); otherwise it's a note on a clear line
+      const hr = new Date(now).getHours(), inHour = (x) => !x.hrs?.length || x.hrs.some((h) => Math.abs(h - hr) <= 1 || Math.abs(h - hr) === 23);
+      const pk = (p?.peaks || []).find(inHour), later = !pk && p?.peaks?.[0];
+      if (pk) return say("warn", "Slow at peak hours", `Fine right now, but ${pk.say}: if it's slow mostly then, that's the cause.`,
+        pk.up ? "Not their line: the network's upstream fills up at busy hours (the NOC's Bandwidth page has it); tell them it's the busy hours." : "Not their line: log the link for more capacity; tell them it's the busy hours in their area.",
+        `${kak}, dari sisi kami koneksi ${kak} normal. Namun jalur jaringan ${pk.up ? "kami" : `di area ${area}`} memang sering padat pada jam ${pk.span} sehingga kecepatan bisa menurun di jam tersebut. Tim kami sedang menanganinya. Terima kasih atas pengertiannya.`);
+      const also = later ? ` Later: ${later.say}.` : "";
       const CLEAR = `${kak}, dari sisi kami koneksi ${kak} normal dan jaringan di area ${area} lancar. Boleh dibantu kirim screenshot speedtest di dekat modem, dan perangkat mana yang terasa lambat?`;
-      if (!rate) return say("ok", "Online", `Online and steady${p && p.v[0] === "ok" ? ", the way up clear" : ""}; the traffic reading comes with the next 5-minute report.`, "Ask for a speed test near the modem meanwhile.", CLEAR, true);
-      return say("ok", "Line is fine", `Online, steady, the way up clear${pct != null ? `, using ${Math.round(pct * 100)}% of the plan` : ""}.`, "Most likely WiFi or one device: a speed test near the modem tells which.", CLEAR);
+      if (!rate) return say("ok", "Online", `Online and steady${p && p.v[0] === "ok" ? ", the way up clear" : ""}; the traffic reading comes with the next 5-minute report.${also}`, "Ask for a speed test near the modem meanwhile.", CLEAR, true);
+      return say("ok", "Line is fine", `Online, steady, the way up clear${pct != null ? `, using ${Math.round(pct * 100)}% of the plan` : ""}.${also}`, "Most likely WiFi or one device: a speed test near the modem tells which.", CLEAR);
     }
     async function triageLoad(r, fresh) {
       await Promise.all([onts ? 0 : ontIndex().catch(() => {}), acs ? 0 : acsIndex().catch(() => {})]);

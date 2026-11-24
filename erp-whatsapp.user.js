@@ -2,7 +2,7 @@
 // @name         ERP — Dock in WhatsApp Web
 // @namespace    adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/erp-script/main/icons/dock.png
-// @version      1.9.0
+// @version      1.9.1
 // @description  The Dock's customer card beside the open chat in WhatsApp Web: who is writing (found by their number, a username they sent, or their name), online or not, plan, area, unpaid months and any outage on their router, with replies that fill in their name, username and bill; Check connection, Pay and the 1× login link are done by the Dock in your open ERP tab. A reply goes into the message box; you send it yourself. The customer list comes from the ERP tab, through Tampermonkey's storage: nothing is fetched from WhatsApp, and nothing leaves this browser.
 // @match        https://*/*
 // @run-at       document-idle
@@ -47,7 +47,7 @@
     const plain = (v) => (v == null ? v : JSON.parse(page.JSON.stringify(v)));
     const get = (db, key) => new Promise((ok) => { const q = db.transaction("ldn").objectStore("ldn").get(key); q.onsuccess = () => ok(plain(q.result)); q.onerror = () => ok(null); });
     const keys = (db) => new Promise((ok) => { const q = db.transaction("ldn").objectStore("ldn").getAllKeys(); q.onsuccess = () => ok(plain(q.result) || []); q.onerror = () => ok([]); });
-    const openDb = (f) => new Promise((ok, no) => { const r = f.open("erp-fast", 1); r.onupgradeneeded = () => r.result.createObjectStore("ldn"); r.onsuccess = () => ok(r.result); r.onerror = () => no(r.error); });
+    const openDb = (f) => new Promise((ok, no) => { const r = f.open("erp-fast"); r.onupgradeneeded = () => r.result.createObjectStore("ldn"); r.onsuccess = () => ok(r.result); r.onerror = () => no(r.error); });
     let sent = "";
     async function sync() {
       let db = null, all = null;

@@ -312,7 +312,7 @@ test("whatsapp: a group message's sender and the customer their saved name point
 
 test("way up: climbs from the OLT to the core, crosses a backwards link, names the first full link", () => {
   const topoKey = (s) => String(s || "").toUpperCase().replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim().replace(/^RO /, "");
-  const { pathRead } = load(dock, ["pathRead", "capText", "rateText", "reachText"], { topoKey, hhmm: () => "10:00",
+  const { pathRead } = load(dock, ["pathRead", "capText", "rateText", "reachText", "linkText"], { topoKey, hhmm: () => "10:00",
     bits: (bps) => (bps >= 1e6 ? `${(bps / 1e6).toFixed(bps >= 1e7 ? 0 : 1).replace(".", ",")} Mbit/s` : `${Math.round(bps / 1000)} kbit/s`) }, ["pathRead"]);
   const map = { peta: { node: [{ ro: "CONTOH", hidup: true, cpu: 10 }, { ro: "DIST", hidup: true, cpu: 20 }, { ro: "CORE", hidup: true, cpu: 5 }],
     link: [{ roA: "CORE", roB: "DIST", hulu: "a", status: "hidup", sumberRo: "CORE", sumberIf: "to-dist" },
@@ -387,4 +387,29 @@ test("open from anywhere: the ERP's WireGuard link moved to the RO's public addr
   assert.equal(publicUrl("http://10.99.98.21:20417/", "RO CONTOH"), "http://203.0.113.7:20417/");
   assert.equal(publicUrl("http://10.99.98.21:20417/", "RO LAIN"), null); // nothing saved for that RO
   assert.equal(publicUrl("http://198.51.100.4:20417/", "RO CONTOH"), null); // already public: left as it is
+});
+
+test("above the core: the POP's busy hours on its hop, the upstream at the top, a peak counted only near its hours", async () => {
+  const b = { now: { links: [{ label: "Metro Contoh 5G", grup: "metro", util: 62 }, { label: "IX Contoh 6G", grup: "upstream", util: 40 }], metro: { util: 62 },
+      kebutuhan: [{ label: "Metro Contoh 5G", status: "crit", pakai_puncak_pct: 105, rekom: "UPGRADE segera" }] },
+    hist: { jam_sibuk: [18, 19, 20, 21], jam_sibuk_stat: [{ label: "Metro Contoh 5G", pakai_p95_pct: 99 }, { label: "IX Contoh 6G", pakai_p95_pct: 40 }],
+      pop_sibuk_stat: [{ label: "VID-700-POP-CONTOH", pakai_p95_pct: 92, vonis: "PENUH" }] },
+    fibre: { rinci: { verdict: { langkah: ["Bersihkan konektor."] }, ruas: [{ kode: "ok", nama: "A↔B" }, { kode: "redup", status: "link-ok", nama: "B↔C", label: "NYALA, SINYAL MELEMAH", sebab: "Cahaya turun 3 dB.", link_downs: 64, sejak: "2026-11-19" }] } } };
+  const { aboveCore, upstreamRows, fibreAlerts } = load(dock, ["aboveCore", "busyHours", "spanText", "upstreamRows", "fibreAlerts", "linkText", "capText", "rateText"], { bwLoad: async () => b, hhmm: () => "", bits: (x) => `${x / 1e6} Mbit/s` }, ["aboveCore", "upstreamRows", "fibreAlerts"]);
+  b.now.pops = [{ nama: "VID-700-POP-CONTOH", cap: 1000 }];
+  const p = { v: ["ok", "The way up is clear"], peaks: [], hops: [{ name: "CONTOH", link: { vlan: true, down: 9.5e8, port: "DIST VID-700-POP-CONTOH" } }, { name: "CORE" }] };
+  await aboveCore(p);
+  assert.equal(p.hops[0].link.text, "↓ 950 Mbit/s of 1 Gbit/s · 95% · 92% in the busy hours (18–22)"); // the POP's own size, not the trunk's
+  assert.match(p.v[1], /^The link CONTOH → CORE is full \(95% of 1 Gbit\/s\)/);
+  assert.equal(p.hops.at(-1).name, "Upstream (metro + IX)"); assert.match(p.hops[1].link.text, /^metro 62% now · Metro Contoh 5G 99% in the busy hours/);
+  assert.deepEqual(p.peaks.map((x) => [x.name, !!x.up]), [["VID-700-POP-CONTOH", false], ["Metro Contoh 5G", true]]);
+  assert.deepEqual(upstreamRows(b).map((x) => x.name), ["Metro Contoh 5G", "VID-700-POP-CONTOH"]);
+  assert.match(fibreAlerts(b)[0].body, /Dropped 64× .* Bersihkan konektor\.$/);
+  const titleCase = (x) => String(x).toLowerCase().replace(/(^|[\s(])[^\s(]/g, (c) => c.toUpperCase());
+  const { triageRead } = load(dock, ["triageRead"], { titleCase, bits: (x) => `${x / 1e6} Mbit/s` }, ["triageRead"]);
+  const r = { username: "budi0101", nama: "BUDI CONTOH", desa: "CONTOH" }, ok = { online: true, v: ["ok", "Online and steady"] }, t = { rate: { down: 3e6 }, plan: 10 };
+  p.v = ["ok", "clear"];
+  const evening = triageRead(r, ok, t, p, null, new Date(2026, 10, 24, 19, 30).getTime()), morning = triageRead(r, ok, t, p, null, new Date(2026, 10, 24, 10, 0).getTime());
+  assert.equal(evening.kind, "Slow at peak hours"); assert.match(evening.cause, /POP link VID-700-POP-CONTOH/);
+  assert.equal(morning.kind, "Line is fine"); assert.match(morning.cause, /Later: their POP link/);
 });

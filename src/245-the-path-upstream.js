@@ -12,7 +12,10 @@
     }
     function pathLiveLoad() {
       if (pathLive && Date.now() - pathLive.at < 20000) return Promise.resolve(pathLive);
-      return (pathLiveLoading ||= api("/api/network/peta-router/live").then((j) => (pathLive = { at: Date.now(), port: j.port || {}, router: j.router || {} }))
+      // the map's first reading after a quiet spell has every rate at 0 (a rate needs two counter samples): read again
+      const allZero = (j) => { const v = Object.values(j.port || {}).flatMap((p) => Object.values(p)); return v.length > 0 && v.every((x) => !Number(x.inBps) && !Number(x.outBps)); };
+      return (pathLiveLoading ||= api("/api/network/peta-router/live").then(async (j) => { for (let i = 0; i < 2 && allZero(j); i++) { await new Promise((ok) => setTimeout(ok, 4000)); j = await api("/api/network/peta-router/live"); }
+        return (pathLive = { at: Date.now(), port: j.port || {}, router: j.router || {} }); })
         .catch(() => pathLive || { at: 0, port: {}, router: {} }).finally(() => { pathLiveLoading = null; }));
     }
     // the radar's topology from the map: routers and switches, each link pointing away from the core. Which end is
@@ -33,6 +36,10 @@
       }
       return [...below].map(([u, d]) => `${name(u)} > ${d.map(name).join(", ")}`).join("\n");
     }
+    function linkText(k) {
+      return k.unknown ? "through its router (no measured link)" : k.dead ? `down${k.since ? ` since ${hhmm(Date.parse(k.since))}` : ""}` : k.down == null ? "no fresh reading on the map"
+        : `↓ ${rateText(k.down)}${k.cap ? ` of ${capText(k.cap)}` : ""}${k.pct != null ? ` · ${Math.round(k.pct * 100)}%` : ""}${k.stale ? " · old reading" : ""}`;
+    }
     const capText = (mbps) => (mbps >= 1000 ? `${String(+(mbps / 1000).toFixed(1)).replace(".", ",")} Gbit/s` : `${mbps} Mbit/s`);
     const rateText = (bps) => (bps >= 1e9 ? `${(bps / 1e9).toFixed(1).replace(".", ",")} Gbit/s` : bits(bps));
     // the climb, as data: the hops from the customer's end up, each with the link to the next one up, and a verdict
@@ -52,10 +59,13 @@
       const measure = (l, upper) => { // traffic toward the customer, now: the port the map reads is at one end of the link
         if (l.pseudo) return { down: null, cap: null, pct: null, dead: false, stale: false, port: "", unknown: true };
         const p = lv.port?.[l.sumberRo]?.[l.sumberIf], atUp = l.sumberRo === upper, same = upper === upOf(l);
-        const down = p ? Number(atUp ? p.outBps : p.inBps) : l.status === "basi" ? NaN : Number(same ? l.keHilirBps : l.keHuluBps), cap = Number(p?.kapMbps) || null;
-        const pct = cap && Number.isFinite(down) ? down / (cap * 1e6) : l.utilPct != null && !p && same && l.status !== "basi" ? l.utilPct / 100 : null;
+        // a VLAN reports its trunk's speed, not its own size (a 10G VLAN on 40G reads 118%), so it gets no %: the
+        // Bandwidth page's POP sizes fill that in later
+        const vlan = !!(l.logis || l.jenis === "vlan" || /^(vid|vlan)/i.test(l.sumberIf || ""));
+        const down = p ? Number(atUp ? p.outBps : p.inBps) : l.status === "basi" ? NaN : Number(same ? l.keHilirBps : l.keHuluBps), cap = vlan ? null : Number(p?.kapMbps) || null;
+        const pct = cap && Number.isFinite(down) ? down / (cap * 1e6) : !vlan && l.utilPct != null && !p && same && l.status !== "basi" ? l.utilPct / 100 : null;
         const dead = l.status === "port_mati" || /down/i.test(p?.oper || "");
-        return { key: `${l.roA}|${l.roB}`, down: Number.isFinite(down) ? down : null, cap, pct, dead, stale: l.status === "basi", since: l.portMati?.sejak || null, port: l.sumberRo ? `${name(l.sumberRo)} ${l.sumberIf || ""}`.trim() : "" };
+        return { key: `${l.roA}|${l.roB}`, vlan, down: Number.isFinite(down) ? down : null, cap, pct, dead, stale: l.status === "basi", since: l.portMati?.sejak || null, port: l.sumberRo ? `${name(l.sumberRo)} ${l.sumberIf || ""}`.trim() : "" };
       };
       const state = (id) => {
         if (id.startsWith("olt:")) { const o = olt.get(id), old = o?.diperbarui && Date.now() - Date.parse(o.diperbarui) > 86400000;
@@ -105,9 +115,8 @@
       if (!goal) notes.push(`The map has no link up from ${name(start)}`);
       if (!start.startsWith("olt:")) notes.push("Their modem's OLT wasn't found, so the way starts at their router");
       const show = hops.map((h) => ({ name: h.name, kind: h.kind, bad: h.bad, note: h.note, also: h.also || null,
-        link: h.link ? { pct: h.link.pct, dead: h.link.dead, stale: h.link.stale, unknown: !!h.link.unknown,
-          text: h.link.unknown ? "through its router (no measured link)" : h.link.dead ? `down${h.link.since ? ` since ${hhmm(Date.parse(h.link.since))}` : ""}` : h.link.down == null ? "no fresh reading on the map" : `↓ ${rateText(h.link.down)}${h.link.cap ? ` of ${capText(h.link.cap)}` : ""}${h.link.pct != null ? ` · ${pc(h.link.pct)}` : ""}${h.link.stale ? " · old reading" : ""}`,
-          port: h.link.port, key: h.link.key || null } : null }));
+        link: h.link ? { pct: h.link.pct, dead: h.link.dead, stale: h.link.stale, unknown: !!h.link.unknown, since: h.link.since || null, vlan: !!h.link.vlan,
+          text: linkText(h.link), down: h.link.down, cap: h.link.cap, port: h.link.port, key: h.link.key || null } : null }));
       return { hops: show, v, notes };
     }
     async function pathFor(r) {
@@ -121,7 +130,8 @@
       // each link's pattern over the last week: one that fills up at the same hours most days is said on its line
       const pk = new Map(linkPeaks(await linkHistLoad()).map((x) => [x.key, x])); p.peaks = [];
       for (const h of p.hops) { const x = h.link?.key && pk.get(h.link.key), t = peakText(x);
-        if (t) { h.link.text += ` · ${t}`; if (x.full >= 2 && x.span) p.peaks.push({ name: `${h.name} → ${p.hops[p.hops.indexOf(h) + 1]?.name || "upstream"}`, span: x.span, full: x.full, of: x.of }); } }
+        if (t) { h.link.text += ` · ${t}`; if (x.full >= 2 && x.span) { const nm = `${h.name} → ${p.hops[p.hops.indexOf(h) + 1]?.name || "upstream"}`; p.peaks.push({ name: nm, span: x.span, hrs: x.hrs, say: `their uplink ${nm} reaches 90%+ at ${x.span} on ${x.full} of the last ${x.of} days` }); } } }
+      await aboveCore(p).catch(() => {}); // the POP's busy hours and the upstream, from the ERP's Bandwidth page
       return p;
     }
     // ---- Peaks: how full each link gets, by hour, over two weeks ----
@@ -165,7 +175,8 @@
         if (!byDay.size) continue;
         const of = byDay.size, vals = [...byDay.values()], need = Math.max(2, Math.ceil(of / 2));
         out.push({ key, name: x.name, cap: x.cap, of, full: vals.filter((v) => v >= 90).length, busy: vals.filter((v) => v >= 75).length,
-          hours, span: spanText(hot.map((n, i) => (n >= need ? i : -1)).filter((i) => i >= 0)), worst: Math.max(...vals) });
+          hours, hrs: hot.map((n, i) => (n >= need ? i : -1)).filter((i) => i >= 0), worst: Math.max(...vals) });
+        out.at(-1).span = spanText(out.at(-1).hrs);
       }
       return out.sort((a, b) => b.full - a.full || b.busy - a.busy || b.worst - a.worst);
     }
