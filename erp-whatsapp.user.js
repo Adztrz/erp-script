@@ -2,7 +2,7 @@
 // @name         ERP — Dock in WhatsApp Web
 // @namespace    adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/erp-script/main/icons/dock.png
-// @version      1.6.1
+// @version      1.7.0
 // @description  The Dock's customer card beside the open chat in WhatsApp Web: who is writing (found by their number, a username they sent, or their name), online or not, plan, area, unpaid months and any outage on their router, with replies that fill in their name, username and bill; Check connection, Pay and the 1× login link are done by the Dock in your open ERP tab. A reply goes into the message box; you send it yourself. The customer list comes from the ERP tab, through Tampermonkey's storage: nothing is fetched from WhatsApp, and nothing leaves this browser.
 // @match        https://*/*
 // @run-at       document-idle
@@ -444,6 +444,12 @@
     .erp-wa .tbar { height: 6px; border-radius: 3px; background: var(--raised); overflow: hidden; }
     .erp-wa .tbar span { display: block; height: 100%; border-radius: 3px; background: var(--on); transition: width .4s var(--ease-out); }
     .erp-wa .tbar.full span { background: var(--amber); }
+    .erp-wa .tbar.bad span { background: var(--bad); }
+    .erp-wa .chain { display: grid; font-size: 13px; }
+    .erp-wa .chain .hop { display: grid; grid-template-columns: 8px minmax(0, auto) minmax(0, 1fr); align-items: center; gap: 8px; padding: 3px 0; }
+    .erp-wa .chain .hop b { color: var(--strong); font-weight: 500; overflow-wrap: anywhere; } .erp-wa .chain .n { color: var(--muted); font-size: 12px; }
+    .erp-wa .chain .lnk { display: grid; gap: 4px; margin-left: 3px; padding: 3px 0 5px 13px; border-left: 1.5px solid var(--line, #2a2e30); color: var(--muted); font-size: 12px; }
+    .erp-wa .chain .lnk .tbar { height: 4px; max-width: 200px; } .erp-wa .chain .lnk.dead { border-left-style: dashed; border-left-color: var(--bad); color: #f6b3ab; }
     .erp-wa .sect { display: grid; gap: 10px; padding: 16px; border-radius: 8px; background: var(--bg); box-shadow: var(--shadow-card); }
     .erp-wa .verdict { margin: 0; color: var(--strong); font-weight: 500; font-size: 14px; }
     .erp-wa .verdict.ok { color: var(--on); } .erp-wa .verdict.net, .erp-wa .verdict.cut, .erp-wa .verdict.iso { color: #f6b3ab; } .erp-wa .verdict.warn, .erp-wa .verdict.off { color: var(--amber); }
@@ -641,7 +647,7 @@
     else bill.append(el("b", null, "Bills not loaded"), el("span", null, "Open Finance → Invoices in the ERP once to bring this month's"));
     if (data.monthsLoaded) bill.title = `From the ${data.monthsLoaded} invoice month${data.monthsLoaded > 1 ? "s" : ""} the Dock has loaded, ${ago(data.billsAt)}`;
     card.append(bill);
-    card.append(...actionsFor(r), ...trafficFor(r), ...extrasFor(r), ...nearFor(r));
+    card.append(...actionsFor(r), ...trafficFor(r), ...pathFor(r), ...extrasFor(r), ...nearFor(r));
     const acts = el("div", "row");
     if (data.origin) { const a = el("a", "btn main", "Open in the Dock"), go = svgIcon("M7 17 17 7M9 7h8v8"); go.setAttribute("fill", "none"); go.setAttribute("stroke", "currentColor"); go.setAttribute("stroke-width", "1.8"); go.setAttribute("stroke-linecap", "round"); go.style.cssText = "width:14px;height:14px"; a.append(go); a.href = `${data.origin}/ldn-radius#dock=${encodeURIComponent(r.username)}`; a.target = "erp-dock"; a.rel = "noopener"; acts.append(a); }
     if (others || current.pick) { const o = el("button", "btn", others ? "Not them?" : current.who?.group ? "Back to the group" : "Back"); o.type = "button"; o.onclick = () => { current.pick = null; current.note = ""; if (others) current.who = { ...current.who, guess: true }; draw(); }; acts.append(o); }
@@ -772,6 +778,36 @@
     if (d.down != null && d.plan) { const bar = el("div", `tbar${d.pct >= 0.85 ? " full" : ""}`), fill = el("span"); fill.style.width = `${Math.min(100, Math.round(d.pct * 100))}%`; bar.append(fill); box.append(bar); }
     const dl = el("dl"); for (const [k, v] of d.lines) dl.append(el("dt", null, k), el("dd", null, v)); box.append(dl);
     if (d.waiting) box.append(el("p", "how ld", `Watching for the next 5-minute report (since ${hhmm(d.watching)})`));
+    return [box];
+  }
+
+  // ---------- Way up: the links from their OLT to the internet ----------
+  // The Dock reads the ERP's router map: from the customer's OLT up to the core, each link's traffic now against its
+  // size, and where the way is down or full. Read again every 30 s for 5 minutes while the card is open.
+  function pathFor(r) {
+    const a = actFor(r);
+    if (!a.pathTimer) {
+      let n = 0; const poll = () => { if (act !== a || n++ > 10) return clearInterval(a.pathTimer);
+        rpc("path", { username: r.username }, 30000).then((d) => { if (act !== a) return; const was = JSON.stringify(a.path?.data); a.path = { data: d, at: a.path?.at || Date.now() }; if (was !== JSON.stringify(d)) draw(); })
+          .catch((e) => { if (act === a && !a.path?.data) { a.path = { err: e.message, at: Date.now() }; draw(); } }); };
+      a.pathTimer = setInterval(poll, 30000); setTimeout(poll, 0);
+    }
+    const t = a.path, d = t?.data;
+    const box = sectEl(r, "path", "Way up", t ? (t.err ? "err" : "ok") : "busy", d ? (d.v[0] === "ok" ? "good" : "warn") : "");
+    if (!t) { box.append(busyNote("Following the links up from their OLT…")); return [box]; }
+    if (t.err) { box.append(el("p", "warn", t.err)); return [box]; }
+    box.append(el("p", `verdict ${d.v[0]}`, d.v[1]));
+    if (d.hops.length) { const ch = el("div", "chain");
+      for (const h of d.hops) {
+        const hop = el("div", "hop"); hop.append(el("span", `dot ${h.bad ? "iso" : "on"}`), copyable(el("b", null, h.name), h.name), el("span", "n", [h.kind, h.note].filter(Boolean).join(" · "))); ch.append(hop);
+        if (h.link) { const lk = el("div", `lnk${h.link.dead ? " dead" : ""}`);
+          if (h.link.pct != null) { const bar = el("div", `tbar${h.link.pct >= 0.9 ? " bad" : h.link.pct >= 0.75 ? " full" : ""}`), f = el("span"); f.style.width = `${Math.min(100, Math.round(h.link.pct * 100))}%`; bar.append(f); lk.append(bar); }
+          const tx = el("span", null, h.link.text); if (h.link.port) tx.title = h.link.port; lk.append(tx);
+          if (h.also) lk.append(el("span", "n", `also up through ${h.also.join(", ")}`));
+          ch.append(lk); }
+      }
+      box.append(ch); }
+    for (const n of d.notes) box.append(el("p", "how", n));
     return [box];
   }
 

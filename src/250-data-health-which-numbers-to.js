@@ -205,7 +205,7 @@
       lb.title = !r.customerDocId ? "Needs the customer list refreshed (LDN → Pelanggan → Update)" : !digits(r.phone) ? "No phone number: the ERP needs one to send the link" : "Make the one-click login link and send it on WhatsApp, as Master Pelanggan does";
       lb.disabled = !r.customerDocId || !digits(r.phone); acts.append(lb);
       const bill = payBox(r); billDraw(bills.get(r.username));
-      wrap.append(back, who, facts, tech, acts, link, forensicBox(r), trafficBox(r), bill, modemBox(`u:${r.username}`, r), nearView(r));
+      wrap.append(back, who, facts, tech, acts, link, forensicBox(r), trafficBox(r), pathBox(r), bill, modemBox(`u:${r.username}`, r), nearView(r));
       return wrap;
     }
     // Master Pelanggan's "Link 1× Klik": one press makes the customer's one-click login link and the ERP tries to send it

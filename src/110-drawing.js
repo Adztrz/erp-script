@@ -95,6 +95,13 @@
       .erp-dock .tbar { height: 6px; border-radius: 3px; background: #1a1d1e; overflow: hidden; margin: 0 0 10px; }
       .erp-dock .tbar span { display: block; height: 100%; background: #55bc82; border-radius: 3px; transition: width .4s cubic-bezier(.22,1,.36,1); }
       .erp-dock .tbar.full span { background: #e0b04f; }
+      .erp-dock .tbar.busy span { background: #e0b252; }
+      .erp-dock .path .tbar.full span { background: var(--red); }
+      .erp-dock .chain { display: grid; gap: 0; margin: 0 0 8px; font-size: 13px; }
+      .erp-dock .chain .hop { display: grid; grid-template-columns: 12px minmax(0, auto) minmax(0, 1fr); align-items: center; gap: 8px; padding: 4px 0; }
+      .erp-dock .chain .hop b { color: var(--paper); font-weight: 500; overflow-wrap: anywhere; } .erp-dock .chain .n { color: var(--muted); font-size: 12px; }
+      .erp-dock .chain .lnk { display: grid; gap: 4px; margin: 0 0 0 5px; padding: 4px 0 6px 14px; border-left: 1.5px solid #2a2e30; color: var(--muted); font-size: 12px; }
+      .erp-dock .chain .lnk .tbar { margin: 0; height: 4px; max-width: 220px; } .erp-dock .chain .lnk.dead { border-left: 1.5px dashed var(--red); color: #f6b3ab; }
       .erp-dock .map .tiles img { position: absolute; width: 256px; height: 256px; max-width: none; pointer-events: none; user-select: none; }
       @property --ht-r { syntax: "<length>"; inherits: false; initial-value: 6px; }
       @property --ht-w { syntax: "<length>"; inherits: false; initial-value: 9000px; }

@@ -309,3 +309,25 @@ test("whatsapp: a group message's sender and the customer their saved name point
   assert.deepEqual(nameGuess("BUDI SANTOSO CONTOH R9 Budi").map((r) => r.username), ["budi0101"]);
   assert.deepEqual(nameGuess("Pak RT Contoh"), []); // only the village: nobody's name
 });
+
+test("way up: climbs from the OLT to the core, crosses a backwards link, names the first full link", () => {
+  const topoKey = (s) => String(s || "").toUpperCase().replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim().replace(/^RO /, "");
+  const { pathRead } = load(dock, ["pathRead", "capText", "rateText"], { topoKey, hhmm: () => "10:00",
+    bits: (bps) => (bps >= 1e6 ? `${(bps / 1e6).toFixed(bps >= 1e7 ? 0 : 1).replace(".", ",")} Mbit/s` : `${Math.round(bps / 1000)} kbit/s`) }, ["pathRead"]);
+  const map = { peta: { node: [{ ro: "CONTOH", hidup: true, cpu: 10 }, { ro: "DIST", hidup: true, cpu: 20 }, { ro: "CORE", hidup: true, cpu: 5 }],
+    link: [{ roA: "CORE", roB: "DIST", hulu: "a", status: "hidup", sumberRo: "CORE", sumberIf: "to-dist" },
+      { roA: "DIST", roB: "sw:1", hulu: "b", status: "hidup", sumberRo: "DIST", sumberIf: "to-sw" }, // drawn backwards: the switch marked above DIST
+      { roA: "CONTOH", roB: "sw:1", hulu: "b", status: "hidup", sumberRo: "CONTOH", sumberIf: "uplink" },
+      { roA: "CONTOH", roB: "olt:A", hulu: "a", status: "hidup", sumberRo: "CONTOH", sumberIf: "to-olt" }], sambungan: [] },
+    olts: [{ id: "olt:A", nama: "OLT CONTOH", ro: "CONTOH", ontOnline: 9, ontTotal: 10 }], sws: [{ id: "sw:1", nama: "SW CONTOH", status: "online", portsUp: 4 }] };
+  const lv = { port: { CORE: { "to-dist": { outBps: 2e9, inBps: 1e8, kapMbps: 10000 } }, DIST: { "to-sw": { outBps: 9.5e8, inBps: 1e7, kapMbps: 1000 } },
+    CONTOH: { uplink: { inBps: 5e8, outBps: 1e7, kapMbps: 1000 }, "to-olt": { outBps: 4e8, inBps: 1e7, kapMbps: 1000 } } }, router: {} };
+  const p = pathRead({ router: "RO CONTOH NEW" }, map, lv, "A");
+  assert.deepEqual(p.hops.map((h) => h.name), ["OLT CONTOH", "CONTOH", "SW CONTOH", "DIST", "CORE"]);
+  assert.equal(p.hops[1].link.text, "↓ 500 Mbit/s of 1 Gbit/s · 50%"); // measured at CONTOH, the lower end: what comes in
+  assert.equal(p.v[0], "warn"); assert.match(p.v[1], /SW CONTOH → DIST is full \(95%/);
+  assert.match(p.notes.join(), /marks SW CONTOH – DIST the other way round/);
+  lv.router.DIST = { ok: false };
+  assert.match(pathRead({ router: "RO CONTOH NEW" }, map, lv, "A").v[1], /^Router DIST .* unreachable/);
+  assert.equal(pathRead({ router: "RO CONTOH NEW" }, map, lv, null).hops[0].name, "CONTOH"); // no modem found: from their router
+});
