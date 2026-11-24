@@ -55,7 +55,7 @@
         const down = p ? Number(atUp ? p.outBps : p.inBps) : l.status === "basi" ? NaN : Number(same ? l.keHilirBps : l.keHuluBps), cap = Number(p?.kapMbps) || null;
         const pct = cap && Number.isFinite(down) ? down / (cap * 1e6) : l.utilPct != null && !p && same && l.status !== "basi" ? l.utilPct / 100 : null;
         const dead = l.status === "port_mati" || /down/i.test(p?.oper || "");
-        return { down: Number.isFinite(down) ? down : null, cap, pct, dead, stale: l.status === "basi", since: l.portMati?.sejak || null, port: l.sumberRo ? `${name(l.sumberRo)} ${l.sumberIf || ""}`.trim() : "" };
+        return { key: `${l.roA}|${l.roB}`, down: Number.isFinite(down) ? down : null, cap, pct, dead, stale: l.status === "basi", since: l.portMati?.sejak || null, port: l.sumberRo ? `${name(l.sumberRo)} ${l.sumberIf || ""}`.trim() : "" };
       };
       const state = (id) => {
         if (id.startsWith("olt:")) { const o = olt.get(id), old = o?.diperbarui && Date.now() - Date.parse(o.diperbarui) > 86400000;
@@ -107,7 +107,7 @@
       const show = hops.map((h) => ({ name: h.name, kind: h.kind, bad: h.bad, note: h.note, also: h.also || null,
         link: h.link ? { pct: h.link.pct, dead: h.link.dead, stale: h.link.stale, unknown: !!h.link.unknown,
           text: h.link.unknown ? "through its router (no measured link)" : h.link.dead ? `down${h.link.since ? ` since ${hhmm(Date.parse(h.link.since))}` : ""}` : h.link.down == null ? "no fresh reading on the map" : `↓ ${rateText(h.link.down)}${h.link.cap ? ` of ${capText(h.link.cap)}` : ""}${h.link.pct != null ? ` · ${pc(h.link.pct)}` : ""}${h.link.stale ? " · old reading" : ""}`,
-          port: h.link.port } : null }));
+          port: h.link.port, key: h.link.key || null } : null }));
       return { hops: show, v, notes };
     }
     async function pathFor(r) {
@@ -117,7 +117,73 @@
       const topo = topology(), t = radar && topo.names.size ? { topo, at: topoState(topo, radar.list) } : null;
       const reach = (id, nm) => { if (id.startsWith("olt:")) { const o = map.olts.find((x) => x.id === id); return o?.ontTotal ? { modems: o.ontTotal } : null; }
         const k = topoKey(String(nm).replace(/[,>]/g, " ")); return t && t.topo.names.has(k) ? behindOf(t, k) : null; };
-      return pathRead(r, map, lv, modemOf(r).ont?.pid, reach);
+      const p = pathRead(r, map, lv, modemOf(r).ont?.pid, reach);
+      // each link's pattern over the last week: one that fills up at the same hours most days is said on its line
+      const pk = new Map(linkPeaks(await linkHistLoad()).map((x) => [x.key, x])); p.peaks = [];
+      for (const h of p.hops) { const x = h.link?.key && pk.get(h.link.key), t = peakText(x);
+        if (t) { h.link.text += ` · ${t}`; if (x.full >= 2 && x.span) p.peaks.push({ name: `${h.name} → ${p.hops[p.hops.indexOf(h) + 1]?.name || "upstream"}`, span: x.span, full: x.full, of: x.of }); } }
+      return p;
+    }
+    // ---- Peaks: how full each link gets, by hour, over two weeks ----
+    // The tab that reads the radar also notes every measured link's load (the busier direction against its size) every
+    // 5 minutes, kept per hour: the highest and the average, 14 days. A link that's 90%+ at the same hours on most days
+    // needs more capacity, and explains "it's slow every evening" better than the reading at the moment you look.
+    const LINK_KEEP = 14 * 86400000, hourOf = (k) => Date.parse(`${k.replace(" ", "T")}:00`);
+    let linkHist = null;
+    async function linkHistLoad() {
+      if (!linkHist || Date.now() - linkHist.read > 10 * 60000) linkHist = { ...((await idbGet("links")) || { l: {} }), read: Date.now() };
+      return linkHist;
+    }
+    async function linkSample() {
+      const [map, lv] = await Promise.all([pathMapLoad(), pathLiveLoad()]);
+      if (!lv.at || Date.now() - lv.at > 60000) return;
+      const h = (await idbGet("links")) || { l: {} }, d = new Date(), z = (n) => String(n).padStart(2, "0");
+      const hk = `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())} ${z(d.getHours())}`;
+      const nm = (id) => map.olts.find((o) => o.id === id)?.nama || map.sws.find((x) => x.id === id)?.nama || id;
+      for (const l of [...(map.peta.link || []), ...(map.peta.sambungan || [])]) {
+        const p = lv.port?.[l.sumberRo]?.[l.sumberIf], cap = Number(p?.kapMbps); if (!p || !cap) continue;
+        const pct = Math.round((Math.max(Number(p.inBps) || 0, Number(p.outBps) || 0) / (cap * 1e6)) * 100);
+        const x = (h.l[`${l.roA}|${l.roB}`] ||= { b: {} }); x.name = `${nm(l.roA)} – ${nm(l.roB)}`; x.cap = cap;
+        const b = (x.b[hk] ||= [0, 0, 0]); b[0] = Math.max(b[0], pct); b[1] += pct; b[2]++;
+      }
+      const cut = Date.now() - LINK_KEEP;
+      for (const x of Object.values(h.l)) for (const k of Object.keys(x.b)) if (hourOf(k) < cut) delete x.b[k];
+      h.at = Date.now(); await idbPut("links", h); linkHist = { ...h, read: Date.now() };
+    }
+    // per link over the last `days`: the highest load per hour of the day, how many days it reached 90% and 75%, and
+    // the hours it reaches 90% on at least half the days (and at least two)
+    function linkPeaks(h, days = 7, now = Date.now()) {
+      const out = [], since = now - days * 86400000;
+      for (const [key, x] of Object.entries(h?.l || {})) {
+        const hours = Array(24).fill(null), hot = Array(24).fill(0), byDay = new Map();
+        for (const [k, [mx]] of Object.entries(x.b || {})) {
+          if (hourOf(k) < since) continue;
+          const hr = Number(k.slice(11, 13)), day = k.slice(0, 10);
+          hours[hr] = Math.max(hours[hr] ?? 0, mx); byDay.set(day, Math.max(byDay.get(day) || 0, mx));
+          if (mx >= 90) hot[hr]++;
+        }
+        if (!byDay.size) continue;
+        const of = byDay.size, vals = [...byDay.values()], need = Math.max(2, Math.ceil(of / 2));
+        out.push({ key, name: x.name, cap: x.cap, of, full: vals.filter((v) => v >= 90).length, busy: vals.filter((v) => v >= 75).length,
+          hours, span: spanText(hot.map((n, i) => (n >= need ? i : -1)).filter((i) => i >= 0)), worst: Math.max(...vals) });
+      }
+      return out.sort((a, b) => b.full - a.full || b.busy - a.busy || b.worst - a.worst);
+    }
+    // 19, 20, 21 → "19–22"; separate runs with commas
+    function spanText(hrs) {
+      const runs = []; for (const h of hrs) { const r = runs.at(-1); if (r && h === r[1] + 1) r[1] = h; else runs.push([h, h]); }
+      return runs.map(([a, b]) => `${String(a).padStart(2, "0")}–${String(b + 1).padStart(2, "0")}`).join(", ");
+    }
+    // the highest load at each hour of the day as 24 cells, with the hours marked under them
+    function hourStrip(hours) {
+      const box = el("div", "hours"), row = el("div", "hrow"), ax = el("div", "hax");
+      hours.forEach((v, i) => { const c = el("i", v == null ? "" : v >= 90 ? "full" : v >= 75 ? "busy" : "ok"); if (v != null) { c.style.setProperty("--v", String(0.25 + (v / 75) * 0.6)); c.title = `${String(i).padStart(2, "0")}:00 · up to ${v}%`; } row.append(c); });
+      for (const h of ["00", "06", "12", "18", "24"]) ax.append(el("span", null, h));
+      box.append(row, ax); return box;
+    }
+    function peakText(x) {
+      return !x ? "" : x.full >= 2 && x.span ? `90%+ at ${x.span} on ${x.full} of the last ${x.of} days` : x.full >= 2 ? `90%+ on ${x.full} of the last ${x.of} days`
+        : x.busy >= 2 ? `75%+ on ${x.busy} of the last ${x.of} days` : "";
     }
     function pathBox(r) {
       const box = el("div", "near hist path rise"); box.style.setProperty("--i", "2");

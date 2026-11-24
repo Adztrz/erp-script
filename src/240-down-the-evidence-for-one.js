@@ -31,11 +31,12 @@
     }
 
     async function forensicLoad(r) {
-      const [tix, due, dl, tl] = await Promise.all([
+      const [tix, due, dl, tl, path] = await Promise.all([
         r.customerDocId ? api(`/api/pg-read/tickets?where=customerId%3A${encodeURIComponent(r.customerDocId)}&limit=10&orderBy=createdAt%3Adesc&fields=issue,status,ticketId,createdAt`).catch(() => null) : null,
         api(`/api/customers/status-tagihan?username=${encodeURIComponent(r.username)}`).catch(() => null), dropsOf(),
-        r.isolir ? api(`/api/admin/billing/customer-timeline?${r.customerDocId ? `customerId=${encodeURIComponent(r.customerDocId)}` : `username=${encodeURIComponent(r.username)}`}`).catch(() => null) : null]);
-      return { tix: (tix?.data || []).filter((t) => t.status !== "Terselesaikan"), due, dl, isoAt: (tl?.events || []).filter((e) => /isolir/i.test(e.type)).map((e) => Date.parse(e.at)).sort((x, y) => y - x)[0] || null };
+        r.isolir ? api(`/api/admin/billing/customer-timeline?${r.customerDocId ? `customerId=${encodeURIComponent(r.customerDocId)}` : `username=${encodeURIComponent(r.username)}`}`).catch(() => null) : null,
+        pathFor(r).catch(() => null)]);
+      return { path, tix: (tix?.data || []).filter((t) => t.status !== "Terselesaikan"), due, dl, isoAt: (tl?.events || []).filter((e) => /isolir/i.test(e.type)).map((e) => Date.parse(e.at)).sort((x, y) => y - x)[0] || null };
     }
     // what the evidence says: the facts, the verdict and a summary to paste (the card's "Down?" box, and WhatsApp's Check)
     function forensicRead(r, d) {
@@ -68,10 +69,13 @@
       if (nb.length) facts.push(["Within 300 m", `${nbOff} of ${nb.length} customers offline`]);
       if (rad) facts.push(["Router", `${rad.name}: ${radBad ? `${rad.level === "down" ? "down" : "dropping"} since ${hhmm(rad.since)}` : "at its usual level"}`]);
       const ss = sess || rec; if (ss && (ss.addr || ss.ip)) facts.push(["Session", [ss.addr || ss.ip, ss.mac, ss.nas || sess?.ip].filter(Boolean).join(" · ")]);
+      const pk = d?.path?.peaks?.[0];
+      if (d?.path?.hops.length) facts.push(["Way up", `${d.path.v[1].split(": ")[0]}${pk ? `; ${pk.name} 90%+ at ${pk.span} most days` : ""}`]);
       if (d?.tix.length) facts.push(["Complaints", `${d.tix.length} open · ${d.tix[0].ticketId || ""} ${d.tix[0].issue || ""}`.trim()]);
       if (d?.due?.ok && d.due.jumlahTagihan) facts.push(["Arrears", `${d.due.jumlahTagihan} overdue · Rp ${Number(d.due.totalTunggakan || 0).toLocaleString("id-ID")}`]);
       // the verdict
       const v = r.isolir ? ["iso", "Isolir: cut off for the bill, not a network fault."]
+        : !online && d?.path?.v[0] === "net" ? ["net", d.path.v[1]]
         : radBad ? ["net", `Router ${rad.name} is ${rad.level === "down" ? "down" : "dropping"}: area-wide, not just this customer.`]
         : !online && port.length >= 4 && portOff >= 3 && portOff / port.length >= 0.5 ? ["net", "The whole PON port is down: a line fault before the FAT (see Outage radar → Cause & dispatch)."]
         : !online && nb.length >= 3 && nbOff / nb.length >= 0.5 ? ["net", "Neighbours are down too: the FAT or the line in this area."]

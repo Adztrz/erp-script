@@ -83,6 +83,14 @@
       if (!radar.alerts.length && !radar.learning) out.push(el("div", "rok", `All ${radar.list.filter((x) => x.level !== "silent").length} routers at their usual level.`));
       if (radar.learning) out.push(el("p", "note", "Learning each router's usual level from a reading every 5 minutes while an ERP tab is open. Alerts start after about 25 minutes; the lines fill in over a day."));
       if (tf) { const e3 = el("div", "eyebrow"); e3.append("Network"); out.push(e3, topoTree(tf, (ip) => { view.nas = ip; drawBody(); })); }
+      // the links' load by hour over the last week: the ones that fill up, and when
+      if (!linkHist) linkHistLoad().then(() => { if (panel) drawBody(); }).catch(() => {});
+      else { const lk = linkPeaks(linkHist), days = Math.max(0, ...lk.map((x) => x.of)), hot = lk.filter((x) => x.full >= 2 || x.busy >= 2).slice(0, 8);
+        const e4 = el("div", "eyebrow"); e4.append("Uplinks at peak"); out.push(e4);
+        if (days < 2) out.push(el("p", "note", "Each link's load is noted every 5 minutes while an ERP tab is open; the hours it fills up show after two days."));
+        else if (!hot.length) out.push(el("div", "rok", `No link reached 75% on two or more of the last ${days} days.`));
+        for (const x of hot) { const row = el("div", "peak"); row.append(el("b", null, x.name), el("span", null, `${peakText(x)} · ${capText(x.cap)}`), hourStrip(x.hours)); out.push(row); }
+      }
       const e2 = el("div", "eyebrow"); e2.append("Routers"); out.push(e2);
       radar.list.forEach((x, i) => {
         const b = el("button", "item rrow rise"); b.type = "button"; b.style.setProperty("--i", String(Math.min(i, 14)));

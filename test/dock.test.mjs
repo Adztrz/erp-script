@@ -356,6 +356,8 @@ test("answer: the first cause in the NOC's order, with a reply that names the cu
   assert.equal(triageRead(r, ok, { rate: { down: 2e4 }, plan: 10 }, clear).kind, "Slow · WiFi or devices");
   const wait = triageRead(r, ok, { rate: null, plan: 10 }, clear); assert.equal(wait.waiting, true);
   assert.equal(triageRead({ ...r, isolir: true }, ok, null, clear, { ok: true, jumlahTagihan: 2, totalTunggakan: 220000 }).tone, "iso");
+  const peak = triageRead(r, ok, { rate: { down: 3e6 }, plan: 10 }, { v: ["ok", "clear"], peaks: [{ name: "CONTOH → DIST", span: "19–22", full: 5, of: 7 }] });
+  assert.equal(peak.kind, "Slow at peak hours"); assert.match(peak.reply, /padat pada jam 19–22/);
 });
 
 test("affected customers: a point on the map and everything below it, usual and now", () => {
@@ -365,4 +367,15 @@ test("affected customers: a point on the map and everything below it, usual and 
   assert.deepEqual(behindOf(t, "DIST"), { usual: 550, now: 60, routers: 3 }); // CONTOH counted once, though it hangs off both
   assert.deepEqual(behindOf(t, "SW"), { usual: 500, now: 10, routers: 2 });
   assert.equal(behindOf(t, "NOWHERE"), null);
+});
+
+test("peaks: the hours a link reaches 90% on most days, and how it's said", () => {
+  const { linkPeaks, peakText } = load(dock, ["linkPeaks", "spanText", "peakText"], { hourOf: (k) => Date.parse(`${k.replace(" ", "T")}:00`) }, ["linkPeaks", "peakText"]);
+  const b = {}, now = Date.parse("2026-11-24T00:30:00");
+  for (const day of ["17", "18", "19", "20", "21", "22", "23"]) for (let h = 0; h < 24; h++) b[`2026-11-${day} ${String(h).padStart(2, "0")}`] = [h >= 19 && h <= 21 && day !== "22" ? 95 : 40, 0, 1];
+  b["2026-11-01 20"] = [99, 0, 1]; // older than the week: left out
+  const [x] = linkPeaks({ l: { "CONTOH|olt:A": { name: "CONTOH – OLT CONTOH", cap: 1000, b } } }, 7, now);
+  assert.equal(x.of, 7); assert.equal(x.full, 6); assert.equal(x.span, "19–22"); assert.equal(x.hours[20], 95); assert.equal(x.hours[3], 40);
+  assert.equal(peakText(x), "90%+ at 19–22 on 6 of the last 7 days");
+  assert.equal(peakText({ full: 0, busy: 1, of: 3 }), "");
 });

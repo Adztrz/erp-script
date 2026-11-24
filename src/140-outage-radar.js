@@ -31,6 +31,7 @@
       const hist = await idbGet("radar");
       radar = hist ? assess(hist) : null;
       feedStuck.clear(); for (const x of radar?.list || []) if (x.level === "nofeed") feedStuck.set(roWord(x.name), x.since || hist.at);
+      if (fetched) linkSample().catch(() => {}); // each link's load, for its peak hours
       if (fetched) pathMapLoad().then((m) => { const text = erpTopoText(m); if (text) { ls.set(TOPO_ERP, { text, at: Date.now() }); topoMemo = null; } }).catch(() => {}); // the ERP's router map, for the radar's topology
       if (fetched) incRadar(radar).catch(() => {}); // only the tab that took the reading: one alert, not one per tab
       if (fab) { const a = radar?.alerts ?? []; fab.classList.toggle("alert", a.length > 0); fab.title = a.length ? `Dock (Alt+K): outage on ${a.map((x) => x.name).join(", ")}` : "Dock (Alt+K)"; }

@@ -31,6 +31,9 @@
         `${kak}, koneksi ${kak} terpantau sering putus-sambung. Mohon pastikan listrik modem stabil (colokan tidak longgar, tidak berbagi terminal dengan alat lain). Jika masih terjadi, kami jadwalkan teknisi untuk pengecekan.`);
       if (rate && rate.down < 50000) return say("off", "Slow · WiFi or devices", "Online and the way up is clear, but almost no traffic reaches the modem.", "A modem restart; their device near the modem; 5 GHz WiFi if they have it.",
         `${kak}, koneksi internet sampai ke modem ${kak} normal dari sisi kami. Mohon coba restart modem (cabut listrik 10 detik lalu nyalakan lagi) dan gunakan perangkat di dekat modem. Jika masih lambat, kabari kami ya.`);
+      const pk = p?.peaks?.[0];
+      if (pk) return say("warn", "Slow at peak hours", `Fine right now, but their uplink ${pk.name} reaches 90%+ at ${pk.span} on ${pk.full} of the last ${pk.of} days: if it's slow mostly then, that's the cause.`, "Not their line: log the link for more capacity; tell them it's the busy hours in their area.",
+        `${kak}, dari sisi kami koneksi ${kak} normal. Namun jalur jaringan di area ${area} memang sering padat pada jam ${pk.span} sehingga kecepatan bisa menurun di jam tersebut. Tim kami sedang menanganinya. Terima kasih atas pengertiannya.`);
       const CLEAR = `${kak}, dari sisi kami koneksi ${kak} normal dan jaringan di area ${area} lancar. Boleh dibantu kirim screenshot speedtest di dekat modem, dan perangkat mana yang terasa lambat?`;
       if (!rate) return say("ok", "Online", `Online and steady${p && p.v[0] === "ok" ? ", the way up clear" : ""}; the traffic reading comes with the next 5-minute report.`, "Ask for a speed test near the modem meanwhile.", CLEAR, true);
       return say("ok", "Line is fine", `Online, steady, the way up clear${pct != null ? `, using ${Math.round(pct * 100)}% of the plan` : ""}.`, "Most likely WiFi or one device: a speed test near the modem tells which.", CLEAR);
