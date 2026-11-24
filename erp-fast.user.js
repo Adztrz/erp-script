@@ -2,7 +2,7 @@
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/erp-script/main/icons/dock.png
-// @version      3.19.0
+// @version      3.20.0
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -5258,6 +5258,13 @@
         return { at: radar?.at || 0, off: radarOff || "", wide: !!radar?.wide,
           routers: (radar?.alerts || []).map((x) => ({ ip: x.ip, name: x.name, level: x.level, since: x.since, gap: x.gap, open: x.open, usual: x.usual })),
           pons: incOpen().filter((x) => x.kind === "pon").map((x) => ({ id: x.id, title: x.title, start: x.start, affected: x.affected, users: x.users.length, size: x.size || 0 })) };
+      }
+      if (op === "live") { // who of these is online now (RADIUS sessions under a minute old), and since when the others are down
+        if (!live || Date.now() - live.at > 60000) { live = null; await liveSessions(); }
+        drops = (await idbGet("drops")) || drops;
+        const us = (a.usernames || []).slice(0, 500).map(lower), down = {};
+        for (const x of us) { const g = drops?.off?.[x]; if (g && !live.by.has(x)) down[x] = g.from; }
+        return { at: live.at, on: us.filter((x) => live.by.has(x)), down };
       }
       if (op === "outage") { // one outage's report for the technicians and the notice for customers, from who is offline now
         await data(); if (!customers) throw new Error("The ERP tab has no customer list yet");

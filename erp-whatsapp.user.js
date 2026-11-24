@@ -2,7 +2,7 @@
 // @name         ERP — Dock in WhatsApp Web
 // @namespace    adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/erp-script/main/icons/dock.png
-// @version      1.4.0
+// @version      1.5.0
 // @description  The Dock's customer card beside the open chat in WhatsApp Web: who is writing (found by their number, a username they sent, or their name), online or not, plan, area, unpaid months and any outage on their router, with replies that fill in their name, username and bill; Check connection, Pay and the 1× login link are done by the Dock in your open ERP tab. A reply goes into the message box; you send it yourself. The customer list comes from the ERP tab, through Tampermonkey's storage: nothing is fetched from WhatsApp, and nothing leaves this browser.
 // @match        https://*/*
 // @run-at       document-idle
@@ -10,6 +10,9 @@
 // @grant        GM_setValue
 // @grant        GM_addValueChangeListener
 // @grant        unsafeWindow
+// @grant        GM_xmlhttpRequest
+// @connect      tile.openstreetmap.org
+// @connect      google.com
 // @homepageURL  https://github.com/Adztrz/erp-script
 // @updateURL    https://raw.githubusercontent.com/Adztrz/erp-script/main/erp-whatsapp.user.js
 // @downloadURL  https://raw.githubusercontent.com/Adztrz/erp-script/main/erp-whatsapp.user.js
@@ -64,7 +67,8 @@
         GM_setValue(KEY, {
           at: all.at, origin: location.origin, bills,
           billsAt: Math.max(0, ...inv.map((v) => v?.at || 0)), monthsLoaded: months.length,
-          rows: all.rows.map((r) => [r.username, r.nama, r.phone, r.desa, r.kecamatanErp, r.paket, r.router, r.isolir ? 1 : 0, r.online ? 1 : 0, r.expirasi, r.address, r.isInactive ? 1 : 0]),
+          rows: all.rows.map((r) => [r.username, r.nama, r.phone, r.desa, r.kecamatanErp, r.paket, r.router, r.isolir ? 1 : 0, r.online ? 1 : 0, r.expirasi, r.address, r.isInactive ? 1 : 0,
+            Math.round(Number(r.lat) * 1e6) / 1e6 || 0, Math.round(Number(r.lng) * 1e6) / 1e6 || 0]),
           incidents: incidents.map((x) => ({ kind: x.kind, title: x.title, start: x.start, users: x.users || null })),
         });
         sent = sig;
@@ -103,8 +107,8 @@
   let data = null, rows = [], byPhone = new Map(), byUser = new Map();
   function load(d) {
     data = d || null;
-    rows = (d?.rows || []).map(([username, nama, phone, desa, kec, paket, router, isolir, online, expirasi, address, inactive]) => {
-      const r = { username, nama, phone, desa, kec, paket, router, isolir: !!isolir, online: !!online, expirasi, address, inactive: !!inactive };
+    rows = (d?.rows || []).map(([username, nama, phone, desa, kec, paket, router, isolir, online, expirasi, address, inactive, lat, lng]) => {
+      const r = { username, nama, phone, desa, kec, paket, router, isolir: !!isolir, online: !!online, expirasi, address, inactive: !!inactive, lat: lat || 0, lng: lng || 0 };
       r._name = fold(nama); r._user = fold(username).replace(/ /g, "");
       r._hay = ` ${r._name} ${r._user} ${fold(desa)} ${fold(router)} `; r._sound = ` ${r._hay.trim().split(" ").map(sound).join(" ")} `;
       r._nsound = ` ${r._name.split(" ").map(sound).join(" ")} `;
@@ -416,6 +420,27 @@
     .erp-wa .team b { color: var(--strong); font-weight: 500; font-size: 13px; justify-self: start; }
     .erp-wa .team .s { grid-column: 2; color: var(--muted); font-size: 12px; }
     .erp-wa .alert .mini { color: #f6b3ab; text-decoration-color: rgba(246,179,171,.4); }
+    .erp-wa .nctl { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .erp-wa .seg { display: inline-flex; padding: 2px; border-radius: 8px; background: var(--raised); }
+    .erp-wa .seg button { border: 0; background: none; color: var(--muted); font-size: 12px; padding: 4px 10px; border-radius: 6px; cursor: pointer; transition: color .15s var(--ease), background-color .28s var(--ease-swap); }
+    .erp-wa .seg button[aria-pressed="true"] { background: var(--bg); color: var(--strong); box-shadow: inset 0 0 0 1px var(--edge); }
+    .erp-wa .nmap { position: relative; height: 230px; border-radius: 8px; overflow: hidden; background: #0d1012; box-shadow: inset 0 0 0 1px var(--line); isolation: isolate; }
+    .erp-wa .ntiles img { position: absolute; width: 256px; height: 256px; max-width: none; pointer-events: none; user-select: none; opacity: 0; transition: opacity .3s var(--ease-out);
+      filter: invert(1) hue-rotate(180deg) brightness(.78) contrast(.92) saturate(.35); }
+    .erp-wa .nmap.sat .ntiles img { filter: brightness(.8) saturate(.9); }
+    .erp-wa .ntiles img.in { opacity: 1; }
+    .erp-wa .nring { position: absolute; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(var(--bone-rgb), .28); pointer-events: none; }
+    .erp-wa .nring + .nring { box-shadow: inset 0 0 0 1px rgba(var(--bone-rgb), .4); }
+    .erp-wa .ndot { position: absolute; width: 10px; height: 10px; margin: -5px 0 0 -5px; padding: 0; border: 0; border-radius: 50%; cursor: pointer; background: var(--on);
+      box-shadow: 0 0 0 1.5px rgba(7,9,11,.85); animation: erp-wa-dot .35s var(--ease-out) var(--d, 0ms) backwards; transition: transform .15s var(--ease); }
+    .erp-wa .ndot:hover { transform: scale(1.5); z-index: 2; }
+    .erp-wa .ndot.off { background: #0d1012; box-shadow: inset 0 0 0 2px var(--strong), 0 0 0 1.5px rgba(7,9,11,.85); z-index: 1; }
+    .erp-wa .ndot.iso { background: var(--bad); }
+    .erp-wa .ndot.fresh::after { content: ""; position: absolute; inset: -4px; border-radius: 50%; box-shadow: 0 0 0 1px var(--strong); animation: erp-wa-ping 1.8s var(--ease-out) infinite; }
+    @keyframes erp-wa-dot { from { opacity: 0; transform: scale(.3); } }
+    @keyframes erp-wa-ping { from { opacity: .8; transform: scale(.6); } to { opacity: 0; transform: scale(1.8); } }
+    .erp-wa .nme { position: absolute; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%; background: var(--bone); box-shadow: 0 0 0 3px rgba(7,9,11,.85), 0 0 0 6px rgba(var(--bone-rgb), .25); z-index: 3; pointer-events: none; }
+    .erp-wa .nattr { position: absolute; right: 6px; bottom: 4px; font-size: 10px; color: rgba(255,255,255,.55); text-shadow: 0 1px 2px #000; z-index: 3; pointer-events: none; }
     .erp-wa .sect { display: grid; gap: 10px; padding: 16px; border-radius: 8px; background: var(--bg); box-shadow: var(--shadow-card); }
     .erp-wa .verdict { margin: 0; color: var(--strong); font-weight: 500; font-size: 14px; }
     .erp-wa .verdict.ok { color: var(--on); } .erp-wa .verdict.net, .erp-wa .verdict.cut, .erp-wa .verdict.iso { color: #f6b3ab; } .erp-wa .verdict.warn, .erp-wa .verdict.off { color: var(--amber); }
@@ -458,7 +483,7 @@
     @media (prefers-reduced-motion: reduce) {
       .erp-wa, .erp-wa .arrive > *, .erp-wa .sect.arrive, .erp-wa-tab { animation: erp-wa-quick .15s linear backwards; }
       .erp-wa.out { animation: erp-wa-quick .1s linear reverse forwards; }
-      .erp-wa .pill.swipe, .erp-wa .btn.armed::after, .erp-wa .ld::after, .erp-wa .cur, .erp-wa .pulse { animation: none; }
+      .erp-wa .pill.swipe, .erp-wa .btn.armed::after, .erp-wa .ld::after, .erp-wa .cur, .erp-wa .pulse, .erp-wa .ndot, .erp-wa .ndot.fresh::after { animation: none; }
       .erp-wa .btn:active { transform: none; }
       .erp-wa input[type=checkbox].just:checked, .erp-wa input[type=checkbox].just:checked::after { animation: none; }
     }`;
@@ -606,7 +631,7 @@
     else bill.append(el("b", null, "Bills not loaded"), el("span", null, "Open Finance → Invoices in the ERP once to bring this month's"));
     if (data.monthsLoaded) bill.title = `From the ${data.monthsLoaded} invoice month${data.monthsLoaded > 1 ? "s" : ""} the Dock has loaded, ${ago(data.billsAt)}`;
     card.append(bill);
-    card.append(...actionsFor(r), ...extrasFor(r));
+    card.append(...actionsFor(r), ...extrasFor(r), ...nearFor(r));
     const dl = el("dl");
     const fact = (k, v, mono) => { if (!v) return; dl.append(el("dt", null, k), copyable(el("dd", mono ? "mono" : null, v), v)); };
     fact("Username", r.username, true); fact("Plan", r.paket); fact("Area", [titleCase(r.desa), titleCase(r.kec)].filter(Boolean).join(", ")); fact("Router", r.router);
@@ -722,6 +747,87 @@
     })));
     out.push(m);
     return out;
+  }
+
+  // ---------- Nearby: the customers around them on a map ----------
+  // As the ERP Dock's Nearby: everyone within 100 m, 300 m or 1 km, online green, offline hollow, isolir red, this
+  // customer in the middle with rings at half and full distance. Who is online comes from the ERP tab's live sessions
+  // (read when the card opens), and "down since" from its drop log. The map tiles are fetched by Tampermonkey (WhatsApp's
+  // page may not load map images itself) and kept for the session.
+  const BASEMAP = "wa.basemap", RADII = [100, 300, 1000];
+  const metres = (a, b) => { const R = 6371000, t = Math.PI / 180, dLat = (b.lat - a.lat) * t, dLng = (b.lng - a.lng) * t;
+    const h = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * t) * Math.cos(b.lat * t) * Math.sin(dLng / 2) ** 2; return 2 * R * Math.asin(Math.sqrt(h)); };
+  const located = (r) => r.lat && r.lng && Math.abs(r.lat) <= 90 && Math.abs(r.lng) <= 180;
+  function around(r, radius) {
+    if (!located(r)) return null;
+    const c = { lat: r.lat, lng: r.lng }, dLat = radius / 111000, dLng = radius / (111000 * Math.cos(c.lat * Math.PI / 180)), list = [];
+    for (const x of rows) { if (x === r || !located(x) || Math.abs(x.lat - c.lat) > dLat || Math.abs(x.lng - c.lng) > dLng) continue;
+      const d = metres(c, x); if (d <= radius) list.push({ r: x, d }); }
+    return { c, list: list.sort((a, b) => a.d - b.d) };
+  }
+  const tiles = new Map();
+  function tile(url) {
+    if (tiles.has(url)) return tiles.get(url);
+    const p = new Promise((ok) => {
+      try { GM_xmlhttpRequest({ method: "GET", url, responseType: "blob", timeout: 15000, onerror: () => ok(""), ontimeout: () => ok(""),
+        onload: (res) => { if (res.status !== 200 || !res.response) return ok(""); const fr = new FileReader(); fr.onload = () => ok(String(fr.result)); fr.onerror = () => ok(""); fr.readAsDataURL(res.response); } }); }
+      catch { ok(""); }
+    });
+    if (tiles.size > 400) tiles.delete(tiles.keys().next().value);
+    tiles.set(url, p); return p;
+  }
+  const tileUrl = (sat, x, y, z) => (sat ? `https://mt${(x + y) % 4}.google.com/vt/lyrs=y&hl=id&x=${x}&y=${y}&z=${z}` : `https://tile.openstreetmap.org/${z}/${x}/${y}.png`);
+  function nearFor(r) {
+    const a = actFor(r), radius = a.nearR || 300, sat = GM_getValue(BASEMAP, "dark") === "sat";
+    const n = around(r, radius);
+    const box = sectEl(r, "near", "Nearby", `${radius}|${sat}|${phaseOf(a.near)}`);
+    if (!n) { box.append(el("p", "how", "No location saved for this customer.")); return [box]; }
+    // the live sessions for everyone within 1 km, read once per card
+    if (!a.near) setTimeout(() => { if (act === a && !a.near) { const all = around(r, 1000); run(r, "near", "live", { usernames: (all?.list || []).slice(0, 400).map((x) => x.r.username) }); } }, 0);
+    const lv = a.near?.data, on = lv ? new Set(lv.on.map((u) => fold(u).replace(/ /g, ""))) : null;
+    const kind = (x) => (x.isolir ? "iso" : on ? (on.has(x._user) ? "on" : "off") : x.online ? "on" : "off");
+    const downAt = (x) => lv?.down?.[x._user] || 0;
+    // distance and base map
+    const ctl = el("div", "nctl"), seg = el("div", "seg");
+    for (const m of RADII) { const b = el("button", null, m < 1000 ? `${m} m` : "1 km"); b.type = "button"; b.setAttribute("aria-pressed", String(m === radius)); b.onclick = () => { a.nearR = m; draw(); }; seg.append(b); }
+    const bm = el("button", "mini", sat ? "Street map" : "Satellite"); bm.type = "button"; bm.onclick = () => { GM_setValue(BASEMAP, sat ? "dark" : "sat"); draw(); };
+    ctl.append(seg, bm); box.append(ctl);
+    const offs = n.list.filter((x) => kind(x.r) === "off"), act2 = n.list.filter((x) => !x.r.isolir && !x.r.inactive);
+    box.append(el("p", offs.length && act2.length && offs.length / act2.length >= 0.5 ? "warn" : "how",
+      n.list.length ? `${offs.length} of ${act2.length} offline within ${radius < 1000 ? `${radius} m` : "1 km"}${lv ? "" : " (the ERP's last list; live sessions loading…)"}${offs.length && act2.length >= 3 && offs.length / act2.length >= 0.5 ? ": the area, not just this house" : ""}`
+        : `Nobody else within ${radius < 1000 ? `${radius} m` : "1 km"}.`));
+    // the map
+    const map = el("div", `nmap${sat ? " sat" : ""}`); map.setAttribute("role", "group"); map.setAttribute("aria-label", `Map of ${n.list.length} customers within ${radius} metres`);
+    box.append(map);
+    queueMicrotask(() => drawMap(map, r, n, radius, kind, downAt));
+    // offline ones first, nearest first
+    const listed = [...offs, ...n.list.filter((x) => kind(x.r) !== "off")].slice(0, 6), wrap = el("div", "list");
+    for (const x of listed) { const b = item(x.r, () => { current.pick = x.r; current.pickHow = `near ${r.nama || r.username}`; draw(); });
+      b.querySelector(".dot").className = `dot ${kind(x.r)}`; b.querySelector(".r").textContent = `${Math.round(x.d)} m`;
+      const t = downAt(x.r); if (kind(x.r) === "off" && t) b.querySelector(".s").textContent = `down since ${hhmm(t)} · ${b.querySelector(".s").textContent}`;
+      wrap.append(b); }
+    if (listed.length) box.append(wrap);
+    if (n.list.length > listed.length) box.append(el("p", "how", `and ${n.list.length - listed.length} more on the map`));
+    return [box];
+  }
+  function drawMap(map, r, n, radius, kind, downAt) {
+    const w = map.clientWidth, h = map.clientHeight; if (!w) return;
+    const mpp0 = 156543.03392 * Math.cos(n.c.lat * Math.PI / 180), z = Math.max(12, Math.min(19, Math.floor(Math.log2((mpp0 * Math.min(w, h) * 0.45) / radius))));
+    const size = 256 * 2 ** z, world = (p) => { const s = Math.sin(p.lat * Math.PI / 180); return [((p.lng + 180) / 360) * size, (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * size]; };
+    const [cx, cy] = world(n.c), left = cx - w / 2, top = cy - h / 2, mpp = mpp0 / 2 ** z, sat = map.classList.contains("sat");
+    const layer = el("div", "ntiles");
+    for (let tx = Math.floor(left / 256); tx * 256 < left + w; tx++) for (let ty = Math.floor(top / 256); ty * 256 < top + h; ty++) {
+      const img = el("img"); img.alt = ""; img.draggable = false; img.style.left = `${tx * 256 - left}px`; img.style.top = `${ty * 256 - top}px`;
+      tile(tileUrl(sat, tx, ty, z)).then((src) => { if (src) { img.src = src; img.classList.add("in"); } }); layer.append(img); }
+    const ring = (f) => { const d = el("span", "nring"), R = (radius * f) / mpp; d.style.cssText = `width:${2 * R}px;height:${2 * R}px;left:${w / 2 - R}px;top:${h / 2 - R}px`; return d; };
+    const dots = n.list.map((x) => { const [px, py] = world(x.r), k = kind(x.r), t = downAt(x.r);
+      const b = el("button", `ndot ${k}${k === "off" && t && Date.now() - t < 3600000 ? " fresh" : ""}`); b.type = "button"; b.tabIndex = -1;
+      b.style.left = `${px - left}px`; b.style.top = `${py - top}px`; b.style.setProperty("--d", `${Math.round(Math.min(1, x.d / radius) * 300)}ms`);
+      b.title = `${x.r.nama || x.r.username} · ${Math.round(x.d)} m · ${k === "on" ? "online" : k === "iso" ? "isolir" : t ? `down since ${hhmm(t)}` : "offline"}`;
+      b.onclick = () => { current.pick = x.r; current.pickHow = `near ${r.nama || r.username}`; draw(); }; return b; });
+    const me = el("span", "nme"); me.style.left = `${w / 2}px`; me.style.top = `${h / 2}px`; me.title = r.nama || r.username;
+    const attr = el("span", "nattr", sat ? "Google" : "© OpenStreetMap");
+    map.replaceChildren(layer, ring(0.5), ring(1), ...dots, me, attr);
   }
 
   // ---------- Check, Pay, 1× link ----------

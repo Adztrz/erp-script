@@ -510,6 +510,13 @@
           routers: (radar?.alerts || []).map((x) => ({ ip: x.ip, name: x.name, level: x.level, since: x.since, gap: x.gap, open: x.open, usual: x.usual })),
           pons: incOpen().filter((x) => x.kind === "pon").map((x) => ({ id: x.id, title: x.title, start: x.start, affected: x.affected, users: x.users.length, size: x.size || 0 })) };
       }
+      if (op === "live") { // who of these is online now (RADIUS sessions under a minute old), and since when the others are down
+        if (!live || Date.now() - live.at > 60000) { live = null; await liveSessions(); }
+        drops = (await idbGet("drops")) || drops;
+        const us = (a.usernames || []).slice(0, 500).map(lower), down = {};
+        for (const x of us) { const g = drops?.off?.[x]; if (g && !live.by.has(x)) down[x] = g.from; }
+        return { at: live.at, on: us.filter((x) => live.by.has(x)), down };
+      }
       if (op === "outage") { // one outage's report for the technicians and the notice for customers, from who is offline now
         await data(); if (!customers) throw new Error("The ERP tab has no customer list yet");
         if (!techMap) await techIndex().catch(() => {});
