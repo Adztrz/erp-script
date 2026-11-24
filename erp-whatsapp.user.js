@@ -2,7 +2,7 @@
 // @name         ERP — Dock in WhatsApp Web
 // @namespace    adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/erp-script/main/icons/dock.png
-// @version      1.6.0
+// @version      1.6.1
 // @description  The Dock's customer card beside the open chat in WhatsApp Web: who is writing (found by their number, a username they sent, or their name), online or not, plan, area, unpaid months and any outage on their router, with replies that fill in their name, username and bill; Check connection, Pay and the 1× login link are done by the Dock in your open ERP tab. A reply goes into the message box; you send it yourself. The customer list comes from the ERP tab, through Tampermonkey's storage: nothing is fetched from WhatsApp, and nothing leaves this browser.
 // @match        https://*/*
 // @run-at       document-idle
@@ -623,6 +623,13 @@
     if (live) { pill.title = "As the ERP's sessions said at the last Check"; if (shown.check !== live) { shown.check = live; pill.classList.add("swipe"); } }
     top.append(copyable(el("h3", null, r.nama || r.username), r.nama || r.username), (() => { const w = el("div", "row"); w.style.alignItems = "center"; w.append(pill, el("span", "how", how === "picked" ? "picked by you" : /in this group/.test(how) ? how : `found by ${how}`)); return w; })());
     card.append(top);
+    // the customer's details come first, under the name
+    const dl = el("dl");
+    const fact = (k, v, mono) => { if (!v) return; dl.append(el("dt", null, k), copyable(el("dd", mono ? "mono" : null, v), v)); };
+    fact("Username", r.username, true); fact("Plan", r.paket); fact("Area", [titleCase(r.desa), titleCase(r.kec)].filter(Boolean).join(", ")); fact("Router", r.router);
+    fact("Phone", r.phone, true); fact("Address", r.address);
+    fact("Expires", r.expirasi && !isNaN(new Date(r.expirasi)) ? new Date(r.expirasi).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" }) : r.expirasi);
+    card.append(dl);
     const out = outageOf(r);
     if (out) { const al = el("div", "alert"); al.append(`${out.level === "nofeed" ? "No session data from" : "Outage on"} ${out.title}${out.start ? `, since ${hhmm(out.start)}` : ""}. `);
       const sel = outs.data?.routers.find((x) => x.ip === out.key) ? `r:${out.key}` : outs.data?.pons.find((x) => x.id === out.key) ? `p:${out.key}` : "";
@@ -635,12 +642,6 @@
     if (data.monthsLoaded) bill.title = `From the ${data.monthsLoaded} invoice month${data.monthsLoaded > 1 ? "s" : ""} the Dock has loaded, ${ago(data.billsAt)}`;
     card.append(bill);
     card.append(...actionsFor(r), ...trafficFor(r), ...extrasFor(r), ...nearFor(r));
-    const dl = el("dl");
-    const fact = (k, v, mono) => { if (!v) return; dl.append(el("dt", null, k), copyable(el("dd", mono ? "mono" : null, v), v)); };
-    fact("Username", r.username, true); fact("Plan", r.paket); fact("Area", [titleCase(r.desa), titleCase(r.kec)].filter(Boolean).join(", ")); fact("Router", r.router);
-    fact("Phone", r.phone, true); fact("Address", r.address);
-    fact("Expires", r.expirasi && !isNaN(new Date(r.expirasi)) ? new Date(r.expirasi).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" }) : r.expirasi);
-    card.append(dl);
     const acts = el("div", "row");
     if (data.origin) { const a = el("a", "btn main", "Open in the Dock"), go = svgIcon("M7 17 17 7M9 7h8v8"); go.setAttribute("fill", "none"); go.setAttribute("stroke", "currentColor"); go.setAttribute("stroke-width", "1.8"); go.setAttribute("stroke-linecap", "round"); go.style.cssText = "width:14px;height:14px"; a.append(go); a.href = `${data.origin}/ldn-radius#dock=${encodeURIComponent(r.username)}`; a.target = "erp-dock"; a.rel = "noopener"; acts.append(a); }
     if (others || current.pick) { const o = el("button", "btn", others ? "Not them?" : current.who?.group ? "Back to the group" : "Back"); o.type = "button"; o.onclick = () => { current.pick = null; current.note = ""; if (others) current.who = { ...current.who, guess: true }; draw(); }; acts.append(o); }
