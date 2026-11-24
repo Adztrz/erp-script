@@ -36,7 +36,7 @@
     const capText = (mbps) => (mbps >= 1000 ? `${String(+(mbps / 1000).toFixed(1)).replace(".", ",")} Gbit/s` : `${mbps} Mbit/s`);
     const rateText = (bps) => (bps >= 1e9 ? `${(bps / 1e9).toFixed(1).replace(".", ",")} Gbit/s` : bits(bps));
     // the climb, as data: the hops from the customer's end up, each with the link to the next one up, and a verdict
-    function pathRead(r, map, lv, ontPid) {
+    function pathRead(r, map, lv, ontPid, reach = () => null) {
       const links = [...(map.peta.link || []), ...(map.peta.sambungan || [])].filter((l) => l.hulu === "a" || l.hulu === "b");
       const upOf = (l) => (l.hulu === "a" ? l.roA : l.roB), downOf = (l) => (l.hulu === "a" ? l.roB : l.roA);
       const nodes = map.peta.node || [], olt = new Map(map.olts.map((o) => [o.id, o])), sw = new Map(map.sws.map((s) => [s.id, s]));
@@ -93,9 +93,10 @@
       const pc = (x) => `${Math.round(x * 100)}%`, ln = (h, i) => `${h.name} → ${hops[i + 1]?.name || "upstream"}`;
       const downHop = hops.find((h) => h.bad), dead = hops.findIndex((h) => h.link?.dead), full = hops.findIndex((h) => h.link?.pct >= 0.9), busy = hops.findIndex((h) => h.link?.pct >= 0.75);
       const hot = hops.find((h) => h.cpu >= 85), worst = hops.reduce((m, h) => (h.link?.pct != null && h.link.pct > (m?.link.pct ?? -1) ? h : m), null);
-      const v = downHop ? ["net", `${downHop.kind} ${downHop.name} on their way up is ${downHop.note}: everyone behind it is cut off, not just this customer.`]
-        : dead >= 0 ? ["net", `The link ${ln(hops[dead], dead)} is down${hops[dead].link.since ? ` since ${hhmm(Date.parse(hops[dead].link.since))}` : ""}${hops[dead].link.port ? ` (${hops[dead].link.port})` : ""}: area-wide, not just this customer.`]
-        : full >= 0 ? ["warn", `The link ${ln(hops[full], full)} is full (${pc(hops[full].link.pct)} of ${capText(hops[full].link.cap || 0)}): everyone behind it is slow now, not just this customer.`]
+      const who = (h) => { const t = reachText(reach(h.id, h.name)); return t ? ` ${t[0].toUpperCase()}${t.slice(1)}.` : ""; };
+      const v = downHop ? ["net", `${downHop.kind} ${downHop.name} on their way up is ${downHop.note}: everyone behind it is cut off, not just this customer.${who(downHop)}`]
+        : dead >= 0 ? ["net", `The link ${ln(hops[dead], dead)} is down${hops[dead].link.since ? ` since ${hhmm(Date.parse(hops[dead].link.since))}` : ""}${hops[dead].link.port ? ` (${hops[dead].link.port})` : ""}: area-wide, not just this customer.${who(hops[dead])}`]
+        : full >= 0 ? ["warn", `The link ${ln(hops[full], full)} is full (${pc(hops[full].link.pct)} of ${capText(hops[full].link.cap || 0)}): everyone behind it is slow now, not just this customer.${who(hops[full])}`]
         : busy >= 0 ? ["warn", `The link ${ln(hops[busy], busy)} is busy (${pc(hops[busy].link.pct)}): it may slow down at peak times.`]
         : hot ? ["warn", `Router ${hot.name} is working hard (CPU ${hot.cpu}%).`]
         : ["ok", `The way up is clear${worst ? ` (busiest link ${pc(worst.link.pct)})` : ""}: if they're slow, it's their own line, their plan or their WiFi.`];
@@ -112,7 +113,11 @@
     async function pathFor(r) {
       await Promise.all([onts ? 0 : ontIndex().catch(() => {})]);
       const [map, lv] = await Promise.all([pathMapLoad(), pathLiveLoad()]);
-      return pathRead(r, map, lv, modemOf(r).ont?.pid);
+      // who is behind a point: an OLT's modems, else the routers below it on the radar's map
+      const topo = topology(), t = radar && topo.names.size ? { topo, at: topoState(topo, radar.list) } : null;
+      const reach = (id, nm) => { if (id.startsWith("olt:")) { const o = map.olts.find((x) => x.id === id); return o?.ontTotal ? { modems: o.ontTotal } : null; }
+        const k = topoKey(String(nm).replace(/[,>]/g, " ")); return t && t.topo.names.has(k) ? behindOf(t, k) : null; };
+      return pathRead(r, map, lv, modemOf(r).ont?.pid, reach);
     }
     function pathBox(r) {
       const box = el("div", "near hist path rise"); box.style.setProperty("--i", "2");

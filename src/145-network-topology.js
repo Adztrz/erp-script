@@ -56,6 +56,17 @@
       return { topo, at, faults: faults.sort((a, b) => b.lost - a.lost) };
     }
     const topoName = (topo, k) => topo.names.get(k) || k;
+    // the customers behind a point on the map: it and everything below it, each router's usual count (online on a normal
+    // day) and how many are online now; an outage there reaches about that many
+    function behindOf(t, k) {
+      const all = [], walk = (x) => { if (all.includes(x)) return; all.push(x); for (const c of t.topo.down.get(x) || []) walk(c); }; walk(k);
+      const rs = all.map((x) => t.at.get(x)).filter(Boolean);
+      return rs.length ? { usual: rs.reduce((n, x) => n + (x.usual ?? x.open ?? 0), 0), now: rs.reduce((n, x) => n + (x.open || 0), 0), routers: rs.length } : null;
+    }
+    function reachText(x) {
+      return !x ? "" : x.modems ? `${x.modems.toLocaleString("id-ID")} modems hang off it`
+        : x.usual ? `about ${x.usual.toLocaleString("id-ID")} customers are usually online behind it${x.now < x.usual * 0.9 ? `, ${x.now.toLocaleString("id-ID")} now` : ""}` : "";
+    }
     // one sentence per fault, for the radar and the copied report
     function faultText(t, f) {
       const n = (k) => topoName(t.topo, k), lv = (x) => (x ? { down: "down", nofeed: "no data", drop: "dropping" }[x.level] || "" : "");

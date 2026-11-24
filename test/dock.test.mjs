@@ -312,7 +312,7 @@ test("whatsapp: a group message's sender and the customer their saved name point
 
 test("way up: climbs from the OLT to the core, crosses a backwards link, names the first full link", () => {
   const topoKey = (s) => String(s || "").toUpperCase().replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim().replace(/^RO /, "");
-  const { pathRead } = load(dock, ["pathRead", "capText", "rateText"], { topoKey, hhmm: () => "10:00",
+  const { pathRead } = load(dock, ["pathRead", "capText", "rateText", "reachText"], { topoKey, hhmm: () => "10:00",
     bits: (bps) => (bps >= 1e6 ? `${(bps / 1e6).toFixed(bps >= 1e7 ? 0 : 1).replace(".", ",")} Mbit/s` : `${Math.round(bps / 1000)} kbit/s`) }, ["pathRead"]);
   const map = { peta: { node: [{ ro: "CONTOH", hidup: true, cpu: 10 }, { ro: "DIST", hidup: true, cpu: 20 }, { ro: "CORE", hidup: true, cpu: 5 }],
     link: [{ roA: "CORE", roB: "DIST", hulu: "a", status: "hidup", sumberRo: "CORE", sumberIf: "to-dist" },
@@ -330,6 +330,8 @@ test("way up: climbs from the OLT to the core, crosses a backwards link, names t
   lv.router.DIST = { ok: false };
   assert.match(pathRead({ router: "RO CONTOH NEW" }, map, lv, "A").v[1], /^Router DIST .* unreachable/);
   assert.equal(pathRead({ router: "RO CONTOH NEW" }, map, lv, null).hops[0].name, "CONTOH"); // no modem found: from their router
+  const reach = (id) => (id === "DIST" ? { usual: 1250, now: 40, routers: 3 } : null);
+  assert.match(pathRead({ router: "RO CONTOH NEW" }, map, lv, "A", reach).v[1], /unreachable: .*\. About 1\.250 customers are usually online behind it, 40 now\.$/);
 });
 
 test("radar topology from the router map: links point away from the core, even one the map draws backwards", () => {
@@ -354,4 +356,13 @@ test("answer: the first cause in the NOC's order, with a reply that names the cu
   assert.equal(triageRead(r, ok, { rate: { down: 2e4 }, plan: 10 }, clear).kind, "Slow · WiFi or devices");
   const wait = triageRead(r, ok, { rate: null, plan: 10 }, clear); assert.equal(wait.waiting, true);
   assert.equal(triageRead({ ...r, isolir: true }, ok, null, clear, { ok: true, jumlahTagihan: 2, totalTunggakan: 220000 }).tone, "iso");
+});
+
+test("affected customers: a point on the map and everything below it, usual and now", () => {
+  const { behindOf } = load(dock, ["behindOf"]);
+  const t = { topo: { down: new Map([["DIST", ["SW", "CONTOH"]], ["SW", ["CONTOH DUA", "CONTOH"]]]) },
+    at: new Map([["CONTOH", { usual: 300, open: 10 }], ["CONTOH DUA", { usual: 200, open: 0 }], ["DIST", { usual: 50, open: 50 }]]) };
+  assert.deepEqual(behindOf(t, "DIST"), { usual: 550, now: 60, routers: 3 }); // CONTOH counted once, though it hangs off both
+  assert.deepEqual(behindOf(t, "SW"), { usual: 500, now: 10, routers: 2 });
+  assert.equal(behindOf(t, "NOWHERE"), null);
 });

@@ -2,7 +2,7 @@
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/erp-script/main/icons/dock.png
-// @version      3.23.0
+// @version      3.24.0
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -1889,6 +1889,7 @@
       .erp-dock .tbar.full span { background: #e0b04f; }
       .erp-dock .tbar.busy span { background: #e0b252; }
       .erp-dock .path .tbar.full span { background: var(--red); }
+      .erp-dock .ralert .reach { display: block; margin-top: 4px; color: var(--paper); font-size: 12px; }
       .erp-dock .answer .verdict { display: grid; gap: 4px; } .erp-dock .answer .verdict b { font-weight: 600; font-size: 14px; }
       .erp-dock .answer .step { margin: 0 0 8px; color: var(--paper); font-size: 13px; }
       .erp-dock .answer .reply { margin: 0 0 8px; padding: 8px 10px; border-radius: 6px; border: 1px solid #2a2e30; color: var(--muted); font-size: 12.5px; line-height: 1.5; white-space: pre-wrap; }
@@ -2926,6 +2927,17 @@
       return { topo, at, faults: faults.sort((a, b) => b.lost - a.lost) };
     }
     const topoName = (topo, k) => topo.names.get(k) || k;
+    // the customers behind a point on the map: it and everything below it, each router's usual count (online on a normal
+    // day) and how many are online now; an outage there reaches about that many
+    function behindOf(t, k) {
+      const all = [], walk = (x) => { if (all.includes(x)) return; all.push(x); for (const c of t.topo.down.get(x) || []) walk(c); }; walk(k);
+      const rs = all.map((x) => t.at.get(x)).filter(Boolean);
+      return rs.length ? { usual: rs.reduce((n, x) => n + (x.usual ?? x.open ?? 0), 0), now: rs.reduce((n, x) => n + (x.open || 0), 0), routers: rs.length } : null;
+    }
+    function reachText(x) {
+      return !x ? "" : x.modems ? `${x.modems.toLocaleString("id-ID")} modems hang off it`
+        : x.usual ? `about ${x.usual.toLocaleString("id-ID")} customers are usually online behind it${x.now < x.usual * 0.9 ? `, ${x.now.toLocaleString("id-ID")} now` : ""}` : "";
+    }
     // one sentence per fault, for the radar and the copied report
     function faultText(t, f) {
       const n = (k) => topoName(t.topo, k), lv = (x) => (x ? { down: "down", nofeed: "no data", drop: "dropping" }[x.level] || "" : "");
@@ -3042,7 +3054,9 @@
       const tf = topoFaults(radar), covered = new Set();
       for (const f of tf?.faults || []) {
         const t = faultText(tf, f), b = el("button", `ralert item${[f.x, ...f.behind.map((k) => tf.at.get(k))].some((x) => x?.level === "down") ? "" : " drop"}`); b.type = "button";
-        b.append(el("b", null, t.head), el("span", null, t.body));
+        const reach = behindOf(tf, f.at);
+        b.append(el("b", null, `${t.head}${reach?.usual ? ` · ≈${reach.usual.toLocaleString("id-ID")} customers` : ""}`), el("span", null, t.body));
+        if (reach?.usual) b.append(el("span", "reach", `${reachText(reach)[0].toUpperCase()}${reachText(reach).slice(1)}.`));
         for (const k of f.behind) { const x = tf.at.get(k); if (x) covered.add(x.ip); }
         if (f.x && topoBad(f.x)) covered.add(f.x.ip);
         const crew = crewLine(crewOf(areaOf(f.x?.name || tf.at.get(f.heads[0])?.name || "")?.router)); if (crew) b.append(el("span", "crew", crew));
@@ -4360,7 +4374,7 @@
     const capText = (mbps) => (mbps >= 1000 ? `${String(+(mbps / 1000).toFixed(1)).replace(".", ",")} Gbit/s` : `${mbps} Mbit/s`);
     const rateText = (bps) => (bps >= 1e9 ? `${(bps / 1e9).toFixed(1).replace(".", ",")} Gbit/s` : bits(bps));
     // the climb, as data: the hops from the customer's end up, each with the link to the next one up, and a verdict
-    function pathRead(r, map, lv, ontPid) {
+    function pathRead(r, map, lv, ontPid, reach = () => null) {
       const links = [...(map.peta.link || []), ...(map.peta.sambungan || [])].filter((l) => l.hulu === "a" || l.hulu === "b");
       const upOf = (l) => (l.hulu === "a" ? l.roA : l.roB), downOf = (l) => (l.hulu === "a" ? l.roB : l.roA);
       const nodes = map.peta.node || [], olt = new Map(map.olts.map((o) => [o.id, o])), sw = new Map(map.sws.map((s) => [s.id, s]));
@@ -4417,9 +4431,10 @@
       const pc = (x) => `${Math.round(x * 100)}%`, ln = (h, i) => `${h.name} → ${hops[i + 1]?.name || "upstream"}`;
       const downHop = hops.find((h) => h.bad), dead = hops.findIndex((h) => h.link?.dead), full = hops.findIndex((h) => h.link?.pct >= 0.9), busy = hops.findIndex((h) => h.link?.pct >= 0.75);
       const hot = hops.find((h) => h.cpu >= 85), worst = hops.reduce((m, h) => (h.link?.pct != null && h.link.pct > (m?.link.pct ?? -1) ? h : m), null);
-      const v = downHop ? ["net", `${downHop.kind} ${downHop.name} on their way up is ${downHop.note}: everyone behind it is cut off, not just this customer.`]
-        : dead >= 0 ? ["net", `The link ${ln(hops[dead], dead)} is down${hops[dead].link.since ? ` since ${hhmm(Date.parse(hops[dead].link.since))}` : ""}${hops[dead].link.port ? ` (${hops[dead].link.port})` : ""}: area-wide, not just this customer.`]
-        : full >= 0 ? ["warn", `The link ${ln(hops[full], full)} is full (${pc(hops[full].link.pct)} of ${capText(hops[full].link.cap || 0)}): everyone behind it is slow now, not just this customer.`]
+      const who = (h) => { const t = reachText(reach(h.id, h.name)); return t ? ` ${t[0].toUpperCase()}${t.slice(1)}.` : ""; };
+      const v = downHop ? ["net", `${downHop.kind} ${downHop.name} on their way up is ${downHop.note}: everyone behind it is cut off, not just this customer.${who(downHop)}`]
+        : dead >= 0 ? ["net", `The link ${ln(hops[dead], dead)} is down${hops[dead].link.since ? ` since ${hhmm(Date.parse(hops[dead].link.since))}` : ""}${hops[dead].link.port ? ` (${hops[dead].link.port})` : ""}: area-wide, not just this customer.${who(hops[dead])}`]
+        : full >= 0 ? ["warn", `The link ${ln(hops[full], full)} is full (${pc(hops[full].link.pct)} of ${capText(hops[full].link.cap || 0)}): everyone behind it is slow now, not just this customer.${who(hops[full])}`]
         : busy >= 0 ? ["warn", `The link ${ln(hops[busy], busy)} is busy (${pc(hops[busy].link.pct)}): it may slow down at peak times.`]
         : hot ? ["warn", `Router ${hot.name} is working hard (CPU ${hot.cpu}%).`]
         : ["ok", `The way up is clear${worst ? ` (busiest link ${pc(worst.link.pct)})` : ""}: if they're slow, it's their own line, their plan or their WiFi.`];
@@ -4436,7 +4451,11 @@
     async function pathFor(r) {
       await Promise.all([onts ? 0 : ontIndex().catch(() => {})]);
       const [map, lv] = await Promise.all([pathMapLoad(), pathLiveLoad()]);
-      return pathRead(r, map, lv, modemOf(r).ont?.pid);
+      // who is behind a point: an OLT's modems, else the routers below it on the radar's map
+      const topo = topology(), t = radar && topo.names.size ? { topo, at: topoState(topo, radar.list) } : null;
+      const reach = (id, nm) => { if (id.startsWith("olt:")) { const o = map.olts.find((x) => x.id === id); return o?.ontTotal ? { modems: o.ontTotal } : null; }
+        const k = topoKey(String(nm).replace(/[,>]/g, " ")); return t && t.topo.names.has(k) ? behindOf(t, k) : null; };
+      return pathRead(r, map, lv, modemOf(r).ont?.pid, reach);
     }
     function pathBox(r) {
       const box = el("div", "near hist path rise"); box.style.setProperty("--i", "2");

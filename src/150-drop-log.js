@@ -64,7 +64,9 @@
       const tf = topoFaults(radar), covered = new Set();
       for (const f of tf?.faults || []) {
         const t = faultText(tf, f), b = el("button", `ralert item${[f.x, ...f.behind.map((k) => tf.at.get(k))].some((x) => x?.level === "down") ? "" : " drop"}`); b.type = "button";
-        b.append(el("b", null, t.head), el("span", null, t.body));
+        const reach = behindOf(tf, f.at);
+        b.append(el("b", null, `${t.head}${reach?.usual ? ` · ≈${reach.usual.toLocaleString("id-ID")} customers` : ""}`), el("span", null, t.body));
+        if (reach?.usual) b.append(el("span", "reach", `${reachText(reach)[0].toUpperCase()}${reachText(reach).slice(1)}.`));
         for (const k of f.behind) { const x = tf.at.get(k); if (x) covered.add(x.ip); }
         if (f.x && topoBad(f.x)) covered.add(f.x.ip);
         const crew = crewLine(crewOf(areaOf(f.x?.name || tf.at.get(f.heads[0])?.name || "")?.router)); if (crew) b.append(el("span", "crew", crew));
