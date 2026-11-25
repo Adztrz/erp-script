@@ -30,6 +30,9 @@
       }
       const hist = await idbGet("radar");
       radar = hist ? assess(hist) : null;
+      // the router map's view: a router it can't reach is down now (its sessions stay "open" in RADIUS for a while)
+      if (fetched || panel) await mapDownRead().then((list) => { if (list) ls.set(MAP_DOWN, { at: Date.now(), list }); }).catch(() => {});
+      const md = ls.get(MAP_DOWN); if (radar && md?.list && Date.now() - md.at < 6 * 60000) applyMapDown(radar, md.list);
       feedStuck.clear(); for (const x of radar?.list || []) if (x.level === "nofeed") feedStuck.set(roWord(x.name), x.since || hist.at);
       if (fetched) { linkSample().catch(() => {}); bwLoad(true).catch(() => {}); } // each link's load, for its peak hours
       if (fetched) pathMapLoad().then((m) => { const text = erpTopoText(m); if (text) { ls.set(TOPO_ERP, { text, at: Date.now() }); topoMemo = null; } }).catch(() => {}); // the ERP's router map, for the radar's topology

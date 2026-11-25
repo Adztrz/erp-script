@@ -69,6 +69,7 @@
         const t = faultText(tf, f), b = el("button", `ralert item${[f.x, ...f.behind.map((k) => tf.at.get(k))].some((x) => x?.level === "down") ? "" : " drop"}`); b.type = "button";
         const reach = behindOf(tf, f.at);
         b.append(el("b", null, `${t.head}${reach?.usual ? ` · ≈${reach.usual.toLocaleString("id-ID")} customers` : ""}`), el("span", null, t.body));
+        const md = f.x?.mapDown; if (md) b.append(el("span", "reach", `The NOC can't reach ${f.x.name}${md.since ? ` since ${hhmm(md.since)}` : ""}${md.up ? ` and ${md.up}` : ""}. RADIUS still shows its ${f.x.open} sessions open until they time out.`));
         if (reach?.usual) b.append(el("span", "reach", `${reachText(reach)[0].toUpperCase()}${reachText(reach).slice(1)}.`));
         for (const k of f.behind) { const x = tf.at.get(k); if (x) covered.add(x.ip); }
         if (f.x && topoBad(f.x)) covered.add(f.x.ip);
@@ -79,6 +80,7 @@
         if (covered.has(x.ip)) continue;
         const b = el("button", `ralert item${x.level === "down" ? "" : " drop"}`); b.type = "button";
         if (x.level === "nofeed") b.append(el("b", null, `${x.name}: no data since ${x.since ? hhmm(x.since) : "?"}`), el("span", null, `count frozen at ${x.open} (usually ${x.usual}): the ERP stopped hearing from this router, so whether its customers are online isn't known. Check the router, or its OLT's ONT list.`));
+        else if (x.mapDown) b.append(el("b", null, `${x.name}: down${x.mapDown.since ? ` since ${hhmm(x.mapDown.since)}` : ""}`), el("span", null, `The NOC can't reach it${x.mapDown.up ? ` and ${x.mapDown.up}` : ""}. RADIUS still shows ${x.open} sessions open: a router that's down can't report them ending, so they stay until they time out.`));
         else b.append(el("b", null, `${x.name}: ${x.level === "down" ? "down" : `${x.gap} fewer online`}`), el("span", null, x.healthy ? said(x) : `${said(x)} · its session feed has stopped`));
         const crew = crewLine(crewOf(areaOf(x.name)?.router)); if (crew) b.append(el("span", "crew", crew));
         b.onclick = () => { view.nas = x.ip; drawBody(); }; out.push(b);

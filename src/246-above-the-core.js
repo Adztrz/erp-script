@@ -54,3 +54,33 @@
       return (f.rinci?.ruas || []).filter((x) => x.kode && x.kode !== "ok").map((x) => ({ down: x.status !== "link-ok", head: `Fibre ${x.nama}: ${x.label}`, body: `${x.sebab}${x.link_downs ? ` Dropped ${x.link_downs}× since ${x.sejak}.` : ""}${step ? ` ${step}` : ""}` }));
     }
 
+    // ---- Routers the map can't reach: down now, not after RADIUS notices ----
+    // A router that dies can't send "session ended" records, so RADIUS keeps its sessions open and its feed looks
+    // healthy until they time out (15-20 minutes). The router map knows at once: the NOC stops reaching it, and the port
+    // on the other end of its uplink goes down. Such a router counts as down on the radar straight away.
+    const MAP_DOWN = "erpDock.mapDown";
+    async function mapDownRead() {
+      const [map, lv] = await Promise.all([pathMapLoad(), pathLiveLoad()]);
+      if (!lv.at) return null; // no live reading: say nothing rather than guess
+      const links = [...(map.peta.link || []), ...(map.peta.sambungan || [])], swName = (id) => map.sws.find((x) => x.id === id)?.nama || id, out = [];
+      for (const n of map.peta.node || []) {
+        const r = lv.router?.[n.ro]; if (r ? r.ok !== false : n.hidup !== false) continue;
+        let up = "";
+        for (const l of links) { const other = l.roA === n.ro ? [l.roB, l.ifB] : l.roB === n.ro ? [l.roA, l.ifA] : null; if (!other?.[1]) continue;
+          const p = lv.port?.[other[0]]?.[other[1]] || map.swLive?.[other[0]]?.[other[1]];
+          if (p && /down/i.test(p.oper || "")) { up = `its link's port on ${swName(other[0])} (${other[1]}) is down`; break; } }
+        out.push({ ro: n.ro, since: Date.parse(n.terakhirOk) || null, up });
+      }
+      return out;
+    }
+    // the radar's routers the map lists as unreachable become "down", with why, and join the alerts
+    function applyMapDown(rd, list) {
+      for (const d of list || []) {
+        const k = topoKey(d.ro), first = (x) => topoKey(x.name).split(" ")[0];
+        const same = rd.list.filter((x) => topoKey(x.name) === k || topoKey(x.name).startsWith(`${k} `)), word = rd.list.filter((x) => first(x) === k.split(" ")[0]);
+        const busy = (a) => [...a].sort((p, q) => (q.usual ?? q.open ?? 0) - (p.usual ?? p.open ?? 0))[0]; // of two with one name, the live one (an old one sits at 0)
+        const x = same.length ? busy(same) : word.length === 1 ? word[0] : null; if (!x) continue;
+        x.mapDown = d; if (x.level === "down") continue;
+        x.level = "down"; x.since = d.since || x.since; if (!rd.alerts.includes(x)) rd.alerts.push(x);
+      }
+    }

@@ -7,7 +7,7 @@
     function pathMapLoad() {
       if (pathMap && Date.now() - pathMap.at < 2 * 60000) return Promise.resolve(pathMap);
       return (pathMapLoading ||= Promise.all([api("/api/network/peta-router"), api("/api/network/peta-router/olt"), api("/api/network/peta-router/switch").catch(() => null)])
-        .then(([b, o, s]) => (pathMap = { at: Date.now(), peta: b.peta || {}, olts: o.olt || [], sws: s?.switch || [] }))
+        .then(([b, o, s]) => (pathMap = { at: Date.now(), peta: b.peta || {}, olts: o.olt || [], sws: s?.switch || [], swLive: s?.portLive || {} }))
         .finally(() => { pathMapLoading = null; }));
     }
     function pathLiveLoad() {

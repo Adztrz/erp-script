@@ -2,7 +2,7 @@
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/erp-script/main/icons/dock.png
-// @version      3.27.1
+// @version      3.27.2
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -2834,6 +2834,9 @@
       }
       const hist = await idbGet("radar");
       radar = hist ? assess(hist) : null;
+      // the router map's view: a router it can't reach is down now (its sessions stay "open" in RADIUS for a while)
+      if (fetched || panel) await mapDownRead().then((list) => { if (list) ls.set(MAP_DOWN, { at: Date.now(), list }); }).catch(() => {});
+      const md = ls.get(MAP_DOWN); if (radar && md?.list && Date.now() - md.at < 6 * 60000) applyMapDown(radar, md.list);
       feedStuck.clear(); for (const x of radar?.list || []) if (x.level === "nofeed") feedStuck.set(roWord(x.name), x.since || hist.at);
       if (fetched) { linkSample().catch(() => {}); bwLoad(true).catch(() => {}); } // each link's load, for its peak hours
       if (fetched) pathMapLoad().then((m) => { const text = erpTopoText(m); if (text) { ls.set(TOPO_ERP, { text, at: Date.now() }); topoMemo = null; } }).catch(() => {}); // the ERP's router map, for the radar's topology
@@ -3073,6 +3076,7 @@
         const t = faultText(tf, f), b = el("button", `ralert item${[f.x, ...f.behind.map((k) => tf.at.get(k))].some((x) => x?.level === "down") ? "" : " drop"}`); b.type = "button";
         const reach = behindOf(tf, f.at);
         b.append(el("b", null, `${t.head}${reach?.usual ? ` · ≈${reach.usual.toLocaleString("id-ID")} customers` : ""}`), el("span", null, t.body));
+        const md = f.x?.mapDown; if (md) b.append(el("span", "reach", `The NOC can't reach ${f.x.name}${md.since ? ` since ${hhmm(md.since)}` : ""}${md.up ? ` and ${md.up}` : ""}. RADIUS still shows its ${f.x.open} sessions open until they time out.`));
         if (reach?.usual) b.append(el("span", "reach", `${reachText(reach)[0].toUpperCase()}${reachText(reach).slice(1)}.`));
         for (const k of f.behind) { const x = tf.at.get(k); if (x) covered.add(x.ip); }
         if (f.x && topoBad(f.x)) covered.add(f.x.ip);
@@ -3083,6 +3087,7 @@
         if (covered.has(x.ip)) continue;
         const b = el("button", `ralert item${x.level === "down" ? "" : " drop"}`); b.type = "button";
         if (x.level === "nofeed") b.append(el("b", null, `${x.name}: no data since ${x.since ? hhmm(x.since) : "?"}`), el("span", null, `count frozen at ${x.open} (usually ${x.usual}): the ERP stopped hearing from this router, so whether its customers are online isn't known. Check the router, or its OLT's ONT list.`));
+        else if (x.mapDown) b.append(el("b", null, `${x.name}: down${x.mapDown.since ? ` since ${hhmm(x.mapDown.since)}` : ""}`), el("span", null, `The NOC can't reach it${x.mapDown.up ? ` and ${x.mapDown.up}` : ""}. RADIUS still shows ${x.open} sessions open: a router that's down can't report them ending, so they stay until they time out.`));
         else b.append(el("b", null, `${x.name}: ${x.level === "down" ? "down" : `${x.gap} fewer online`}`), el("span", null, x.healthy ? said(x) : `${said(x)} · its session feed has stopped`));
         const crew = crewLine(crewOf(areaOf(x.name)?.router)); if (crew) b.append(el("span", "crew", crew));
         b.onclick = () => { view.nas = x.ip; drawBody(); }; out.push(b);
@@ -4409,7 +4414,7 @@
     function pathMapLoad() {
       if (pathMap && Date.now() - pathMap.at < 2 * 60000) return Promise.resolve(pathMap);
       return (pathMapLoading ||= Promise.all([api("/api/network/peta-router"), api("/api/network/peta-router/olt"), api("/api/network/peta-router/switch").catch(() => null)])
-        .then(([b, o, s]) => (pathMap = { at: Date.now(), peta: b.peta || {}, olts: o.olt || [], sws: s?.switch || [] }))
+        .then(([b, o, s]) => (pathMap = { at: Date.now(), peta: b.peta || {}, olts: o.olt || [], sws: s?.switch || [], swLive: s?.portLive || {} }))
         .finally(() => { pathMapLoading = null; }));
     }
     function pathLiveLoad() {
@@ -4690,6 +4695,36 @@
       return (f.rinci?.ruas || []).filter((x) => x.kode && x.kode !== "ok").map((x) => ({ down: x.status !== "link-ok", head: `Fibre ${x.nama}: ${x.label}`, body: `${x.sebab}${x.link_downs ? ` Dropped ${x.link_downs}× since ${x.sejak}.` : ""}${step ? ` ${step}` : ""}` }));
     }
 
+    // ---- Routers the map can't reach: down now, not after RADIUS notices ----
+    // A router that dies can't send "session ended" records, so RADIUS keeps its sessions open and its feed looks
+    // healthy until they time out (15-20 minutes). The router map knows at once: the NOC stops reaching it, and the port
+    // on the other end of its uplink goes down. Such a router counts as down on the radar straight away.
+    const MAP_DOWN = "erpDock.mapDown";
+    async function mapDownRead() {
+      const [map, lv] = await Promise.all([pathMapLoad(), pathLiveLoad()]);
+      if (!lv.at) return null; // no live reading: say nothing rather than guess
+      const links = [...(map.peta.link || []), ...(map.peta.sambungan || [])], swName = (id) => map.sws.find((x) => x.id === id)?.nama || id, out = [];
+      for (const n of map.peta.node || []) {
+        const r = lv.router?.[n.ro]; if (r ? r.ok !== false : n.hidup !== false) continue;
+        let up = "";
+        for (const l of links) { const other = l.roA === n.ro ? [l.roB, l.ifB] : l.roB === n.ro ? [l.roA, l.ifA] : null; if (!other?.[1]) continue;
+          const p = lv.port?.[other[0]]?.[other[1]] || map.swLive?.[other[0]]?.[other[1]];
+          if (p && /down/i.test(p.oper || "")) { up = `its link's port on ${swName(other[0])} (${other[1]}) is down`; break; } }
+        out.push({ ro: n.ro, since: Date.parse(n.terakhirOk) || null, up });
+      }
+      return out;
+    }
+    // the radar's routers the map lists as unreachable become "down", with why, and join the alerts
+    function applyMapDown(rd, list) {
+      for (const d of list || []) {
+        const k = topoKey(d.ro), first = (x) => topoKey(x.name).split(" ")[0];
+        const same = rd.list.filter((x) => topoKey(x.name) === k || topoKey(x.name).startsWith(`${k} `)), word = rd.list.filter((x) => first(x) === k.split(" ")[0]);
+        const busy = (a) => [...a].sort((p, q) => (q.usual ?? q.open ?? 0) - (p.usual ?? p.open ?? 0))[0]; // of two with one name, the live one (an old one sits at 0)
+        const x = same.length ? busy(same) : word.length === 1 ? word[0] : null; if (!x) continue;
+        x.mapDown = d; if (x.level === "down") continue;
+        x.level = "down"; x.since = d.since || x.since; if (!rd.alerts.includes(x)) rd.alerts.push(x);
+      }
+    }
     // ---- Answer: one verdict for a complaint, and the reply to send ----
     // The card's three readings joined, in the order a NOC checks them. Offline: the way up (a router, switch or link
     // down is an area outage), then the PON port and the neighbours, then the signal (their cable), then the modem's

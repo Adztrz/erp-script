@@ -420,3 +420,12 @@ test("above the core: the POP's busy hours on its hop, the upstream at the top, 
   assert.equal(evening.kind, "Slow at peak hours"); assert.match(evening.cause, /POP link VID-700-POP-CONTOH/);
   assert.equal(morning.kind, "Line is fine"); assert.match(morning.cause, /Later: their POP link/);
 });
+
+test("a router the map can't reach is down on the radar at once, though RADIUS still counts its sessions", () => {
+  const topoKey = (s) => String(s || "").toUpperCase().replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim().replace(/^RO /, "");
+  const { applyMapDown } = load(dock, ["applyMapDown"], { topoKey });
+  const a = { name: "RO-CONTOH-E2E", open: 438, usual: 440, level: "ok" }, old = { name: "CONTOH", open: 0, usual: 0, level: "silent" }, b = { name: "RO LAIN", open: 300, usual: 300, level: "ok" };
+  const rd = { list: [a, old, b], alerts: [] };
+  applyMapDown(rd, [{ ro: "CONTOH", since: 1000, up: "its link's port on SW CONTOH (sfp3) is down" }]);
+  assert.equal(a.level, "down"); assert.equal(a.since, 1000); assert.deepEqual(rd.alerts, [a]); assert.equal(b.level, "ok"); assert.equal(old.level, "silent");
+});
