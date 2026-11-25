@@ -42,6 +42,9 @@
     }
     const capText = (mbps) => (mbps >= 1000 ? `${String(+(mbps / 1000).toFixed(1)).replace(".", ",")} Gbit/s` : `${mbps} Mbit/s`);
     const rateText = (bps) => (bps >= 1e9 ? `${(bps / 1e9).toFixed(1).replace(".", ",")} Gbit/s` : bits(bps));
+    // without their modem (no ONT matched) the climb starts at their router: the OLT, PON port, fibre signal and the
+    // neighbours on the port aren't looked at, and "clear" mustn't read as if they were
+    const HOUSE_UNCHECKED = "The way from their router to the house isn't checked: their modem wasn't found. Find it by serial in Modem / Search.";
     // the climb, as data: the hops from the customer's end up, each with the link to the next one up, and a verdict
     function pathRead(r, map, lv, ontPid, reach = () => null) {
       const links = [...(map.peta.link || []), ...(map.peta.sambungan || [])].filter((l) => l.hulu === "a" || l.hulu === "b");
@@ -107,23 +110,25 @@
       const downHop = hops.find((h) => h.bad), dead = hops.findIndex((h) => h.link?.dead), full = hops.findIndex((h) => h.link?.pct >= 0.9), busy = hops.findIndex((h) => h.link?.pct >= 0.75);
       const hot = hops.find((h) => h.cpu >= 85), worst = hops.reduce((m, h) => (h.link?.pct != null && h.link.pct > (m?.link.pct ?? -1) ? h : m), null);
       const who = (h) => { const t = reachText(reach(h.id, h.name)); return t ? ` ${t[0].toUpperCase()}${t.slice(1)}.` : ""; };
+      const house = start.startsWith("olt:"); // their OLT is the start: the PON side is on the way. Else only from the router up
       const v = downHop ? ["net", `${downHop.kind} ${downHop.name} on their way up is ${downHop.note}: everyone behind it is cut off, not just this customer.${who(downHop)}`]
         : dead >= 0 ? ["net", `The link ${ln(hops[dead], dead)} is down${hops[dead].link.since ? ` since ${hhmm(Date.parse(hops[dead].link.since))}` : ""}${hops[dead].link.port ? ` (${hops[dead].link.port})` : ""}: area-wide, not just this customer.${who(hops[dead])}`]
         : full >= 0 ? ["warn", `The link ${ln(hops[full], full)} is full (${pc(hops[full].link.pct)} of ${capText(hops[full].link.cap || 0)}): everyone behind it is slow now, not just this customer.${who(hops[full])}`]
         : busy >= 0 ? ["warn", `The link ${ln(hops[busy], busy)} is busy (${pc(hops[busy].link.pct)}): it may slow down at peak times.`]
         : hot ? ["warn", `Router ${hot.name} is working hard (CPU ${hot.cpu}%).`]
-        : ["ok", `The way up is clear${worst ? ` (busiest link ${pc(worst.link.pct)})` : ""}: if they're slow, it's their own line, their plan or their WiFi.`];
+        : house ? ["ok", `The way up is clear${worst ? ` (busiest link ${pc(worst.link.pct)})` : ""}: if they're slow, it's their own line, their plan or their WiFi.`]
+        : ["ok", `The way up from their router is clear${worst ? ` (busiest link ${pc(worst.link.pct)})` : ""}, but the part from the router to the house isn't checked.`];
       const notes = [];
       // a link up that carries a fraction of what comes up from below isn't the real way: the map is missing that uplink
       for (let i = 1; i < hops.length; i++) { const a = hops[i - 1].link, b = hops[i].link;
         if (a?.down > 50e6 && b?.down != null && !b.dead && b.down < a.down * 0.2) notes.push(`${hops[i].name}'s link up carries ${rateText(b.down)} while ${rateText(a.down)} comes up from below: its real uplink is probably missing from the ERP's map, so the way above it may not be right`); }
       if (backwards.length) notes.push(`The ERP's map marks ${backwards.join(", ")} the other way round; taken as the way up here`);
       if (!goal) notes.push(`The map has no link up from ${name(start)}`);
-      if (!start.startsWith("olt:")) notes.push("Their modem's OLT wasn't found, so the way starts at their router");
+      if (!house) notes.push(HOUSE_UNCHECKED);
       const show = hops.map((h) => ({ name: h.name, kind: h.kind, bad: h.bad, note: h.note, also: h.also || null,
         link: h.link ? { pct: h.link.pct, dead: h.link.dead, stale: h.link.stale, unknown: !!h.link.unknown, since: h.link.since || null, vlan: !!h.link.vlan,
           text: linkText(h.link), down: h.link.down, cap: h.link.cap, port: h.link.port, key: h.link.key || null } : null }));
-      return { hops: show, v, notes };
+      return { hops: show, v, notes, house };
     }
     async function pathFor(r) {
       await Promise.all([onts ? 0 : ontIndex().catch(() => {})]);

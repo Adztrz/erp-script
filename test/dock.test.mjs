@@ -312,7 +312,7 @@ test("whatsapp: a group message's sender and the customer their saved name point
 
 test("way up: climbs from the OLT to the core, crosses a backwards link, names the first full link", () => {
   const topoKey = (s) => String(s || "").toUpperCase().replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim().replace(/^RO /, "");
-  const { pathRead } = load(dock, ["pathRead", "capText", "rateText", "reachText", "linkText"], { topoKey, hhmm: () => "10:00",
+  const { pathRead } = load(dock, ["pathRead", "capText", "rateText", "reachText", "linkText", "HOUSE_UNCHECKED"], { topoKey, hhmm: () => "10:00",
     bits: (bps) => (bps >= 1e6 ? `${(bps / 1e6).toFixed(bps >= 1e7 ? 0 : 1).replace(".", ",")} Mbit/s` : `${Math.round(bps / 1000)} kbit/s`) }, ["pathRead"]);
   const map = { peta: { node: [{ ro: "CONTOH", hidup: true, cpu: 10 }, { ro: "DIST", hidup: true, cpu: 20 }, { ro: "CORE", hidup: true, cpu: 5 }],
     link: [{ roA: "CORE", roB: "DIST", hulu: "a", status: "hidup", sumberRo: "CORE", sumberIf: "to-dist" },
@@ -337,6 +337,13 @@ test("way up: climbs from the OLT to the core, crosses a backwards link, names t
   lv.router.DIST = { ok: false };
   assert.match(pathRead({ router: "RO CONTOH NEW" }, map, lv, "A").v[1], /^Router DIST .* unreachable/);
   assert.equal(pathRead({ router: "RO CONTOH NEW" }, map, lv, null).hops[0].name, "CONTOH"); // no modem found: from their router
+  lv.router.DIST = { ok: true }; lv.port.DIST["to-sw"].outBps = 1e8;
+  const seen = pathRead({ router: "RO CONTOH NEW" }, map, lv, "A"), blind = pathRead({ router: "RO CONTOH NEW" }, map, lv, null);
+  assert.equal(seen.house, true); assert.match(seen.v[1], /^The way up is clear/); assert.doesNotMatch(seen.notes.join(), /isn't checked/);
+  // without their modem "clear" says it's only from the router up, and the note says how to find the modem
+  assert.equal(blind.house, false); assert.match(blind.v[1], /^The way up from their router is clear .*to the house isn't checked\.$/);
+  assert.ok(blind.notes.includes("The way from their router to the house isn't checked: their modem wasn't found. Find it by serial in Modem / Search."));
+  lv.router.DIST = { ok: false }; lv.port.DIST["to-sw"].outBps = 9.5e8;
   const reach = (id) => (id === "DIST" ? { usual: 1250, now: 40, routers: 3 } : null);
   assert.match(pathRead({ router: "RO CONTOH NEW" }, map, lv, "A", reach).v[1], /unreachable: .*\. About 1\.250 customers are usually online behind it, 40 now\.$/);
 });
@@ -352,7 +359,7 @@ test("radar topology from the router map: links point away from the core, even o
 
 test("answer: the first cause in the NOC's order, with a reply that names the customer and village", () => {
   const titleCase = (x) => String(x).toLowerCase().replace(/(^|[\s(])[^\s(]/g, (c) => c.toUpperCase());
-  const { triageRead } = load(dock, ["triageRead"], { titleCase, bits: (b) => `${b / 1e6} Mbit/s` }, ["triageRead"]);
+  const { triageRead } = load(dock, ["triageRead", "capOf"], { titleCase, bits: (b) => `${b / 1e6} Mbit/s` }, ["triageRead"]);
   const r = { username: "budi0101", nama: "BUDI CONTOH SANTOSO", desa: "CONTOH", isolir: false };
   const ok = { online: true, v: ["ok", "Online and steady"] }, clear = { v: ["ok", "The way up is clear"] };
   const down = triageRead(r, { online: false, v: ["off", "Only this customer"] }, null, { v: ["net", "The link X → Y is down since 10:00"] });
@@ -365,6 +372,34 @@ test("answer: the first cause in the NOC's order, with a reply that names the cu
   assert.equal(triageRead({ ...r, isolir: true }, ok, null, clear, { ok: true, jumlahTagihan: 2, totalTunggakan: 220000 }).tone, "iso");
   const peak = triageRead(r, ok, { rate: { down: 3e6 }, plan: 10 }, { v: ["ok", "clear"], peaks: [{ name: "CONTOH → DIST", span: "19–22", full: 5, of: 7 }] });
   assert.equal(peak.kind, "Slow at peak hours"); assert.match(peak.reply, /padat pada jam 19–22/);
+  // their modem wasn't found: "fine" says the router → house part isn't checked, and the step says how to find the modem
+  const blind = { v: ["ok", "The way up from their router is clear"], house: false };
+  const fine = triageRead(r, ok, { rate: { down: 3e6 }, plan: 10 }, blind);
+  assert.equal(fine.kind, "Line is fine"); assert.match(fine.cause, /way up from their router clear.*The way from their router to the house isn't checked: their modem wasn't found\.$/);
+  assert.match(fine.step, /^Find their modem by serial in Modem \/ Search/);
+  assert.match(triageRead(r, ok, { rate: null, plan: 10 }, blind).cause, /isn't checked/);
+  assert.doesNotMatch(triageRead(r, ok, { rate: { down: 3e6 }, plan: 10 }, { ...clear, house: true }).cause, /isn't checked/);
+});
+
+test("answer: a RADIUS speed cap under the plan, or the isolir profile on a paid customer, comes before \"fine\"", () => {
+  const titleCase = (x) => String(x).toLowerCase().replace(/(^|[\s(])[^\s(]/g, (c) => c.toUpperCase());
+  const { triageRead, capOf } = load(dock, ["triageRead", "capOf"], { titleCase, bits: (b) => `${b / 1e6} Mbit/s` }, ["triageRead", "capOf"]);
+  assert.deepEqual(capOf({ rateLimit: "10/10" }), { up: 10, down: 10 });
+  assert.deepEqual(capOf({ rateLimit: "512k/2M" }), { up: 0.512, down: 2 });
+  assert.deepEqual(capOf({ rateLimit: "1G/1G 2G/2G" }), { up: 1000, down: 1000 });
+  assert.equal(capOf({ rateLimit: null }), null); assert.equal(capOf({}), null);
+  const r = { username: "budi0101", nama: "BUDI CONTOH", desa: "CONTOH", isolir: false, groupname: "PAKET_10_MBPS_CONTOH" };
+  const ok = { online: true, v: ["ok", "Online and steady"] }, clear = { v: ["ok", "The way up is clear"], house: true }, t = { rate: { down: 4.8e6 }, plan: 35 };
+  const low = triageRead({ ...r, rateLimit: "10/10" }, ok, t, clear);
+  assert.equal(low.kind, "Slow · speed cap below the plan"); assert.match(low.cause, /caps the session at 10 Mbps down \(profile PAKET_10_MBPS_CONTOH\), but the plan is 35 Mbps/);
+  assert.equal(low.step, "Fix the PPPoE profile / rate-limit in RADIUS, then reconnect the session."); assert.match(low.reply, /dibatasi 10 Mbps, belum sesuai paket 35 Mbps/);
+  assert.equal(triageRead({ ...r, rateLimit: "35/35" }, ok, t, clear).kind, "Line is fine"); // as the plan
+  assert.equal(triageRead({ ...r, rateLimit: "200/200" }, ok, t, clear).kind, "Line is fine"); // above it is fine
+  assert.equal(triageRead(r, ok, t, clear).kind, "Line is fine"); // no cap readable: nothing said
+  assert.equal(triageRead({ ...r, rateLimit: "32/32" }, ok, t, clear).kind, "Line is fine"); // a little under: not "well below"
+  const iso = triageRead({ ...r, groupname: "CONTOH-ISOLIR", rateLimit: null }, ok, t, clear);
+  assert.equal(iso.kind, "Slow · on the isolir profile"); assert.match(iso.cause, /CONTOH-ISOLIR profile instead of the 35 Mbps plan/);
+  assert.equal(triageRead({ ...r, rateLimit: "10/10" }, { online: false, v: ["off", "Only this customer"] }, t, clear).kind, "Down · their modem"); // offline: the cap waits
 });
 
 test("affected customers: a point on the map and everything below it, usual and now", () => {
@@ -413,7 +448,7 @@ test("above the core: the POP's busy hours on its hop, the upstream at the top, 
   assert.deepEqual(upstreamRows(b).map((x) => x.name), ["Metro Contoh 5G", "VID-700-POP-CONTOH"]);
   assert.match(fibreAlerts(b)[0].body, /Dropped 64× .* Bersihkan konektor\.$/);
   const titleCase = (x) => String(x).toLowerCase().replace(/(^|[\s(])[^\s(]/g, (c) => c.toUpperCase());
-  const { triageRead } = load(dock, ["triageRead"], { titleCase, bits: (x) => `${x / 1e6} Mbit/s` }, ["triageRead"]);
+  const { triageRead } = load(dock, ["triageRead", "capOf"], { titleCase, bits: (x) => `${x / 1e6} Mbit/s` }, ["triageRead"]);
   const r = { username: "budi0101", nama: "BUDI CONTOH", desa: "CONTOH" }, ok = { online: true, v: ["ok", "Online and steady"] }, t = { rate: { down: 3e6 }, plan: 10 };
   p.v = ["ok", "clear"];
   const evening = triageRead(r, ok, t, p, null, new Date(2026, 10, 24, 19, 30).getTime()), morning = triageRead(r, ok, t, p, null, new Date(2026, 10, 24, 10, 0).getTime());

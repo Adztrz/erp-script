@@ -2,7 +2,7 @@
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/erp-script/main/icons/dock.png
-// @version      3.27.2
+// @version      3.28.0
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -1665,7 +1665,7 @@
       url: (key, p, size) => `/api/admin/ldn-radius/customers?page=${p}&pageSize=${size}`,
       total: (j) => j.total || 0, items: (j) => j.customers || [],
       keep: ["username", "nama", "phone", "address", "desa", "kecamatanErp", "district", "router", "paket", "isolir", "online", "expirasi", "isInactive",
-        "lat", "lng", "ip", "tglAktif", "ontSerial", "mitra", "customerDocId"], // the Dock shows these, and finds neighbours by lat/lng
+        "lat", "lng", "ip", "tglAktif", "ontSerial", "mitra", "customerDocId", "groupname", "rateLimit"], // the Dock shows these, finds neighbours by lat/lng, checks the speed cap
       name: (r) => r.nama, id: (r) => r.username, pick: (r) => r.username,
       hay: (r) => [r.username, r.address, r.desa, r.kecamatanErp, r.district, r.router, r.paket], numbers: (r) => [r.phone],
       dot: (r) => (r.isolir ? "iso" : stuckSince(r) ? "unk" : r.online ? "on" : "off"), sub: (r) => [r.paket, r.desa, r.router, r.phone],
@@ -4449,6 +4449,9 @@
     }
     const capText = (mbps) => (mbps >= 1000 ? `${String(+(mbps / 1000).toFixed(1)).replace(".", ",")} Gbit/s` : `${mbps} Mbit/s`);
     const rateText = (bps) => (bps >= 1e9 ? `${(bps / 1e9).toFixed(1).replace(".", ",")} Gbit/s` : bits(bps));
+    // without their modem (no ONT matched) the climb starts at their router: the OLT, PON port, fibre signal and the
+    // neighbours on the port aren't looked at, and "clear" mustn't read as if they were
+    const HOUSE_UNCHECKED = "The way from their router to the house isn't checked: their modem wasn't found. Find it by serial in Modem / Search.";
     // the climb, as data: the hops from the customer's end up, each with the link to the next one up, and a verdict
     function pathRead(r, map, lv, ontPid, reach = () => null) {
       const links = [...(map.peta.link || []), ...(map.peta.sambungan || [])].filter((l) => l.hulu === "a" || l.hulu === "b");
@@ -4514,23 +4517,25 @@
       const downHop = hops.find((h) => h.bad), dead = hops.findIndex((h) => h.link?.dead), full = hops.findIndex((h) => h.link?.pct >= 0.9), busy = hops.findIndex((h) => h.link?.pct >= 0.75);
       const hot = hops.find((h) => h.cpu >= 85), worst = hops.reduce((m, h) => (h.link?.pct != null && h.link.pct > (m?.link.pct ?? -1) ? h : m), null);
       const who = (h) => { const t = reachText(reach(h.id, h.name)); return t ? ` ${t[0].toUpperCase()}${t.slice(1)}.` : ""; };
+      const house = start.startsWith("olt:"); // their OLT is the start: the PON side is on the way. Else only from the router up
       const v = downHop ? ["net", `${downHop.kind} ${downHop.name} on their way up is ${downHop.note}: everyone behind it is cut off, not just this customer.${who(downHop)}`]
         : dead >= 0 ? ["net", `The link ${ln(hops[dead], dead)} is down${hops[dead].link.since ? ` since ${hhmm(Date.parse(hops[dead].link.since))}` : ""}${hops[dead].link.port ? ` (${hops[dead].link.port})` : ""}: area-wide, not just this customer.${who(hops[dead])}`]
         : full >= 0 ? ["warn", `The link ${ln(hops[full], full)} is full (${pc(hops[full].link.pct)} of ${capText(hops[full].link.cap || 0)}): everyone behind it is slow now, not just this customer.${who(hops[full])}`]
         : busy >= 0 ? ["warn", `The link ${ln(hops[busy], busy)} is busy (${pc(hops[busy].link.pct)}): it may slow down at peak times.`]
         : hot ? ["warn", `Router ${hot.name} is working hard (CPU ${hot.cpu}%).`]
-        : ["ok", `The way up is clear${worst ? ` (busiest link ${pc(worst.link.pct)})` : ""}: if they're slow, it's their own line, their plan or their WiFi.`];
+        : house ? ["ok", `The way up is clear${worst ? ` (busiest link ${pc(worst.link.pct)})` : ""}: if they're slow, it's their own line, their plan or their WiFi.`]
+        : ["ok", `The way up from their router is clear${worst ? ` (busiest link ${pc(worst.link.pct)})` : ""}, but the part from the router to the house isn't checked.`];
       const notes = [];
       // a link up that carries a fraction of what comes up from below isn't the real way: the map is missing that uplink
       for (let i = 1; i < hops.length; i++) { const a = hops[i - 1].link, b = hops[i].link;
         if (a?.down > 50e6 && b?.down != null && !b.dead && b.down < a.down * 0.2) notes.push(`${hops[i].name}'s link up carries ${rateText(b.down)} while ${rateText(a.down)} comes up from below: its real uplink is probably missing from the ERP's map, so the way above it may not be right`); }
       if (backwards.length) notes.push(`The ERP's map marks ${backwards.join(", ")} the other way round; taken as the way up here`);
       if (!goal) notes.push(`The map has no link up from ${name(start)}`);
-      if (!start.startsWith("olt:")) notes.push("Their modem's OLT wasn't found, so the way starts at their router");
+      if (!house) notes.push(HOUSE_UNCHECKED);
       const show = hops.map((h) => ({ name: h.name, kind: h.kind, bad: h.bad, note: h.note, also: h.also || null,
         link: h.link ? { pct: h.link.pct, dead: h.link.dead, stale: h.link.stale, unknown: !!h.link.unknown, since: h.link.since || null, vlan: !!h.link.vlan,
           text: linkText(h.link), down: h.link.down, cap: h.link.cap, port: h.link.port, key: h.link.key || null } : null }));
-      return { hops: show, v, notes };
+      return { hops: show, v, notes, house };
     }
     async function pathFor(r) {
       await Promise.all([onts ? 0 : ontIndex().catch(() => {})]);
@@ -4728,9 +4733,16 @@
     // ---- Answer: one verdict for a complaint, and the reply to send ----
     // The card's three readings joined, in the order a NOC checks them. Offline: the way up (a router, switch or link
     // down is an area outage), then the PON port and the neighbours, then the signal (their cable), then the modem's
-    // power. Online: an uplink that's full (the area is busy), then their own line full (their use), then reconnects
+    // power. Online: an uplink that's full (the area is busy), then a RADIUS cap under the plan, then their own line full (their use), then reconnects
     // (power or connector), then hardly any traffic (WiFi or devices). Each answer has the next step and a reply in
     // Indonesian to send the customer.
+    // the session's speed cap: the RADIUS profile's rate limit as the ERP reads it ("up/down" in Mbps, 10/10; MikroTik's
+    // own 10M/10M or 512k/2M too), download second. The profile's real reply, not its name (a "100MBPS" one gives 200)
+    function capOf(r) {
+      const m = /^\s*([\d.,]+)\s*([kmg])?\s*\/\s*([\d.,]+)\s*([kmg])?/i.exec(String(r.rateLimit || "")); if (!m) return null;
+      const mb = (n, u) => Number(n.replace(",", ".")) * ({ k: 1e-3, g: 1e3 }[String(u || "m").toLowerCase()] ?? 1);
+      return { up: mb(m[1], m[2]), down: mb(m[3], m[4]) };
+    }
     function triageRead(r, f, t, p, due, now = Date.now()) {
       const kak = `Kak ${titleCase(String(r.nama || r.username).split(/\s+/).slice(0, 2).join(" "))}`, area = r.desa ? titleCase(r.desa.trim()) : "Anda";
       const say = (tone, kind, cause, step, reply, waiting = false) => ({ tone, kind, cause, step, reply, waiting });
@@ -4752,11 +4764,19 @@
       }
       if (pathFull) return say("warn", "Slow · the area is busy", p.v[1], "Not their line: tell them it's peak time in their area, and log the link for more capacity.",
         `Mohon maaf ${kak}, saat ini jalur jaringan di area ${area} sedang padat sehingga kecepatan bisa menurun di jam sibuk. Tim kami sedang menanganinya. Terima kasih atas pengertiannya.`);
+      // RADIUS gives the session less than the plan: the isolir profile while the ERP has them paid, or a cap well under
+      // the plan's speed. A wrong profile, not the network; nothing readable, nothing said
+      const cap = capOf(r), mbps = (x) => String(+x.toFixed(1)).replace(".", ",");
+      const FIX = "Fix the PPPoE profile / rate-limit in RADIUS, then reconnect the session.";
+      if (/isolir/i.test(r.groupname || "")) return say("warn", "Slow · on the isolir profile", `Not isolir in the ERP, but RADIUS gives the session the ${r.groupname} profile${cap ? ` (${mbps(cap.down)} Mbps)` : ""}${plan ? ` instead of the ${plan} Mbps plan` : ""}.`, FIX,
+        `Mohon maaf ${kak}, dari pengecekan kami pengaturan akun internet ${kak} belum sesuai paket. Kami perbaiki sekarang; setelah itu koneksi akan tersambung ulang sebentar. Terima kasih.`);
+      if (cap && plan && cap.down < plan * 0.8) return say("warn", "Slow · speed cap below the plan", `RADIUS caps the session at ${mbps(cap.down)} Mbps down${r.groupname ? ` (profile ${r.groupname})` : ""}, but the plan is ${plan} Mbps.`, FIX,
+        `Mohon maaf ${kak}, dari pengecekan kami kecepatan akun ${kak} masih dibatasi ${mbps(cap.down)} Mbps, belum sesuai paket ${plan} Mbps. Kami perbaiki sekarang; setelah itu koneksi akan tersambung ulang sebentar. Terima kasih.`);
       if (pct != null && pct >= 0.85) return say("warn", "Slow · their line is full", `Using ${Math.round(pct * 100)}% of the ${plan} Mbps plan right now: their own use fills it.`, "Fewer downloads or devices at once, or a bigger plan.",
         `${kak}, dari pantauan kami pemakaian internet ${kak} saat ini sedang penuh (sekitar ${bits(rate.down)} dari paket ${plan} Mbps), sehingga terasa lambat. Biasanya karena streaming, download, atau banyak perangkat sekaligus. Jika sering terjadi, ${kak} bisa upgrade paket.`);
       if (f.v[0] === "warn") return say("warn", "Unstable", f.v[1], "Check the modem's power first (loose socket, shared power strip), then the connector.",
         `${kak}, koneksi ${kak} terpantau sering putus-sambung. Mohon pastikan listrik modem stabil (colokan tidak longgar, tidak berbagi terminal dengan alat lain). Jika masih terjadi, kami jadwalkan teknisi untuk pengecekan.`);
-      if (rate && rate.down < 50000) return say("off", "Slow · WiFi or devices", "Online and the way up is clear, but almost no traffic reaches the modem.", "A modem restart; their device near the modem; 5 GHz WiFi if they have it.",
+      if (rate && rate.down < 50000) return say("off", "Slow · WiFi or devices", `Online and the way up${p?.house === false ? " from their router" : ""} is clear, but almost no traffic reaches the modem.${p?.house === false ? " The way from their router to the house isn't checked: their modem wasn't found." : ""}`, "A modem restart; their device near the modem; 5 GHz WiFi if they have it.",
         `${kak}, koneksi internet sampai ke modem ${kak} normal dari sisi kami. Mohon coba restart modem (cabut listrik 10 detik lalu nyalakan lagi) dan gunakan perangkat di dekat modem. Jika masih lambat, kabari kami ya.`);
       // a peak counts when it's the busy hour now (or the hour around it); otherwise it's a note on a clear line
       const hr = new Date(now).getHours(), inHour = (x) => !x.hrs?.length || x.hrs.some((h) => Math.abs(h - hr) <= 1 || Math.abs(h - hr) === 23);
@@ -4766,8 +4786,11 @@
         `${kak}, dari sisi kami koneksi ${kak} normal. Namun jalur jaringan ${pk.up ? "kami" : `di area ${area}`} memang sering padat pada jam ${pk.span} sehingga kecepatan bisa menurun di jam tersebut. Tim kami sedang menanganinya. Terima kasih atas pengertiannya.`);
       const also = later ? ` Later: ${later.say}.` : "";
       const CLEAR = `${kak}, dari sisi kami koneksi ${kak} normal dan jaringan di area ${area} lancar. Boleh dibantu kirim screenshot speedtest di dekat modem, dan perangkat mana yang terasa lambat?`;
-      if (!rate) return say("ok", "Online", `Online and steady${p && p.v[0] === "ok" ? ", the way up clear" : ""}; the traffic reading comes with the next 5-minute report.${also}`, "Ask for a speed test near the modem meanwhile.", CLEAR, true);
-      return say("ok", "Line is fine", `Online, steady, the way up clear${pct != null ? `, using ${Math.round(pct * 100)}% of the plan` : ""}.${also}`, "Most likely WiFi or one device: a speed test near the modem tells which.", CLEAR);
+      // their modem wasn't found: "fine" only covers the way from their router up, not the OLT, PON port or fibre signal
+      const blind = p?.house === false, open = blind ? " The way from their router to the house isn't checked: their modem wasn't found." : "";
+      const find = blind ? "Find their modem by serial in Modem / Search to check the fibre signal and PON port; " : "";
+      if (!rate) return say("ok", "Online", `Online and steady${p && p.v[0] === "ok" ? `, the way up${blind ? " from their router" : ""} clear` : ""}; the traffic reading comes with the next 5-minute report.${also}${open}`, `${find}${blind ? "a" : "A"}sk for a speed test near the modem meanwhile.`, CLEAR, true);
+      return say("ok", "Line is fine", `Online, steady, the way up${blind ? " from their router" : ""} clear${pct != null ? `, using ${Math.round(pct * 100)}% of the plan` : ""}.${also}${open}`, `${find}${blind ? "then" : "Most likely"} WiFi or one device: a speed test near the modem tells which.`, CLEAR);
     }
     async function triageLoad(r, fresh) {
       await Promise.all([onts ? 0 : ontIndex().catch(() => {}), acs ? 0 : acsIndex().catch(() => {})]);

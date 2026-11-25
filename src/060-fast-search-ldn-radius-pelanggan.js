@@ -468,7 +468,7 @@
       url: (key, p, size) => `/api/admin/ldn-radius/customers?page=${p}&pageSize=${size}`,
       total: (j) => j.total || 0, items: (j) => j.customers || [],
       keep: ["username", "nama", "phone", "address", "desa", "kecamatanErp", "district", "router", "paket", "isolir", "online", "expirasi", "isInactive",
-        "lat", "lng", "ip", "tglAktif", "ontSerial", "mitra", "customerDocId"], // the Dock shows these, and finds neighbours by lat/lng
+        "lat", "lng", "ip", "tglAktif", "ontSerial", "mitra", "customerDocId", "groupname", "rateLimit"], // the Dock shows these, finds neighbours by lat/lng, checks the speed cap
       name: (r) => r.nama, id: (r) => r.username, pick: (r) => r.username,
       hay: (r) => [r.username, r.address, r.desa, r.kecamatanErp, r.district, r.router, r.paket], numbers: (r) => [r.phone],
       dot: (r) => (r.isolir ? "iso" : stuckSince(r) ? "unk" : r.online ? "on" : "off"), sub: (r) => [r.paket, r.desa, r.router, r.phone],
