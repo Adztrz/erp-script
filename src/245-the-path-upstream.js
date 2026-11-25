@@ -58,14 +58,17 @@
       const name = (id) => olt.get(id)?.nama || sw.get(id)?.nama || id;
       const measure = (l, upper) => { // traffic toward the customer, now: the port the map reads is at one end of the link
         if (l.pseudo) return { down: null, cap: null, pct: null, dead: false, stale: false, port: "", unknown: true };
-        const p = lv.port?.[l.sumberRo]?.[l.sumberIf], atUp = l.sumberRo === upper, same = upper === upOf(l);
+        // the port the map reads; for a link whose reading went stale ("basi", no port named), either end's own port when
+        // the live feed has it (JATIGUNUNG's port toward a switch still reports while the link's reading is old)
+        const src = [[l.sumberRo, l.sumberIf], [l.roA, l.ifA], [l.roB, l.ifB]].find(([ro, f]) => ro && f && lv.port?.[ro]?.[f]) || [l.sumberRo, l.sumberIf];
+        const p = lv.port?.[src[0]]?.[src[1]], atUp = src[0] === upper, same = upper === upOf(l);
         // a VLAN reports its trunk's speed, not its own size (a 10G VLAN on 40G reads 118%), so it gets no %: the
         // Bandwidth page's POP sizes fill that in later
-        const vlan = !!(l.logis || l.jenis === "vlan" || /^(vid|vlan)/i.test(l.sumberIf || ""));
+        const vlan = !!(l.logis || l.jenis === "vlan" || /^(vid|vlan)/i.test(src[1] || ""));
         const down = p ? Number(atUp ? p.outBps : p.inBps) : l.status === "basi" ? NaN : Number(same ? l.keHilirBps : l.keHuluBps), cap = vlan ? null : Number(p?.kapMbps) || null;
         const pct = cap && Number.isFinite(down) ? down / (cap * 1e6) : !vlan && l.utilPct != null && !p && same && l.status !== "basi" ? l.utilPct / 100 : null;
         const dead = l.status === "port_mati" || /down/i.test(p?.oper || "");
-        return { key: `${l.roA}|${l.roB}`, vlan, down: Number.isFinite(down) ? down : null, cap, pct, dead, stale: l.status === "basi", since: l.portMati?.sejak || null, port: l.sumberRo ? `${name(l.sumberRo)} ${l.sumberIf || ""}`.trim() : "" };
+        return { key: `${l.roA}|${l.roB}`, vlan, down: Number.isFinite(down) ? down : null, cap, pct, dead, stale: l.status === "basi" && !p, since: l.portMati?.sejak || null, port: src[0] ? `${name(src[0])} ${src[1] || ""}`.trim() : "" };
       };
       const state = (id) => {
         if (id.startsWith("olt:")) { const o = olt.get(id), old = o?.diperbarui && Date.now() - Date.parse(o.diperbarui) > 86400000;
@@ -111,6 +114,9 @@
         : hot ? ["warn", `Router ${hot.name} is working hard (CPU ${hot.cpu}%).`]
         : ["ok", `The way up is clear${worst ? ` (busiest link ${pc(worst.link.pct)})` : ""}: if they're slow, it's their own line, their plan or their WiFi.`];
       const notes = [];
+      // a link up that carries a fraction of what comes up from below isn't the real way: the map is missing that uplink
+      for (let i = 1; i < hops.length; i++) { const a = hops[i - 1].link, b = hops[i].link;
+        if (a?.down > 50e6 && b?.down != null && !b.dead && b.down < a.down * 0.2) notes.push(`${hops[i].name}'s link up carries ${rateText(b.down)} while ${rateText(a.down)} comes up from below: its real uplink is probably missing from the ERP's map, so the way above it may not be right`); }
       if (backwards.length) notes.push(`The ERP's map marks ${backwards.join(", ")} the other way round; taken as the way up here`);
       if (!goal) notes.push(`The map has no link up from ${name(start)}`);
       if (!start.startsWith("olt:")) notes.push("Their modem's OLT wasn't found, so the way starts at their router");
@@ -151,7 +157,8 @@
       const hk = `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())} ${z(d.getHours())}`;
       const nm = (id) => map.olts.find((o) => o.id === id)?.nama || map.sws.find((x) => x.id === id)?.nama || id;
       for (const l of [...(map.peta.link || []), ...(map.peta.sambungan || [])]) {
-        const p = lv.port?.[l.sumberRo]?.[l.sumberIf], cap = Number(p?.kapMbps); if (!p || !cap) continue;
+        const at = [[l.sumberRo, l.sumberIf], [l.roA, l.ifA], [l.roB, l.ifB]].find(([ro, f]) => ro && f && lv.port?.[ro]?.[f]); if (!at || /^(vid|vlan)/i.test(at[1]) || l.logis || l.jenis === "vlan") continue; // a VLAN reads its trunk's speed
+        const p = lv.port[at[0]][at[1]], cap = Number(p?.kapMbps); if (!cap) continue;
         const pct = Math.round((Math.max(Number(p.inBps) || 0, Number(p.outBps) || 0) / (cap * 1e6)) * 100);
         const x = (h.l[`${l.roA}|${l.roB}`] ||= { b: {} }); x.name = `${nm(l.roA)} – ${nm(l.roB)}`; x.cap = cap;
         const b = (x.b[hk] ||= [0, 0, 0]); b[0] = Math.max(b[0], pct); b[1] += pct; b[2]++;

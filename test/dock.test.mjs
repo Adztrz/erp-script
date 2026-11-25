@@ -325,6 +325,13 @@ test("way up: climbs from the OLT to the core, crosses a backwards link, names t
   const p = pathRead({ router: "RO CONTOH NEW" }, map, lv, "A");
   assert.deepEqual(p.hops.map((h) => h.name), ["OLT CONTOH", "CONTOH", "SW CONTOH", "DIST", "CORE"]);
   assert.equal(p.hops[1].link.text, "↓ 500 Mbit/s of 1 Gbit/s · 50%"); // measured at CONTOH, the lower end: what comes in
+  // a link whose map reading went stale, no port named: either end's own port in the live feed
+  const stale = { ...map, peta: { ...map.peta, link: map.peta.link.map((l) => (l.roA === "CONTOH" && l.roB === "sw:1" ? { ...l, status: "basi", sumberRo: null, sumberIf: null, ifA: "uplink" } : l)) } };
+  const ps = pathRead({ router: "RO CONTOH NEW" }, stale, lv, "A");
+  assert.equal(ps.hops[1].link.text, "↓ 500 Mbit/s of 1 Gbit/s · 50%"); assert.equal(ps.hops[1].link.stale, false);
+  lv.port.DIST["to-sw"].outBps = 2e5; // the switch's way up carries next to nothing while 500 Mbit/s comes from below
+  assert.match(pathRead({ router: "RO CONTOH NEW" }, map, lv, "A").notes.join(), /SW CONTOH's link up carries 200 kbit\/s while 500 Mbit\/s comes up from below/);
+  lv.port.DIST["to-sw"].outBps = 9.5e8;
   assert.equal(p.v[0], "warn"); assert.match(p.v[1], /SW CONTOH → DIST is full \(95%/);
   assert.match(p.notes.join(), /marks SW CONTOH – DIST the other way round/);
   lv.router.DIST = { ok: false };
