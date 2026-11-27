@@ -78,6 +78,10 @@ The ERP deploys many times an hour, and each deploy showed a blue "Versi baru ap
 
 When the browser has Location or Notifications blocked, the ERP covers the whole page with a dark "Aktifkan Izin Dulu" screen. The script hides it (the page keeps working and scrolling under it). Allowing both in the browser still works as before.
 
+### Critical alarm, without the siren
+
+The red "Alarm Insiden Kritis" screen (a router down, for example) still shows with its buttons, but its siren and vibration are muted: nothing reaches the speakers while it is up. Other sounds play as usual.
+
 So a page never drifts far behind the server:
 
 - **Update dot:** the build is checked every 2 minutes. When it changes, the Dock button gets a small pulsing dot.
