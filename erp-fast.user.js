@@ -2,7 +2,7 @@
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/erp-script/main/icons/dock.png
-// @version      3.28.2
+// @version      3.29.0
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -50,10 +50,12 @@
   // ---------- the critical alarm, without its siren ----------
   // "Alarm Insiden Kritis" also plays a square-wave siren (880/620 Hz, every 450 ms) and vibrates until someone presses
   // Matikan Alarm. The red screen and its buttons stay; only the siren is muted: while that screen is up, nothing
-  // reaches the speakers through Web Audio, and the vibration is skipped.
+  // reaches the speakers through Web Audio, and the vibration is skipped. The Dock's own soft chime for the alarm
+  // (285) goes through the browser's connect, kept here as rawConnect.
+  const alarmUp = () => !!document.querySelector('[data-layar-wajib][aria-label="Alarm insiden kritis"]');
+  const rawConnect = typeof AudioNode === "function" ? AudioNode.prototype.connect : null;
   try {
-    const alarmUp = () => !!document.querySelector('[data-layar-wajib][aria-label="Alarm insiden kritis"]');
-    const connect = AudioNode.prototype.connect;
+    const connect = rawConnect;
     AudioNode.prototype.connect = function (to, ...rest) {
       if (to instanceof AudioDestinationNode && alarmUp()) return to;
       return connect.call(this, to, ...rest);
@@ -5961,6 +5963,52 @@
     chan.onmessage = () => dispatchEvent(new Event("scroll"));
   } catch { /* no BroadcastChannel: each tab keeps its own clock */ }
 
+  // ---------- critical alarm: a quiet cue instead of the siren ----------
+  // The siren of "Alarm Insiden Kritis" is muted (010), so an alarm in a tab you're not looking at would go unseen.
+  // Instead, once per new alarm: one soft two-note chime (one tab chimes, not every open ERP tab), and while the red
+  // screen is up the tab's title blinks "🔴 <the alarm>" and its icon turns into a red dot, so it shows in the tab
+  // strip. Both go back as soon as the alarm is handled (Matikan Alarm / Saya tangani, here or in any tab).
+  try {
+    const CHIMED = "erpDock.alarmChimed";
+    const read = () => {
+      const s = document.querySelector('[data-layar-wajib][aria-label="Alarm insiden kritis"]');
+      return s ? (s.querySelector("h2")?.textContent || "Alarm insiden kritis").replace(/^[\s🔴🚨]+/u, "").trim() : null;
+    };
+    const chime = (title) => {
+      // one chime per alarm across tabs: the first tab to claim it in localStorage plays it
+      let kept = {}; try { kept = JSON.parse(localStorage.getItem(CHIMED)) || {}; } catch {}
+      const now = Date.now(); for (const k in kept) if (now - kept[k] > 6 * 3600000) delete kept[k];
+      if (kept[title]) return;
+      kept[title] = now; try { localStorage.setItem(CHIMED, JSON.stringify(kept)); } catch {}
+      if (!rawConnect) return;
+      try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        if (ctx.state === "suspended") ctx.resume().catch(() => {});
+        [[660, 0], [880, 0.18]].forEach(([hz, at]) => {
+          const o = ctx.createOscillator(), g = ctx.createGain(), t = ctx.currentTime + at;
+          o.type = "sine"; o.frequency.value = hz;
+          g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.09, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.45);
+          rawConnect.call(o, g); rawConnect.call(g, ctx.destination); o.start(t); o.stop(t + 0.5);
+        });
+        setTimeout(() => ctx.close().catch(() => {}), 1200);
+      } catch {}
+    };
+    const DOT = "data:image/svg+xml," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="#e5484d"/></svg>');
+    let up = null, own = "", plain = document.title, flip = false, icon = null;
+    const restore = () => {
+      if (document.title === own) document.title = plain;
+      icon?.remove(); icon = null; up = null;
+    };
+    setInterval(() => {
+      const title = read();
+      if (!title) { if (up) restore(); return; }
+      if (title !== up) { up = title; chime(title); }
+      if (!icon) { icon = document.createElement("link"); icon.rel = "icon"; icon.href = DOT; icon.dataset.erpAlarm = ""; document.head.append(icon); }
+      else if (document.head.lastElementChild !== icon && document.head.querySelector('link[rel~="icon"]:not([data-erp-alarm])')) document.head.append(icon);
+      if (document.title !== own) plain = document.title; // the ERP changed it (another page): keep the new one to restore
+      flip = !flip; own = flip ? `🔴 ${title}` : plain; document.title = own;
+    }, 1200);
+  } catch {}
   // ---------- Aktivasi: a helper card in the activation form ----------
   // Technical → Antrean Aktivasi → ⚡ opens "Aktivasi Akun & Provisioning OLT". The card on top of it:
   // - FAT/ODP: the one the technician reported, matched to the database even when written loosely ("\FAT LDN NW15",

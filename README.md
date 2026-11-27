@@ -80,7 +80,7 @@ When the browser has Location or Notifications blocked, the ERP covers the whole
 
 ### Critical alarm, without the siren
 
-The red "Alarm Insiden Kritis" screen (a router down, for example) still shows with its buttons, but its siren and vibration are muted: nothing reaches the speakers while it is up. Other sounds play as usual.
+The red "Alarm Insiden Kritis" screen (a router down, for example) still shows with its buttons, but its siren and vibration are muted: nothing reaches the speakers while it is up. Other sounds play as usual. Instead, so an alarm in a tab you are not looking at still gets noticed, each new alarm plays one soft two-note chime (once, in one tab), and while it is up the tab's title blinks "🔴 RO MATI: CONTOH" and its icon turns into a red dot. Both go back when the alarm is handled.
 
 So a page never drifts far behind the server:
 

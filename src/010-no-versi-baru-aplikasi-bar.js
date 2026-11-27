@@ -27,10 +27,12 @@
   // ---------- the critical alarm, without its siren ----------
   // "Alarm Insiden Kritis" also plays a square-wave siren (880/620 Hz, every 450 ms) and vibrates until someone presses
   // Matikan Alarm. The red screen and its buttons stay; only the siren is muted: while that screen is up, nothing
-  // reaches the speakers through Web Audio, and the vibration is skipped.
+  // reaches the speakers through Web Audio, and the vibration is skipped. The Dock's own soft chime for the alarm
+  // (285) goes through the browser's connect, kept here as rawConnect.
+  const alarmUp = () => !!document.querySelector('[data-layar-wajib][aria-label="Alarm insiden kritis"]');
+  const rawConnect = typeof AudioNode === "function" ? AudioNode.prototype.connect : null;
   try {
-    const alarmUp = () => !!document.querySelector('[data-layar-wajib][aria-label="Alarm insiden kritis"]');
-    const connect = AudioNode.prototype.connect;
+    const connect = rawConnect;
     AudioNode.prototype.connect = function (to, ...rest) {
       if (to instanceof AudioDestinationNode && alarmUp()) return to;
       return connect.call(this, to, ...rest);
