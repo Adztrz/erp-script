@@ -2,7 +2,7 @@
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/erp-script/main/icons/dock.png
-// @version      3.28.0
+// @version      3.28.1
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -35,6 +35,16 @@
     if (add) sw.addEventListener = function (type, fn, opts) { if (type === "controllerchange") return; return add.call(this, type, fn, opts); };
   } catch {}
 
+
+  // ---------- no "Aktifkan Izin Dulu" screen ----------
+  // The ERP covers the whole page with a dark "Aktifkan Izin Dulu" screen (data-layar-wajib) when the browser has
+  // Location or Notifications blocked. A desk needs neither, so the screen is hidden (not removed, so the page's own
+  // code keeps working) and the page scrolls as usual under it. Allowing both in the browser still works the same.
+  try {
+    const css = document.createElement("style");
+    css.textContent = "[data-layar-wajib]{display:none!important}html:has([data-layar-wajib]),body:has([data-layar-wajib]){overflow:auto!important}";
+    (document.head || document.documentElement).append(css);
+  } catch {}
   // ---------- Monochrome: the whole site in Faust's black and bone (Dock → the half-circle button) ----------
   // The ERP is shadcn: its colours are HSL variables (--background, --primary, …), swapped here for Faust's palette:
   // near-black canvas #07090b, graphite cards, bone #e9e1dc as the one "colour" (primary buttons, focus, links).

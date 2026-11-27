@@ -12,3 +12,13 @@
     if (add) sw.addEventListener = function (type, fn, opts) { if (type === "controllerchange") return; return add.call(this, type, fn, opts); };
   } catch {}
 
+
+  // ---------- no "Aktifkan Izin Dulu" screen ----------
+  // The ERP covers the whole page with a dark "Aktifkan Izin Dulu" screen (data-layar-wajib) when the browser has
+  // Location or Notifications blocked. A desk needs neither, so the screen is hidden (not removed, so the page's own
+  // code keeps working) and the page scrolls as usual under it. Allowing both in the browser still works the same.
+  try {
+    const css = document.createElement("style");
+    css.textContent = "[data-layar-wajib]{display:none!important}html:has([data-layar-wajib]),body:has([data-layar-wajib]){overflow:auto!important}";
+    (document.head || document.documentElement).append(css);
+  } catch {}

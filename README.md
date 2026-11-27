@@ -74,6 +74,10 @@ The queue shows how many days each customer has waited, and marks anything over 
 
 The ERP deploys many times an hour, and each deploy showed a blue "Versi baru aplikasi… Muat ulang" bar (or reloaded an idle page by itself). The script switches both off: the ERP's own "Nanti" snooze is set far ahead, and the page no longer reacts to a new service worker taking over. You get the new version whenever you reload or open a tab yourself.
 
+### No "Aktifkan Izin Dulu" screen
+
+When the browser has Location or Notifications blocked, the ERP covers the whole page with a dark "Aktifkan Izin Dulu" screen. The script hides it (the page keeps working and scrolling under it). Allowing both in the browser still works as before.
+
 So a page never drifts far behind the server:
 
 - **Update dot:** the build is checked every 2 minutes. When it changes, the Dock button gets a small pulsing dot.
