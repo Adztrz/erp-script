@@ -157,6 +157,16 @@
       .erp-dock .map .fcnt.calm { color: var(--muted); }
       .erp-dock .map svg.links line.known { stroke-dasharray: none; }
       .erp-dock .legend i.k.sgwarn { background: var(--green); box-shadow: 0 0 0 2px #e0b252; } .erp-dock .legend i.k.sgnone { background: var(--green); opacity: .45; }
+      .erp-dock .mdot.age-d { opacity: .75; } .erp-dock .map .mdot.age-w { opacity: .5; width: 10px; height: 10px; margin: -5px 0 0 -5px; }
+      .erp-dock .map .mrx.age { color: var(--paper); } .erp-dock .map .mrx.age.age-d { color: var(--body); } .erp-dock .map .mrx.age.age-w { color: var(--muted); }
+      .erp-dock .map svg.way { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; } .erp-dock .map svg.way polyline { fill: none; stroke-width: 2.5; stroke-dasharray: 8 5; stroke-linecap: round; }
+      .erp-dock .map svg.way rect { stroke: #07090b; stroke-width: 1.5; }
+      .erp-dock .map svg.way.ok polyline { stroke: #55bc82; } .erp-dock .map svg.way.ok rect { fill: #55bc82; } .erp-dock .map svg.way.warn polyline { stroke: #e0b252; } .erp-dock .map svg.way.warn rect { fill: #e0b252; }
+      .erp-dock .map svg.way.net polyline { stroke: #f12614; } .erp-dock .map svg.way.net rect { fill: #f12614; } .erp-dock .map svg.way.off polyline, .erp-dock .map svg.way.unk polyline { stroke: #8a8b8a; } .erp-dock .map svg.way.off rect, .erp-dock .map svg.way.unk rect { fill: #8a8b8a; }
+      .erp-dock .map .uptag { position: absolute; z-index: 2; transform: translate(-50%, -150%); padding: 1px 6px; border-radius: 3px; background: rgba(9,11,12,.92); font: 600 10.5px/15px Inter, system-ui, sans-serif; white-space: nowrap; pointer-events: none; }
+      .erp-dock .map .uptag.ok { color: #55bc82; } .erp-dock .map .uptag.warn { color: #e0b252; } .erp-dock .map .uptag.net { color: #ff6a5c; } .erp-dock .map .uptag.off, .erp-dock .map .uptag.unk { color: var(--body); }
+      .erp-dock .map .brief .bw { margin-top: 2px; font-size: 11.5px; } .erp-dock .map .brief .bw.ok { color: #55bc82; } .erp-dock .map .brief .bw.warn { color: #e0b252; } .erp-dock .map .brief .bw.net { color: #ff6a5c; } .erp-dock .map .brief .bw.off, .erp-dock .map .brief .bw.unk { color: var(--muted); }
+      .erp-dock .map .legend .k.way { width: 12px; height: 0; border-radius: 0; border-top: 2px dashed #55bc82; background: none; } .erp-dock .map .legend .k.age { width: 12px; height: 8px; border-radius: 2px; background: rgba(239,239,237,.5); }
       .erp-dock .mdot.unst { outline: 2px dashed #e0b252; outline-offset: 2px; }
       .erp-dock .mdot.fresh::after { content: ""; position: absolute; inset: -7px; border-radius: 50%; border: 2px solid rgba(239,239,237,.8); animation: erp-fresh 1.6s var(--out) infinite; pointer-events: none; }
       @keyframes erp-fresh { from { transform: scale(.55); opacity: .9; } to { transform: scale(1.6); opacity: 0; } }

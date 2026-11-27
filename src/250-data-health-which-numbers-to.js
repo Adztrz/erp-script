@@ -372,10 +372,12 @@
       waitForBrief(box);
       // signal on every online dot: an amber ring at −26…−28 dBm (under −28 the dot itself turns amber); a faded dot when
       // their modem isn't found on any OLT, so the map shows whose line it can't see
+      // how long a down customer has been down: dimmer and smaller past a day, dimmest past a week
+      const ageOf = (t) => (!t ? "age-unk" : Date.now() - t < 864e5 ? "age-h" : Date.now() - t < 7 * 864e5 ? "age-d" : "age-w");
       const sgOf = (c) => { if (!onts) return ""; const o = modemOf(c).ont; return !o ? "none" : usable(o) ? sigLevel(o.rx) : ""; };
       n.list.forEach((x) => { x.k = health(x.r); x.t = DOWN.has(x.k) ? downAt(x.r) : 0; x.u = (x.k === "on" || x.k === "weak") && unstable(x.r); x.sg = sgOf(x.r); });
       const dots = n.list.map((x, i) => {
-        const [px, py] = world(x.p), b = el("button", `mdot ${x.k}${x.u ? " unst" : ""}${x.t && Date.now() - x.t < FRESH ? " fresh" : ""}${x.sg ? ` sg-${x.sg}` : ""}`); b.type = "button"; b.tabIndex = -1; b.style.zIndex = RANK[x.k] > 1 ? "1" : "";
+        const [px, py] = world(x.p), b = el("button", `mdot ${x.k}${x.u ? " unst" : ""}${x.t && Date.now() - x.t < FRESH ? " fresh" : ""}${x.sg ? ` sg-${x.sg}` : ""}${DOWN.has(x.k) ? ` ${ageOf(x.t)}` : ""}`); b.type = "button"; b.tabIndex = -1; b.style.zIndex = RANK[x.k] > 1 ? "1" : "";
         b.style.left = `${px - left}px`; b.style.top = `${py - top}px`; b.style.setProperty("--d", `${Math.round(Math.min(1, x.d / radius) * 350)}ms`);
         b.setAttribute("aria-label", `${x.r.nama || x.r.username}, ${KIND[x.k][0].toLowerCase()}, ${Math.round(x.d)} m`);
         b.onmouseenter = () => hl(i, true); b.onmouseleave = () => hl(i, false);
@@ -406,12 +408,17 @@
       }
       box.classList.toggle("sat", kind === "sat"); box.classList.toggle("carto", !!carto);
       const at = (p) => { const [x, y] = world(p); return [x - left, y - top]; };
+      if (box.pathFor !== r.username) { box.pathFor = r.username; box.path = null; // the Way up's verdict colours the line to the OLT
+        pathFor(r).then((p) => { if (box.pathFor === r.username) { box.path = p; if (box.isConnected) box.redraw?.(); } }).catch(() => {}); }
       const scene = briefScene({ pts: [{ c: r, p: n.c, k: health(r), me: true }, ...n.list.map((x) => ({ c: x.r, p: x.p, k: x.k, t: x.t, u: x.u, sg: x.sg }))], at, mpp, w, h,
         rings: [[hx, hy, radius / 2 / mpp, radText(radius / 2)], [hx, hy, radius / mpp, radText(radius)]],
-        me: [hx, hy, r.nama || r.username], about: { what: `Radius ${radText(radius)} dari ${r.nama || r.username}`, near: r } });
+        me: [hx, hy, r.nama || r.username], about: { what: `Radius ${radText(radius)} dari ${r.nama || r.username}`, near: r, up: upPlaces(r), path: box.path } });
       box.scene = scene;
       const tags = rxTags(n.list.map((x) => { const [px, py] = world(x.p); return [x.r, px - left, py - top]; }), new Set(scene.labels.map((l) => l.c)));
-      mapLayers(box, [tiles, ring(0.5, "half"), ring(1, ""), ...briefUnder(scene), ...dots, ...tags, me, ...briefOver(scene), tip, zoom, el("span", "attr", T.attr)]);
+      const named = new Set(scene.labels.map((l) => l.c)), short = (ms) => { const m = Math.max(1, Math.round(ms / 60000)); return m < 60 ? `${m}m` : m < 1440 ? `${Math.round(m / 60)}j` : `${Math.round(m / 1440)}h`; };
+      const ages = n.list.filter((x) => DOWN.has(x.k) && x.t && !named.has(x.r)).slice(0, 150).map((x) => { const [px, py] = world(x.p), t = el("span", `mrx age ${ageOf(x.t)}`, short(Date.now() - x.t));
+        t.style.left = `${px - left}px`; t.style.top = `${py - top}px`; t.title = `Mati ${lama(Date.now() - x.t)}`; return t; });
+      mapLayers(box, [tiles, ring(0.5, "half"), ring(1, ""), ...briefUnder(scene), ...dots, ...tags, ...ages, me, ...briefOver(scene), tip, zoom, el("span", "attr", T.attr)]);
       swapTiles(box, tiles, { z, kind: carto ? "carto" : kind, left, top, id: `near:${r.username}` });
     }
     // Drag a map to pan it: the picture follows the pointer, and every ~100 px (and on release) the tiles are drawn

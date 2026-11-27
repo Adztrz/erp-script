@@ -100,9 +100,32 @@
       } catch {}
       return indexBoxes([]);
     })());
+    // The way up on Nearby: the customer's OLT (their modem's, matched to the ERP's OLT record by its management IP or
+    // name) and that OLT's router (the record's parent), placed from their saved locations; read once per 12 hours
+    let upList = null, upLoading = null;
+    const upAssets = () => (upLoading ||= (async () => {
+      const kept = await idbGet("upPlaces"); if (kept?.list && Date.now() - kept.at < 12 * 3600000) return (upList = kept.list);
+      try {
+        const out = [];
+        for (const type of ["OLT", "ROUTER"]) for (const a of (await api(`/api/pg-read/networkAssets?where=tipeAset%3A${type}`)).data || []) {
+          const lat = num(a.lokasiKoordinat?.latitude), lng = num(a.lokasiKoordinat?.longitude); if (!lat || !lng) continue;
+          out.push({ type, id: a.id, code: String(a.kodeAset || "").trim(), ip: a.ipManajemen || "", parentId: a.routerIndukId || "", parentCode: a.routerIndukCode || "", p: { lat, lng } });
+        }
+        idbPut("upPlaces", { at: Date.now(), list: out }); return (upList = out);
+      } catch { return (upList = kept?.list || []); }
+    })());
+    function upPlaces(c) {
+      const o = modemOf(c).ont; if (!o || !upList?.length) return null;
+      const prof = onts?.olts.find((x) => x.id === o.pid), name = lower(prof?.name || o.olt), ip = prof?.ip || "";
+      const olt = upList.find((a) => a.type === "OLT" && ((ip && a.ip === ip) || lower(a.code) === name)); if (!olt) return null;
+      const ro = upList.find((a) => a.type === "ROUTER" && ((olt.parentId && a.id === olt.parentId) || (olt.parentCode && a.code === olt.parentCode)));
+      return { olt, ro: ro || null };
+    }
+    const WAY = { ok: ["lancar", "#55bc82"], warn: ["padat", "#e0b252"], net: ["putus", "#f12614"], off: ["belum terbaca", "#8a8b8a"], unk: ["dibaca…", "#8a8b8a"] };
     // the modem list and the asset list arrive after the first drawing: draw once more when they're in
     function waitForBrief(box) {
       if (!netList && !box.netWait) { box.netWait = true; netAssets().then(() => box.isConnected && box.redraw?.()); }
+      if (box.dataset.what?.startsWith("near:") && !upList && !box.upWait) { box.upWait = true; upAssets().then(() => box.isConnected && box.redraw?.()); }
       if (!onts && !box.ontWait) { box.ontWait = true; ontIndex().then(() => box.isConnected && box.redraw?.()).catch(() => {}); }
       if (!box.moreWait) { box.moreWait = true; Promise.all([dropsOf(), acsIndex(), techIndex().catch(() => {})]).then(() => box.isConnected && box.redraw?.()).catch(() => {}); }
     }
@@ -189,9 +212,24 @@
       if (all && pts.some((z) => z.sg === "warn")) legend.push(["sgwarn", "Redaman −26…−28"]);
       if (all && pts.some((z) => z.sg === "none" && !z.me)) legend.push(["sgnone", "Modem tidak ditemukan"]);
       if (pts.some((z) => z.t && Date.now() - z.t < FRESH)) legend.push(["fresh", "Baru mati (< 30 mnt)"]);
+      if (all && down.some((z) => z.t)) legend.push(["age", "Lama mati di samping titik (m/j/h); pudar: lebih dari sehari"]);
       if (pts.some((z) => z.u)) legend.push(["unst", "Tidak stabil (4+ sambung ulang/24 jam)"]);
       const dots = pts.map((z) => ({ ...z, xy: at(z.p) })).filter((z) => inView(z.xy, 8)).sort((a, b) => RANK[a.k] - RANK[b.k]);
-      return { w, h, dots, sev, title, counts, sub, villages, probs, labels, rings, me, assets, shown, fault, faultXY, legend, scale: { px: nice / mpp, label: nice >= 1000 ? `${nice / 1000} km` : `${nice} m` }, about, noNet: netList && !netList.length, fats, links, badges, vlabels };
+      // the way up (Nearby): customer → OLT → router in the Way up's colour; a place off the map gets its tag at the edge
+      let way = null;
+      if (all && about.up && me) {
+        const v = about.path?.v?.[0] || "unk", nodes = [[me[0], me[1]], at(about.up.olt.p), ...(about.up.ro ? [at(about.up.ro.p)] : [])];
+        const edge = (a, b) => { if (inView(b, -28)) return [b[0], b[1], false]; // off the map: where the line leaves it, 28 px in
+          const lo = [28, 74], hi = [w - 28, h - 64]; let t = 1;
+          for (let i = 0; i < 2; i++) { const d = b[i] - a[i]; if (!d) continue; const tt = ((d > 0 ? hi[i] : lo[i]) - a[i]) / d; if (tt > 0 && tt < t) t = tt; }
+          return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, true]; };
+        const km = (p) => { const d = metres(about.near.lat != null ? about.near : pts[0].p, p); return d < 1000 ? `${Math.round(d / 10) * 10} m` : `${(d / 1000).toFixed(1).replace(".", ",")} km`; };
+        const tags = [{ at: edge(nodes[0], nodes[1]), text: `${about.up.olt.code} · ${km(about.up.olt.p)}`, kind: "olt" }];
+        if (about.up.ro) tags.push({ at: edge(nodes[0], nodes[2]), text: `${about.up.ro.code} · ${km(about.up.ro.p)}`, kind: "ro" });
+        way = { v, nodes, tags, say: `Jalur naik: ${about.up.olt.code}${about.up.ro ? ` → ${about.up.ro.code}` : ""} · ${WAY[v][0]}` };
+        legend.push(["way", `Jalur naik ke OLT/router · ${WAY[v][0]}`]);
+      }
+      return { w, h, dots, sev, title, counts, sub, villages, probs, labels, rings, me, assets, shown, fault, faultXY, legend, scale: { px: nice / mpp, label: nice >= 1000 ? `${nice / 1000} km` : `${nice} m` }, about, noNet: netList && !netList.length, fats, links, badges, vlabels, way };
     }
     // below the dots: the network boxes and the suspected one; above them: names, strip, legend, scale
     function briefUnder(s) {
@@ -200,6 +238,11 @@
       if (s.links.length) { const svg = document.createElementNS(NS, "svg"); svg.setAttribute("class", "links"); svg.setAttribute("width", s.w); svg.setAttribute("height", s.h);
         for (const [[x1, y1], [x2, y2], cls] of s.links) { const l = document.createElementNS(NS, "line"); if (cls) l.setAttribute("class", cls); l.setAttribute("x1", x1); l.setAttribute("y1", y1); l.setAttribute("x2", x2); l.setAttribute("y2", y2); svg.append(l); }
         out.push(svg); }
+      if (s.way) { const svg = document.createElementNS(NS, "svg"); svg.setAttribute("class", `way ${s.way.v}`); svg.setAttribute("width", s.w); svg.setAttribute("height", s.h);
+        const pl = document.createElementNS(NS, "polyline"); pl.setAttribute("points", s.way.nodes.map((p) => p.join(",")).join(" ")); svg.append(pl);
+        for (const p of s.way.nodes.slice(1)) { const c = document.createElementNS(NS, "rect"); c.setAttribute("x", p[0] - 5); c.setAttribute("y", p[1] - 5); c.setAttribute("width", 10); c.setAttribute("height", 10); c.setAttribute("transform", `rotate(45 ${p[0]} ${p[1]})`); svg.append(c); }
+        out.push(svg);
+        for (const t of s.way.tags) { const d = el("span", `uptag ${s.way.v}${t.at[2] ? " edge" : ""}`, `${/^(OLT|RO)\b/i.test(t.text) ? "" : t.kind === "olt" ? "OLT " : "Router "}${t.text}${t.at[2] ? " →" : ""}`); d.style.left = `${t.at[0]}px`; d.style.top = `${t.at[1]}px`; out.push(d); } }
       for (const a of s.assets) { const d = el("span", `asset ${a.type.toLowerCase()}`); d.style.left = `${a.xy[0]}px`; d.style.top = `${a.xy[1]}px`; d.title = a.code;
         if (s.shown && a.code !== s.fault?.code) d.append(el("i", null, a.code)); out.push(d); }
       if (s.faultXY) { const f = el("span", "fault"); f.style.left = `${s.faultXY[0]}px`; f.style.top = `${s.faultXY[1]}px`; f.append(el("i", null, `Cek di sini · ${s.fault.code}`)); out.push(f); }
@@ -214,6 +257,7 @@
       const strip = el("div", "brief"), lv = LEVEL[s.sev.lv], badge = el("b", `lv ${s.sev.lv}`, lv[0]);
       const t = el("div", "bt"); t.append(badge, el("span", null, s.title)); strip.append(t, el("div", "bs", s.sub));
       if (s.fault) strip.append(el("div", "bf", `Cek di sini: ${s.fault.code} (rata-rata ${s.fault.avg} m dari yang mati)`));
+      if (s.way) { const b = el("div", `bw ${s.way.v}`, s.way.say); if (s.about.path?.v?.[1]) b.title = s.about.path.v[1]; strip.append(b); }
       out.push(strip);
       const leg = el("div", "legend"); for (const [k, label] of s.legend) { const i = el("span"); i.append(el("i", `k ${k}`), label); leg.append(i); }
       if (s.about.replay) strip.classList.add("replaying");
@@ -229,6 +273,7 @@
       if (s.villages.length) lines.push(`Desa: ${s.villages.slice(0, 6).map(([d, n]) => { const tl = teamsFor(d), t = (tl.find((x) => teamKind(x.name) === "field") || tl[0])?.name; return `${d} (${n}${t ? `, ${t}` : ""})`; }).join(", ")}`);
       if (s.fats.some((g) => g.down)) lines.push(`Per FAT/ODP terdekat: ${s.fats.filter((g) => g.down).slice(0, 6).map((g) => `${g.a.code} ${g.down}/${g.all} mati`).join(", ")}`);
       if (s.fault) lines.push(`Cek di sini: ${s.fault.code} (perkiraan) ${link(s.fault.p)}`);
+      if (s.way) lines.push(s.way.say);
       for (const k of ["los", "pwr", "off", "weak"]) {
         const l = s.probs.filter((z) => z.k === k); if (!l.length) continue;
         lines.push("", `${KIND[k][0]} (${l.length}):`);
@@ -256,6 +301,8 @@
       for (const v of s.vlabels) { font(600, 10); g.fillStyle = "rgba(233,225,220,.7)"; g.fillText(v.d.toUpperCase(), v.x, v.y + (v.team ? -1 : 3)); if (v.team) { font(500, 9); g.fillStyle = "rgba(170,200,255,.85)"; g.fillText(v.team, v.x, v.y + 10); } }
       g.shadowBlur = 0; g.textAlign = "start";
       for (const [[x1, y1], [x2, y2], cls = "dn"] of s.links) { g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2); g.lineWidth = 1; g.setLineDash(/known/.test(cls) ? [] : [3, 3]); g.strokeStyle = /dn/.test(cls) ? "rgba(239,239,237,.75)" : "rgba(239,239,237,.4)"; g.stroke(); } g.setLineDash([]);
+      if (s.way) { const col = WAY[s.way.v][1]; g.beginPath(); s.way.nodes.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y))); g.lineWidth = 2.5; g.strokeStyle = col; g.setLineDash([8, 5]); g.stroke(); g.setLineDash([]);
+        font(600, 10); for (const t of s.way.tags) { const text = `${/^(OLT|RO)\b/i.test(t.text) ? "" : t.kind === "olt" ? "OLT " : "Router "}${t.text}`, tw = g.measureText(text).width + 10; pill(t.at[0] - tw / 2, t.at[1] - 20, tw, 15, 3, "rgba(9,11,12,.92)"); g.fillStyle = col; g.fillText(text, t.at[0] - tw / 2 + 5, t.at[1] - 9); } }
       for (const a of s.assets) { g.fillStyle = "#3e7edf"; g.strokeStyle = "#07090b"; g.lineWidth = 1.5; g.fillRect(a.xy[0] - 4, a.xy[1] - 4, 8, 8); g.strokeRect(a.xy[0] - 4, a.xy[1] - 4, 8, 8);
         if (s.shown && a.code !== s.fault?.code) { font(500, 10); g.fillStyle = "rgba(170,200,255,.95)"; g.fillText(a.code, a.xy[0] + 7, a.xy[1] + 3); } }
       if (s.faultXY) { const [x, y] = s.faultXY; g.beginPath(); g.arc(x, y, 16, 0, 7); g.setLineDash([4, 3]); g.lineWidth = 2.5; g.strokeStyle = "#f12614"; g.stroke(); g.setLineDash([]);
@@ -270,11 +317,12 @@
       for (const [x, y, R, t] of s.rings) { font(500, 10); const tw = g.measureText(t).width + 8; pill(x - tw / 2, y - R - 8, tw, 16, 3, "rgba(9,11,12,.85)"); g.fillStyle = "#e9e1dc"; g.fillText(t, x - tw / 2 + 4, y - R + 4); }
       for (const l of s.labels) { font(500, 11); pill(l.x, l.y, l.w, 18, 4, "rgba(9,11,12,.9)"); g.fillStyle = KIND[l.k][1]; g.fillRect(l.x, l.y + 3, 2.5, 12); g.fillStyle = "#efefed"; g.fillText(l.text, l.x + 7, l.y + 13); }
       // strip
-      pill(8, 8, w - 16, s.fault ? 62 : 46, 6, "rgba(9,11,12,.92)");
+      pill(8, 8, w - 16, s.fault || s.way ? 62 : 46, 6, "rgba(9,11,12,.92)");
       const lv = LEVEL[s.sev.lv]; font(700, 11); const bw = g.measureText(lv[0]).width + 12; pill(16, 15, bw, 18, 3, lv[1]); g.fillStyle = s.sev.lv === "high" ? "#fff" : "#07090b"; g.fillText(lv[0], 22, 28);
       font(600, 13); g.fillStyle = "#efefed"; g.fillText(s.title, 16 + bw + 8, 28, w - bw - 48);
       font(400, 11); g.fillStyle = "#b3b0af"; g.fillText(s.sub, 16, 46, w - 32);
       if (s.fault) { font(500, 11); g.fillStyle = "#ff8a7a"; g.fillText(`Cek di sini: ${s.fault.code} (rata-rata ${s.fault.avg} m dari yang mati)`, 16, 62, w - 32); }
+      else if (s.way) { font(500, 11); g.fillStyle = WAY[s.way.v][1]; g.fillText(s.way.say, 16, 62, w - 32); }
       // legend and scale
       font(500, 11); const items = [], lines = [[]]; let x = 0;
       for (const [k, l] of s.legend) { const iw = g.measureText(l).width + 13; if (x && x + iw > w - 40) { lines.push([]); x = 0; } lines.at(-1).push([k, l, x]); x += iw + 10; }
