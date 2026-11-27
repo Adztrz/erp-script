@@ -18,6 +18,10 @@
         border-radius: 10px; background: var(--card); color: var(--body); overflow: hidden; transform-origin: bottom right;
         box-shadow: inset 0 0 0 1px var(--edge), 0 40px 32px rgba(0,0,0,.18), 0 22px 18px rgba(0,0,0,.2), 0 12px 10px rgba(0,0,0,.2), 0 6px 5px rgba(0,0,0,.18), 0 2px 2px rgba(0,0,0,.2);
         animation: erp-ht-open .5s var(--out) both; }
+      .erp-dock.erp-dock-inline { position: relative; z-index: auto; width: auto; max-height: none; margin: 8px 12px; padding: 10px 12px 2px; border-radius: 8px; box-shadow: inset 0 0 0 1px var(--edge); animation: none; flex-shrink: 0; }
+      .erp-dock-inline .answer { margin: 0; padding: 0; background: none; box-shadow: none; }
+      .erp-dock-inline .answer .reply { display: none; } .erp-dock-inline.open .answer .reply { display: block; }
+      .erp-dock-inline .answer .actions { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
       .erp-dock.out { animation: erp-ht-close .22s cubic-bezier(.5, 0, .75, 0) both; pointer-events: none; }
       /* Halftone motion: a wave front of dots. Solid behind the front, a band of dots on it, nothing ahead; the mask
          goes once the animation ends (ht-done), so shadows and the map draw as usual. */

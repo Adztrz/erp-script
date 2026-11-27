@@ -2,7 +2,7 @@
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/erp-script/main/icons/dock.png
-// @version      3.29.0
+// @version      3.30.0
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -1845,6 +1845,10 @@
         border-radius: 10px; background: var(--card); color: var(--body); overflow: hidden; transform-origin: bottom right;
         box-shadow: inset 0 0 0 1px var(--edge), 0 40px 32px rgba(0,0,0,.18), 0 22px 18px rgba(0,0,0,.2), 0 12px 10px rgba(0,0,0,.2), 0 6px 5px rgba(0,0,0,.18), 0 2px 2px rgba(0,0,0,.2);
         animation: erp-ht-open .5s var(--out) both; }
+      .erp-dock.erp-dock-inline { position: relative; z-index: auto; width: auto; max-height: none; margin: 8px 12px; padding: 10px 12px 2px; border-radius: 8px; box-shadow: inset 0 0 0 1px var(--edge); animation: none; flex-shrink: 0; }
+      .erp-dock-inline .answer { margin: 0; padding: 0; background: none; box-shadow: none; }
+      .erp-dock-inline .answer .reply { display: none; } .erp-dock-inline.open .answer .reply { display: block; }
+      .erp-dock-inline .answer .actions { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
       .erp-dock.out { animation: erp-ht-close .22s cubic-bezier(.5, 0, .75, 0) both; pointer-events: none; }
       /* Halftone motion: a wave front of dots. Solid behind the front, a band of dots on it, nothing ahead; the mask
          goes once the animation ends (ht-done), so shadows and the map draw as usual. */
@@ -5349,6 +5353,51 @@
       const b = el("button", null, "◎"); b.type = "button"; b.title = "Back to the start"; b.setAttribute("aria-label", "Recentre the map");
       b.disabled = !box.ctr; b.onclick = () => { box.ctr = null; box.redraw?.(); }; return b;
     }
+    // ---- the Answer in the ERP's Inbox WA ----
+    // With a chat open in /wa/inbox (?c=<chat>), the Dock's Answer for that customer sits above the ERP's own customer
+    // panel: the verdict (area outage, their cable, modem off, speed cap, line fine…) and the next step, with the reply
+    // to send. "Put in reply box" fills the ERP's message box and leaves sending to you; "Show reply" shows it first;
+    // "Open card" opens the Dock's full card. The chat's customer comes from the ERP's own link (the chat's
+    // customer_fs_id = the customer's document id); a number not linked to a customer gets nothing.
+    const inboxWho = new Map(); // chat id → customer doc id ("" when not linked)
+    let inboxBox = null, inboxChat = null;
+    function putInReplyBox(text) {
+      const ta = document.querySelector('textarea[placeholder^="Tulis balasan"]'); if (!ta) return false;
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value").set.call(ta, text); // React's own setter, so its state follows
+      ta.dispatchEvent(new Event("input", { bubbles: true })); ta.focus(); ta.setSelectionRange(text.length, text.length);
+      return true;
+    }
+    function inboxAnswer(r) {
+      const wrap = el("div", "erp-dock erp-dock-inline"); wrap.setAttribute("role", "region"); wrap.setAttribute("aria-label", "Dock: the Answer for this customer");
+      const box = answerBox(r); wrap.append(box);
+      // answerBox redraws itself (every 30 s while it waits for readings); the extra buttons go back in after each redraw
+      const extras = () => {
+        const acts = box.querySelector(".actions"), reply = box.querySelector(".reply"); if (!acts || acts.querySelector(".put")) return;
+        const put = el("button", "btn put", "Put in reply box"); put.type = "button";
+        put.onclick = () => { if (!putInReplyBox(reply?.textContent || "")) { put.textContent = "No reply box"; setTimeout(() => (put.textContent = "Put in reply box"), 1500); } };
+        const show = el("button", "btn", wrap.classList.contains("open") ? "Hide reply" : "Show reply"); show.type = "button";
+        show.onclick = () => { show.textContent = wrap.classList.toggle("open") ? "Hide reply" : "Show reply"; };
+        const card = el("button", "btn", "Open card"); card.type = "button"; card.onclick = () => { location.hash = "dock=" + encodeURIComponent(r.username); };
+        acts.prepend(put); acts.append(show, card);
+      };
+      new MutationObserver(extras).observe(box, { childList: true }); extras();
+      return wrap;
+    }
+    async function inboxTick() {
+      const chat = location.pathname === "/wa/inbox" ? new URLSearchParams(location.search).get("c") : null;
+      if (chat !== inboxChat) { inboxBox?.remove(); inboxBox = null; inboxChat = chat; }
+      if (!chat || inboxBox?.isConnected) return;
+      const ta = document.querySelector('textarea[placeholder^="Tulis balasan"]'), col = ta?.closest(".flex-col");
+      const head = col && [...col.children].find((c) => c.classList.contains("overflow-y-auto")); if (!head) return; // the chat is still loading
+      if (!inboxWho.has(chat)) {
+        inboxWho.set(chat, null);
+        try { inboxWho.set(chat, (await api(`/api/wa/inbox/${encodeURIComponent(chat)}/detail`)).percakapan?.customer_fs_id || ""); } catch { inboxWho.delete(chat); return; }
+      }
+      const docId = inboxWho.get(chat); if (!docId || chat !== inboxChat) return;
+      await data(); const r = customers?.find((c) => c.customerDocId === docId); if (!r || chat !== inboxChat || inboxBox?.isConnected) return;
+      inboxBox?.remove(); inboxBox = inboxAnswer(r); head.before(inboxBox);
+    }
+    setInterval(() => { if (document.visibilityState === "visible") inboxTick().catch(() => {}); }, 1000);
     // ---- the map as a brief for a technician ----
     // What's wrong, where, and how bad, readable on the map itself and in the picture it shares: a strip with the
     // severity and the counts, a legend, the problem customers named, labelled rings and a scale bar, the network boxes

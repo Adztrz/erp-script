@@ -150,6 +150,10 @@ The script is built from `src/`: parts of the one script cut at its own section 
 
 Install it like the main script: open the raw file URL, `https://raw.githubusercontent.com/Adztrz/erp-script/main/erp-router-bridge.user.js`, and Tampermonkey offers to install it. The first time it contacts a router, Tampermonkey asks you to allow that address.
 
+## The Answer in the ERP's Inbox WA
+
+With a chat open in the ERP's own Inbox WA, the Dock's Answer for that customer sits in the customer panel at the top of the chat: the verdict (area outage, their cable, modem off, speed cap below the plan, line fine…), the next step and the reply to send. **Put in reply box** puts the reply in the ERP's message box (you read it and send it yourself), **Show reply** shows it first, **Copy reply** copies it, and **Open card** opens the Dock's full card. It uses the chat's own link to the customer, so a number that isn't linked to a customer gets nothing.
+
 ## Dock in WhatsApp Web
 
 `erp-whatsapp.user.js` is a second, optional userscript. It puts the Dock's customer card beside the open chat in WhatsApp Web (Alt+K shows or hides it):
