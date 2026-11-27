@@ -392,6 +392,12 @@
       for (const [t, dz, label] of [["+", 1, "Zoom in"], ["−", -1, "Zoom out"]]) { const b = el("button", null, t); b.type = "button"; b.setAttribute("aria-label", label);
         b.disabled = (dz > 0 && z >= T.max) || (dz < 0 && z <= 12); b.onclick = () => { view.zoom = (view.zoom || 0) + dz; tileMap(box, r, n, radius, rows); }; zoom.append(b); }
       zoom.append(recentre(box), rxButton(box), baseButton(box, kind), shareButton(box));
+      // full screen hides the card's 100 m / 300 m / 1 km buttons, so the map gets its own (the card follows)
+      if (full) for (const m of [100, 300, 1000]) {
+        const b = el("button", `bm rad${m === 100 ? " first" : ""}${radius === m ? " on" : ""}`, m < 1000 ? String(m) : "1k"); b.type = "button"; b.setAttribute("aria-pressed", String(radius === m));
+        b.title = `Customers within ${m < 1000 ? `${m} m` : "1 km"}`; b.setAttribute("aria-label", b.title);
+        b.onclick = () => { if (view.radius === m) return; view.radius = m; view.zoom = 0; drawBody(); }; zoom.append(b);
+      }
       box.classList.toggle("sat", kind === "sat"); box.classList.toggle("carto", !!carto);
       const at = (p) => { const [x, y] = world(p); return [x - left, y - top]; };
       const scene = briefScene({ pts: [{ c: r, p: n.c, k: health(r), me: true }, ...n.list.map((x) => ({ c: x.r, p: x.p, k: x.k, t: x.t, u: x.u }))], at, mpp, w, h,

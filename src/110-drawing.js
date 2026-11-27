@@ -195,6 +195,7 @@
       .erp-dock .map .spksheet b { color: var(--paper); font-weight: 500; } .erp-dock .map .spksheet .acts { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 4px; }
       .erp-dock .map .spksheet select, .erp-dock .map .spksheet input { height: 28px; border: 0; border-radius: 6px; background: var(--canvas); color: var(--paper); font: 12px Inter, system-ui, sans-serif; padding: 0 6px; max-width: 220px; }
       .erp-dock .map .spksheet .copy.primary { background: var(--paper); color: #07090b; }
+      .erp-dock .map .zoom button.rad.first { margin-top: 6px; }
       .erp-dock .map .zoom button.bm.on { background: var(--paper); color: #07090b; }
       .erp-dock .map .mrx { position: absolute; z-index: 1; transform: translate(9px, -50%); padding: 0 4px; border-radius: 3px; background: rgba(9,11,12,.82); color: var(--body); font: 500 10px/14px Inter, system-ui, sans-serif; font-variant-numeric: tabular-nums; white-space: nowrap; pointer-events: none; }
       .erp-dock .map .mrx.warn { color: #e0b252; } .erp-dock .map .mrx.crit { background: #e0b252; color: #07090b; font-weight: 600; }

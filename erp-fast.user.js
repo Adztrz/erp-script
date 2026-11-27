@@ -2,7 +2,7 @@
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/erp-script/main/icons/dock.png
-// @version      3.31.1
+// @version      3.32.0
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -2028,6 +2028,7 @@
       .erp-dock .map .spksheet b { color: var(--paper); font-weight: 500; } .erp-dock .map .spksheet .acts { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 4px; }
       .erp-dock .map .spksheet select, .erp-dock .map .spksheet input { height: 28px; border: 0; border-radius: 6px; background: var(--canvas); color: var(--paper); font: 12px Inter, system-ui, sans-serif; padding: 0 6px; max-width: 220px; }
       .erp-dock .map .spksheet .copy.primary { background: var(--paper); color: #07090b; }
+      .erp-dock .map .zoom button.rad.first { margin-top: 6px; }
       .erp-dock .map .zoom button.bm.on { background: var(--paper); color: #07090b; }
       .erp-dock .map .mrx { position: absolute; z-index: 1; transform: translate(9px, -50%); padding: 0 4px; border-radius: 3px; background: rgba(9,11,12,.82); color: var(--body); font: 500 10px/14px Inter, system-ui, sans-serif; font-variant-numeric: tabular-nums; white-space: nowrap; pointer-events: none; }
       .erp-dock .map .mrx.warn { color: #e0b252; } .erp-dock .map .mrx.crit { background: #e0b252; color: #07090b; font-weight: 600; }
@@ -5255,6 +5256,12 @@
       for (const [t, dz, label] of [["+", 1, "Zoom in"], ["−", -1, "Zoom out"]]) { const b = el("button", null, t); b.type = "button"; b.setAttribute("aria-label", label);
         b.disabled = (dz > 0 && z >= T.max) || (dz < 0 && z <= 12); b.onclick = () => { view.zoom = (view.zoom || 0) + dz; tileMap(box, r, n, radius, rows); }; zoom.append(b); }
       zoom.append(recentre(box), rxButton(box), baseButton(box, kind), shareButton(box));
+      // full screen hides the card's 100 m / 300 m / 1 km buttons, so the map gets its own (the card follows)
+      if (full) for (const m of [100, 300, 1000]) {
+        const b = el("button", `bm rad${m === 100 ? " first" : ""}${radius === m ? " on" : ""}`, m < 1000 ? String(m) : "1k"); b.type = "button"; b.setAttribute("aria-pressed", String(radius === m));
+        b.title = `Customers within ${m < 1000 ? `${m} m` : "1 km"}`; b.setAttribute("aria-label", b.title);
+        b.onclick = () => { if (view.radius === m) return; view.radius = m; view.zoom = 0; drawBody(); }; zoom.append(b);
+      }
       box.classList.toggle("sat", kind === "sat"); box.classList.toggle("carto", !!carto);
       const at = (p) => { const [x, y] = world(p); return [x - left, y - top]; };
       const scene = briefScene({ pts: [{ c: r, p: n.c, k: health(r), me: true }, ...n.list.map((x) => ({ c: x.r, p: x.p, k: x.k, t: x.t, u: x.u }))], at, mpp, w, h,
