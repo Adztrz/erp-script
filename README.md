@@ -182,6 +182,8 @@ Install it like the main script: `https://raw.githubusercontent.com/Adztrz/erp-s
 
 The half-circle button at the top of the Dock turns the whole ERP black and bone, like Faust: near-black pages, graphite cards, bone for primary buttons, links and focus. Panels with hard-coded blue, violet or cyan (BOQ box, route cards, badges) turn to warm greys of the same lightness. Red, green and amber stay, so errors and status still read. It's applied before the page draws (no flash), remembered in this browser, and the button turns it off again.
 
+Status dots keep their meaning: in the LDN customer list's INET column (and its legend), green is online in RADIUS LDN, bone is online through the router only, dark grey is offline and near-black with a red ring is not monitored, so online reads bright and offline dim.
+
 ## Review queue (Approvals)
 
 Goes through the waiting reports one after another from the keyboard. On Technical → Approvals press **Review queue** in the bar, pick a type if you like, and **Start**. Each report opens in the ERP's own review window, and the keys press that window's own controls:

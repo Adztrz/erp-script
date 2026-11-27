@@ -21,7 +21,13 @@
       --sidebar-background: 200 14% 4%; --sidebar-foreground: 40 8% 90%; --sidebar-primary: 23 23% 89%; --sidebar-primary-foreground: 210 22% 4%;
       --sidebar-accent: 200 7% 11%; --sidebar-accent-foreground: 40 8% 96%; --sidebar-border: 180 1% 14%; --sidebar-ring: 23 23% 89%; }
     html.erp-mono body { background: #07090b; }
-    html.erp-mono ::selection { background: rgba(233,225,220,.25); }`;
+    html.erp-mono ::selection { background: rgba(233,225,220,.25); }
+    /* status dots (LDN's INET column and its legend): sky "online through the router only" would turn into a grey
+       darker than offline's, so online reads bright and offline dim: green = online in RADIUS LDN, bone = online
+       through the router only, dark grey = offline, near-black with its red ring = not monitored */
+    html.erp-mono .rounded-full.bg-sky-500 { background-color: #e9e1dc !important; }
+    html.erp-mono .rounded-full.bg-gray-400 { background-color: #4a4d4f !important; }
+    html.erp-mono .rounded-full.bg-gray-300 { background-color: #1f2223 !important; }`;
   let monoSheet = null;
   const monoDone = new WeakSet();
   // a colour literal → its warm-grey twin, unless it is red, green or amber (those are only toned down a little)
