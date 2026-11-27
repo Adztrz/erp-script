@@ -2,7 +2,7 @@
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/erp-script/main/icons/dock.png
-// @version      3.32.0
+// @version      3.33.0
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -5099,10 +5099,13 @@
       };
       box.draw = draw; draw(); return box;
     }
+    // the Nearby radii: up to 5 km, for an outage over a whole area
+    const RADII = [100, 300, 1000, 2000, 5000];
+    const radText = (m) => (m < 1000 ? `${m} m` : `${m / 1000} km`.replace(".", ","));
     function nearView(r) {
       const box = el("div", "near rise"); box.style.setProperty("--i", "3");
       const head = el("div", "row"), e = el("div", "eyebrow"); e.style.margin = "0"; e.append("Nearby");
-      const seg = el("div", "seg"); for (const m of [100, 300, 1000]) { const b = el("button", null, m < 1000 ? `${m} m` : "1 km"); b.type = "button"; b.setAttribute("aria-pressed", String(view.radius === m)); b.onclick = () => { view.radius = m; view.zoom = 0; drawBody(); }; seg.append(b); }
+      const seg = el("div", "seg"); for (const m of RADII) { const b = el("button", null, radText(m)); b.type = "button"; b.setAttribute("aria-pressed", String(view.radius === m)); b.onclick = () => { view.radius = m; view.zoom = 0; drawBody(); }; seg.append(b); }
       head.append(e, seg); box.append(head);
       const n = nearby(r, view.radius);
       if (!n) { box.append(el("p", "note", customers && !("lat" in r) ? "Locations arrive with the next refresh of the customer list (LDN → Pelanggan → Update)." : "This customer has no location saved.")); return box; }
@@ -5117,7 +5120,7 @@
       for (const [i, x] of n.list.slice(0, 8).entries()) { const it = custItem(x.r, i); it.querySelector(".r").textContent = `${Math.round(x.d)} m`;
         it.addEventListener("mouseenter", () => map.hl?.(i, true)); it.addEventListener("mouseleave", () => map.hl?.(i, false)); rows.push(it); box.append(it); }
       setTimeout(() => { tileMap(map, r, n, view.radius, rows); ponLine(pon, r, map); }, 0); // once the card is on the page (a frame may not come while the tab is hidden)
-      if (n.list.length > 8) box.append(el("p", "note", `and ${n.list.length - 8} more within ${view.radius < 1000 ? `${view.radius} m` : "1 km"}`));
+      if (n.list.length > 8) box.append(el("p", "note", `and ${n.list.length - 8} more within ${radText(view.radius)}`));
       return box;
     }
     // A tile map drawn without a map library: a dark street map (OpenStreetMap's own tiles, darkened here; no key) where the status colours
@@ -5219,7 +5222,7 @@
       if (view.zoomFor !== r.username) { view.zoom = 0; view.zoomFor = r.username; }
       const mpp0 = 156543.03392 * Math.cos(n.c.lat * Math.PI / 180); // metres per pixel at zoom 0
       const { kind, carto, T } = tileSource();
-      const z = Math.max(12, Math.min(T.max, Math.floor(Math.log2((mpp0 * Math.min(w, h - 120) * 0.6) / radius)) + (view.zoom || 0)));
+      const z = Math.max(10, Math.min(T.max, Math.floor(Math.log2((mpp0 * Math.min(w, h - 120) * 0.6) / radius)) + (view.zoom || 0)));
       const size = 256 * 2 ** z, world = (p) => { const sin = Math.sin(p.lat * Math.PI / 180); return [((p.lng + 180) / 360) * size, (0.5 - Math.log((1 + sin) / (1 - sin)) / (4 * Math.PI)) * size]; };
       if (box.ctrFor !== r.username) { box.ctr = null; box.ctrFor = r.username; }
       const [cx, cy] = box.ctr ? [box.ctr[0] * size, box.ctr[1] * size] : world(n.c), left = cx - w / 2, top = cy - h / 2, mpp = mpp0 / 2 ** z;
@@ -5254,19 +5257,19 @@
       const full = box.classList.contains("full"), fs = el("button", null, full ? "⤡" : "⤢"); fs.type = "button"; fs.title = full ? "Back (F or Esc)" : "Full screen (F)";
       fs.setAttribute("aria-label", full ? "Leave full screen" : "Full screen"); fs.onclick = () => toggleFull(box); zoom.append(fs);
       for (const [t, dz, label] of [["+", 1, "Zoom in"], ["−", -1, "Zoom out"]]) { const b = el("button", null, t); b.type = "button"; b.setAttribute("aria-label", label);
-        b.disabled = (dz > 0 && z >= T.max) || (dz < 0 && z <= 12); b.onclick = () => { view.zoom = (view.zoom || 0) + dz; tileMap(box, r, n, radius, rows); }; zoom.append(b); }
+        b.disabled = (dz > 0 && z >= T.max) || (dz < 0 && z <= 10); b.onclick = () => { view.zoom = (view.zoom || 0) + dz; tileMap(box, r, n, radius, rows); }; zoom.append(b); }
       zoom.append(recentre(box), rxButton(box), baseButton(box, kind), shareButton(box));
-      // full screen hides the card's 100 m / 300 m / 1 km buttons, so the map gets its own (the card follows)
-      if (full) for (const m of [100, 300, 1000]) {
-        const b = el("button", `bm rad${m === 100 ? " first" : ""}${radius === m ? " on" : ""}`, m < 1000 ? String(m) : "1k"); b.type = "button"; b.setAttribute("aria-pressed", String(radius === m));
-        b.title = `Customers within ${m < 1000 ? `${m} m` : "1 km"}`; b.setAttribute("aria-label", b.title);
+      // full screen hides the card's radius buttons, so the map gets its own (the card follows)
+      if (full) for (const m of RADII) {
+        const b = el("button", `bm rad${m === 100 ? " first" : ""}${radius === m ? " on" : ""}`, m < 1000 ? String(m) : `${m / 1000}k`); b.type = "button"; b.setAttribute("aria-pressed", String(radius === m));
+        b.title = `Customers within ${radText(m)}`; b.setAttribute("aria-label", b.title);
         b.onclick = () => { if (view.radius === m) return; view.radius = m; view.zoom = 0; drawBody(); }; zoom.append(b);
       }
       box.classList.toggle("sat", kind === "sat"); box.classList.toggle("carto", !!carto);
       const at = (p) => { const [x, y] = world(p); return [x - left, y - top]; };
       const scene = briefScene({ pts: [{ c: r, p: n.c, k: health(r), me: true }, ...n.list.map((x) => ({ c: x.r, p: x.p, k: x.k, t: x.t, u: x.u }))], at, mpp, w, h,
-        rings: [[hx, hy, radius / 2 / mpp, `${radius / 2} m`], [hx, hy, radius / mpp, radius < 1000 ? `${radius} m` : "1 km"]],
-        me: [hx, hy, r.nama || r.username], about: { what: `Radius ${radius < 1000 ? `${radius} m` : "1 km"} dari ${r.nama || r.username}`, near: r } });
+        rings: [[hx, hy, radius / 2 / mpp, radText(radius / 2)], [hx, hy, radius / mpp, radText(radius)]],
+        me: [hx, hy, r.nama || r.username], about: { what: `Radius ${radText(radius)} dari ${r.nama || r.username}`, near: r } });
       box.scene = scene;
       const tags = rxTags(n.list.map((x) => { const [px, py] = world(x.p); return [x.r, px - left, py - top]; }), new Set(scene.labels.map((l) => l.c)));
       mapLayers(box, [tiles, ring(0.5, "half"), ring(1, ""), ...briefUnder(scene), ...dots, ...tags, me, ...briefOver(scene), tip, zoom, el("span", "attr", T.attr)]);
