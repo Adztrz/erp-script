@@ -370,9 +370,12 @@
       const ring = (f, cls) => { const d = el("span", `ring ${cls}`), R = (radius * f) / mpp; d.style.cssText = `width:${2 * R}px;height:${2 * R}px;left:${hx - R}px;top:${hy - R}px`; return d; };
       const tip = el("span", "tip"); tip.hidden = true;
       waitForBrief(box);
-      n.list.forEach((x) => { x.k = health(x.r); x.t = DOWN.has(x.k) ? downAt(x.r) : 0; x.u = (x.k === "on" || x.k === "weak") && unstable(x.r); });
+      // signal on every online dot: an amber ring at −26…−28 dBm (under −28 the dot itself turns amber); a faded dot when
+      // their modem isn't found on any OLT, so the map shows whose line it can't see
+      const sgOf = (c) => { if (!onts) return ""; const o = modemOf(c).ont; return !o ? "none" : usable(o) ? sigLevel(o.rx) : ""; };
+      n.list.forEach((x) => { x.k = health(x.r); x.t = DOWN.has(x.k) ? downAt(x.r) : 0; x.u = (x.k === "on" || x.k === "weak") && unstable(x.r); x.sg = sgOf(x.r); });
       const dots = n.list.map((x, i) => {
-        const [px, py] = world(x.p), b = el("button", `mdot ${x.k}${x.u ? " unst" : ""}${x.t && Date.now() - x.t < FRESH ? " fresh" : ""}`); b.type = "button"; b.tabIndex = -1; b.style.zIndex = RANK[x.k] > 1 ? "1" : "";
+        const [px, py] = world(x.p), b = el("button", `mdot ${x.k}${x.u ? " unst" : ""}${x.t && Date.now() - x.t < FRESH ? " fresh" : ""}${x.sg ? ` sg-${x.sg}` : ""}`); b.type = "button"; b.tabIndex = -1; b.style.zIndex = RANK[x.k] > 1 ? "1" : "";
         b.style.left = `${px - left}px`; b.style.top = `${py - top}px`; b.style.setProperty("--d", `${Math.round(Math.min(1, x.d / radius) * 350)}ms`);
         b.setAttribute("aria-label", `${x.r.nama || x.r.username}, ${KIND[x.k][0].toLowerCase()}, ${Math.round(x.d)} m`);
         b.onmouseenter = () => hl(i, true); b.onmouseleave = () => hl(i, false);
@@ -403,7 +406,7 @@
       }
       box.classList.toggle("sat", kind === "sat"); box.classList.toggle("carto", !!carto);
       const at = (p) => { const [x, y] = world(p); return [x - left, y - top]; };
-      const scene = briefScene({ pts: [{ c: r, p: n.c, k: health(r), me: true }, ...n.list.map((x) => ({ c: x.r, p: x.p, k: x.k, t: x.t, u: x.u }))], at, mpp, w, h,
+      const scene = briefScene({ pts: [{ c: r, p: n.c, k: health(r), me: true }, ...n.list.map((x) => ({ c: x.r, p: x.p, k: x.k, t: x.t, u: x.u, sg: x.sg }))], at, mpp, w, h,
         rings: [[hx, hy, radius / 2 / mpp, radText(radius / 2)], [hx, hy, radius / mpp, radText(radius)]],
         me: [hx, hy, r.nama || r.username], about: { what: `Radius ${radText(radius)} dari ${r.nama || r.username}`, near: r } });
       box.scene = scene;

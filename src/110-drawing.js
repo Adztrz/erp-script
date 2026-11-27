@@ -152,6 +152,11 @@
       .erp-dock .map svg.links { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; } .erp-dock .map svg.links line { stroke: rgba(239,239,237,.4); stroke-width: 1; }
       .erp-dock .map .fcnt { position: absolute; z-index: 2; height: 16px; padding: 0 5px; border-radius: 3px; background: rgba(9,11,12,.92); color: var(--paper); font: 700 10px/16px Inter, system-ui, sans-serif; pointer-events: none; box-shadow: inset 0 0 0 1px var(--hair); }
       .erp-dock .map .fcnt.bad { background: var(--red); color: #fff; box-shadow: none; }
+      .erp-dock .mdot.on.sg-warn { box-shadow: 0 0 0 2px #e0b252; } .erp-dock .mdot.on.sg-none { opacity: .45; }
+      .erp-dock .map svg.links line.up { stroke: rgba(239,239,237,.38); stroke-dasharray: 3 3; } .erp-dock .map svg.links line.dn { stroke: rgba(239,239,237,.8); stroke-width: 1.5; stroke-dasharray: 3 3; }
+      .erp-dock .map .fcnt.calm { color: var(--muted); }
+      .erp-dock .map svg.links line.known { stroke-dasharray: none; }
+      .erp-dock .legend i.k.sgwarn { background: var(--green); box-shadow: 0 0 0 2px #e0b252; } .erp-dock .legend i.k.sgnone { background: var(--green); opacity: .45; }
       .erp-dock .mdot.unst { outline: 2px dashed #e0b252; outline-offset: 2px; }
       .erp-dock .mdot.fresh::after { content: ""; position: absolute; inset: -7px; border-radius: 50%; border: 2px solid rgba(239,239,237,.8); animation: erp-fresh 1.6s var(--out) infinite; pointer-events: none; }
       @keyframes erp-fresh { from { transform: scale(.55); opacity: .9; } to { transform: scale(1.6); opacity: 0; } }
