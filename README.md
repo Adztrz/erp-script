@@ -154,6 +154,8 @@ Install it like the main script: open the raw file URL, `https://raw.githubuserc
 
 With a chat open in the ERP's own Inbox WA, the Dock's Answer for that customer sits in the customer panel at the top of the chat: the verdict (area outage, their cable, modem off, speed cap below the plan, line fine…), the next step and the reply to send. **Put in reply box** puts the reply in the ERP's message box (you read it and send it yourself), **Show reply** shows it first, **Copy reply** copies it, and **Open card** opens the Dock's full card. It uses the chat's own link to the customer, so a number that isn't linked to a customer gets nothing.
 
+Below it, **Quick replies** put the everyday lines in the reply box with one press: Pembayaran (thanks for confirming the payment), Konfirmasi (thanks for confirming), Cabut WiFi (unplug the modem for 1 minute, then plug it back in) and Ke tim teknis (the problem is passed to the technical team). **+ Add** saves your own (the text already in the reply box, or one you type) in this browser, and × removes one of yours.
+
 ## Dock in WhatsApp Web
 
 `erp-whatsapp.user.js` is a second, optional userscript. It puts the Dock's customer card beside the open chat in WhatsApp Web (Alt+K shows or hides it):

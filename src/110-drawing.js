@@ -21,6 +21,11 @@
       .erp-dock.erp-dock-inline { position: relative; z-index: auto; width: auto; max-height: none; margin: 8px 12px; padding: 10px 12px 2px; border-radius: 8px; box-shadow: inset 0 0 0 1px var(--edge); animation: none; flex-shrink: 0; }
       .erp-dock-inline .answer { margin: 0; padding: 0; background: none; box-shadow: none; }
       .erp-dock-inline .answer .reply { display: none; } .erp-dock-inline.open .answer .reply { display: block; }
+      .erp-dock-inline .quick { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 0 10px; border-top: 1px solid var(--hair); }
+      .erp-dock-inline .quick .qlabel { font-size: 12px; color: var(--muted); margin-right: 2px; }
+      .erp-dock-inline .quick .chip { min-height: 28px; padding: 0 10px; font-size: 12.5px; } .erp-dock-inline .quick .chip.done { box-shadow: inset 0 0 0 1px var(--green); color: var(--green); }
+      .erp-dock-inline .quick .mine { display: inline-flex; align-items: center; } .erp-dock-inline .quick .mine .x { border: 0; background: none; color: var(--muted); cursor: pointer; padding: 0 4px; font-size: 14px; }
+      .erp-dock-inline .quick .mine .x:hover { color: var(--paper); } .erp-dock-inline .quick .add { color: var(--muted); }
       .erp-dock-inline .answer .actions { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
       .erp-dock.out { animation: erp-ht-close .22s cubic-bezier(.5, 0, .75, 0) both; pointer-events: none; }
       /* Halftone motion: a wave front of dots. Solid behind the front, a band of dots on it, nothing ahead; the mask

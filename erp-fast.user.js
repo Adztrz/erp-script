@@ -2,7 +2,7 @@
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/erp-script/main/icons/dock.png
-// @version      3.30.0
+// @version      3.31.0
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -1848,6 +1848,11 @@
       .erp-dock.erp-dock-inline { position: relative; z-index: auto; width: auto; max-height: none; margin: 8px 12px; padding: 10px 12px 2px; border-radius: 8px; box-shadow: inset 0 0 0 1px var(--edge); animation: none; flex-shrink: 0; }
       .erp-dock-inline .answer { margin: 0; padding: 0; background: none; box-shadow: none; }
       .erp-dock-inline .answer .reply { display: none; } .erp-dock-inline.open .answer .reply { display: block; }
+      .erp-dock-inline .quick { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 0 10px; border-top: 1px solid var(--hair); }
+      .erp-dock-inline .quick .qlabel { font-size: 12px; color: var(--muted); margin-right: 2px; }
+      .erp-dock-inline .quick .chip { min-height: 28px; padding: 0 10px; font-size: 12.5px; } .erp-dock-inline .quick .chip.done { box-shadow: inset 0 0 0 1px var(--green); color: var(--green); }
+      .erp-dock-inline .quick .mine { display: inline-flex; align-items: center; } .erp-dock-inline .quick .mine .x { border: 0; background: none; color: var(--muted); cursor: pointer; padding: 0 4px; font-size: 14px; }
+      .erp-dock-inline .quick .mine .x:hover { color: var(--paper); } .erp-dock-inline .quick .add { color: var(--muted); }
       .erp-dock-inline .answer .actions { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
       .erp-dock.out { animation: erp-ht-close .22s cubic-bezier(.5, 0, .75, 0) both; pointer-events: none; }
       /* Halftone motion: a wave front of dots. Solid behind the front, a band of dots on it, nothing ahead; the mask
@@ -5357,7 +5362,7 @@
     // With a chat open in /wa/inbox (?c=<chat>), the Dock's Answer for that customer sits above the ERP's own customer
     // panel: the verdict (area outage, their cable, modem off, speed cap, line fine…) and the next step, with the reply
     // to send. "Put in reply box" fills the ERP's message box and leaves sending to you; "Show reply" shows it first;
-    // "Open card" opens the Dock's full card. The chat's customer comes from the ERP's own link (the chat's
+    // "Open card" opens the Dock's full card. Below it, quick replies for the everyday lines. The chat's customer comes from the ERP's own link (the chat's
     // customer_fs_id = the customer's document id); a number not linked to a customer gets nothing.
     const inboxWho = new Map(); // chat id → customer doc id ("" when not linked)
     let inboxBox = null, inboxChat = null;
@@ -5367,9 +5372,43 @@
       ta.dispatchEvent(new Event("input", { bubbles: true })); ta.focus(); ta.setSelectionRange(text.length, text.length);
       return true;
     }
+    // Quick replies: the everyday lines, one press puts them in the reply box. "+ Add" keeps your own in this browser
+    // (× on one of yours removes it); the first four are always there.
+    const QUICK = "erpDock.quickReplies";
+    const QUICK_START = [
+      ["Pembayaran", "Terima kasih atas konfirmasi pembayarannya, kak 🙏"],
+      ["Konfirmasi", "Terima kasih atas konfirmasinya, kak 🙏"],
+      ["Cabut WiFi", "Mohon dibantu cabut modem WiFi-nya selama 1 menit, kemudian dicolok kembali ya kak."],
+      ["Ke tim teknis", "Baik kak, untuk kendalanya akan kami sampaikan kepada tim teknis. Terima kasih atas kesabarannya 🙏"],
+    ];
+    function quickRow() {
+      const row = el("div", "quick"), own = () => { try { return JSON.parse(localStorage.getItem(QUICK)) || []; } catch { return []; } };
+      const draw = () => {
+        row.replaceChildren(el("span", "qlabel", "Quick replies"));
+        const chip = (label, text, i) => {
+          const b = el("button", "btn chip", label); b.type = "button"; b.title = text;
+          b.onclick = () => { if (putInReplyBox(text)) { b.classList.add("done"); setTimeout(() => b.classList.remove("done"), 900); } };
+          if (i == null) return b;
+          const x = el("button", "x", "×"); x.type = "button"; x.title = "Remove this one"; x.setAttribute("aria-label", `Remove ${label}`);
+          x.onclick = () => { const l = own(); l.splice(i, 1); try { localStorage.setItem(QUICK, JSON.stringify(l)); } catch {} draw(); };
+          const g = el("span", "mine"); g.append(b, x); return g;
+        };
+        for (const [l, t] of QUICK_START) row.append(chip(l, t));
+        own().forEach(([l, t], i) => row.append(chip(l, t, i)));
+        const add = el("button", "btn chip add", "+ Add"); add.type = "button"; add.title = "Save the text in the reply box (or type one) as a quick reply";
+        add.onclick = () => {
+          const typed = document.querySelector('textarea[placeholder^="Tulis balasan"]')?.value.trim();
+          const text = (prompt("The reply text:", typed || "") || "").trim(); if (!text) return;
+          const label = (prompt("A short name for its button:", text.split(/\s+/).slice(0, 3).join(" ")) || "").trim().slice(0, 24); if (!label) return;
+          const l = own(); l.push([label, text]); try { localStorage.setItem(QUICK, JSON.stringify(l)); } catch {} draw();
+        };
+        row.append(add);
+      };
+      draw(); return row;
+    }
     function inboxAnswer(r) {
       const wrap = el("div", "erp-dock erp-dock-inline"); wrap.setAttribute("role", "region"); wrap.setAttribute("aria-label", "Dock: the Answer for this customer");
-      const box = answerBox(r); wrap.append(box);
+      const box = answerBox(r); wrap.append(box, quickRow());
       // answerBox redraws itself (every 30 s while it waits for readings); the extra buttons go back in after each redraw
       const extras = () => {
         const acts = box.querySelector(".actions"), reply = box.querySelector(".reply"); if (!acts || acts.querySelector(".put")) return;
