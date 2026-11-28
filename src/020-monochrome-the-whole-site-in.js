@@ -27,7 +27,9 @@
        through the router only, dark grey = offline, near-black with its red ring = not monitored */
     html.erp-mono .rounded-full.bg-sky-500 { background-color: #e9e1dc !important; }
     html.erp-mono .rounded-full.bg-gray-400 { background-color: #4a4d4f !important; }
-    html.erp-mono .rounded-full.bg-gray-300 { background-color: #1f2223 !important; }`;
+    html.erp-mono .rounded-full.bg-gray-300 { background-color: #1f2223 !important; }
+    /* "primary" is bone here, so white text on it (the MRTG report's header bar, banners) turns into the dark ink */
+    html.erp-mono .bg-primary.text-white, html.erp-mono .from-primary.text-white { color: hsl(var(--primary-foreground)) !important; }`;
   let monoSheet = null;
   const monoDone = new WeakSet();
   // a colour literal → its warm-grey twin, unless it is red, green or amber (those are only toned down a little)

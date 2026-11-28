@@ -2,7 +2,7 @@
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/erp-script/main/icons/dock.png
-// @version      3.36.1
+// @version      3.36.2
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -92,7 +92,9 @@
        through the router only, dark grey = offline, near-black with its red ring = not monitored */
     html.erp-mono .rounded-full.bg-sky-500 { background-color: #e9e1dc !important; }
     html.erp-mono .rounded-full.bg-gray-400 { background-color: #4a4d4f !important; }
-    html.erp-mono .rounded-full.bg-gray-300 { background-color: #1f2223 !important; }`;
+    html.erp-mono .rounded-full.bg-gray-300 { background-color: #1f2223 !important; }
+    /* "primary" is bone here, so white text on it (the MRTG report's header bar, banners) turns into the dark ink */
+    html.erp-mono .bg-primary.text-white, html.erp-mono .from-primary.text-white { color: hsl(var(--primary-foreground)) !important; }`;
   let monoSheet = null;
   const monoDone = new WeakSet();
   // a colour literal → its warm-grey twin, unless it is red, green or amber (those are only toned down a little)
