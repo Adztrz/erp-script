@@ -2,7 +2,7 @@
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/erp-script/main/icons/dock.png
-// @version      3.36.0
+// @version      3.36.1
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -3415,7 +3415,7 @@
         const down = custs.filter((c) => drops?.off[lower(c.username)]);
         if (down.length) wrap.append(causeBox(down, inc.title), reportBox({ title: inc.title, down: down.length, total: inc.size || custs.length, since: inc.start, custs: down }));
         const pts = custs.map((c) => ({ c, p: where(c), on: !drops?.off[lower(c.username)] })).filter((z) => z.p);
-        if (pts.length) wrap.append(areaMap(pts, `Map of ${inc.title}`, { what: inc.title, since: inc.start }));
+        if (pts.length) wrap.append(areaMap(pts, `Map of ${inc.title}`, { what: inc.title, key: `inc:${inc.id}`, since: inc.start }));
       }
       const rm = el("button", "copy", "Remove this incident"); rm.type = "button"; rm.style.marginTop = "10px";
       rm.onclick = () => { incSave(incidents.filter((x) => x.id !== inc.id)); view.mode = null; view.inc = null; drawBody(); }; wrap.append(rm);
@@ -5026,11 +5026,14 @@
     // a redraw (the radar's minute, an OLT list arriving) rebuilds the maps: each new one keeps the old one's zoom and
     // place, and a map open full screen stays open and takes the new data instead of closing under you
     let mapWas = null;
+    const viewSig = () => JSON.stringify([view.mode || null, view.card?.username || null, view.nas || null, view.inc || null, view.pon || null, view.modem || null]);
     function drawBody() {
       const body = panel?.querySelector(".scroll"); if (!body) return;
       const was = (mapWas = new Map([...document.querySelectorAll(".erp-dock .map[data-what]")].map((m) => [m.dataset.what, m])));
       const full = fullMap(); if (full) full.kept = false;
-      queueMicrotask(() => { if (mapWas === was) mapWas = null; if (fullMap() && !fullMap().kept) dropFull(); });
+      // a full-screen map this redraw didn't rebuild (its name changed, or it has nothing new to show) stays open as it
+      // was, unless you went to another view (another customer, router, incident or tool)
+      queueMicrotask(() => { if (mapWas === was) mapWas = null; const f = fullMap(); if (f && !f.kept && f.viewSig !== viewSig()) dropFull(); });
       items = []; const parts = [];
       if (panel.classList.toggle("wide", view.mode === "bulk") !== panel.classList.contains("was-wide")) { panel.classList.toggle("was-wide"); place(); }
       if (view.mode === "bulk") { parts.push(bulkView()); body.replaceChildren(...parts); items = []; return bulkDraw(); }
@@ -5188,7 +5191,7 @@
     // the same map for a group of customers (a PON port, a router's offline customers): fitted to where they are,
     // isolir red, offline white, online green; a dot shows the name and opens the customer
     function areaMap(pts, label, about = {}) {
-      const key = about.what || label, old = mapWas?.get(key);
+      const key = about.key || about.what || label, old = mapWas?.get(key);
       if (old?.classList.contains("full")) { // open full screen: it stays, with the new data; this spot is where it goes back to
         const spot = el("span"); old.fullHome = spot; old.kept = true; old.setAttribute("aria-label", label);
         old.redraw = () => drawAreaMap(old, pts, about); old.redraw(); spot.redraw = () => old.redraw(); return spot;
@@ -5979,7 +5982,7 @@
       if (!box) return;
       const layer = document.querySelector(".erp-dock-full");
       if (layer) { box.classList.remove("full"); box.fullHome?.replaceWith(box); layer.remove(); }
-      else { const spot = el("span"); box.fullHome = spot; box.replaceWith(spot); const l = el("div", "erp-dock erp-dock-full"); box.classList.add("full"); l.append(box); document.body.append(l); }
+      else { const spot = el("span"); box.fullHome = spot; box.replaceWith(spot); const l = el("div", "erp-dock erp-dock-full"); box.classList.add("full"); box.viewSig = viewSig(); l.append(box); document.body.append(l); }
       box.redraw?.();
     }
     // paste your CARTO key once; it stays in this browser's storage and goes only to CARTO's tile server

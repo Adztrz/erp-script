@@ -122,7 +122,7 @@
         const down = custs.filter((c) => drops?.off[lower(c.username)]);
         if (down.length) wrap.append(causeBox(down, inc.title), reportBox({ title: inc.title, down: down.length, total: inc.size || custs.length, since: inc.start, custs: down }));
         const pts = custs.map((c) => ({ c, p: where(c), on: !drops?.off[lower(c.username)] })).filter((z) => z.p);
-        if (pts.length) wrap.append(areaMap(pts, `Map of ${inc.title}`, { what: inc.title, since: inc.start }));
+        if (pts.length) wrap.append(areaMap(pts, `Map of ${inc.title}`, { what: inc.title, key: `inc:${inc.id}`, since: inc.start }));
       }
       const rm = el("button", "copy", "Remove this incident"); rm.type = "button"; rm.style.marginTop = "10px";
       rm.onclick = () => { incSave(incidents.filter((x) => x.id !== inc.id)); view.mode = null; view.inc = null; drawBody(); }; wrap.append(rm);

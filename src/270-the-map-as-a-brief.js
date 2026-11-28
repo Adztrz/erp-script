@@ -466,7 +466,7 @@
       if (!box) return;
       const layer = document.querySelector(".erp-dock-full");
       if (layer) { box.classList.remove("full"); box.fullHome?.replaceWith(box); layer.remove(); }
-      else { const spot = el("span"); box.fullHome = spot; box.replaceWith(spot); const l = el("div", "erp-dock erp-dock-full"); box.classList.add("full"); l.append(box); document.body.append(l); }
+      else { const spot = el("span"); box.fullHome = spot; box.replaceWith(spot); const l = el("div", "erp-dock erp-dock-full"); box.classList.add("full"); box.viewSig = viewSig(); l.append(box); document.body.append(l); }
       box.redraw?.();
     }
     // paste your CARTO key once; it stays in this browser's storage and goes only to CARTO's tile server

@@ -119,11 +119,14 @@
     // a redraw (the radar's minute, an OLT list arriving) rebuilds the maps: each new one keeps the old one's zoom and
     // place, and a map open full screen stays open and takes the new data instead of closing under you
     let mapWas = null;
+    const viewSig = () => JSON.stringify([view.mode || null, view.card?.username || null, view.nas || null, view.inc || null, view.pon || null, view.modem || null]);
     function drawBody() {
       const body = panel?.querySelector(".scroll"); if (!body) return;
       const was = (mapWas = new Map([...document.querySelectorAll(".erp-dock .map[data-what]")].map((m) => [m.dataset.what, m])));
       const full = fullMap(); if (full) full.kept = false;
-      queueMicrotask(() => { if (mapWas === was) mapWas = null; if (fullMap() && !fullMap().kept) dropFull(); });
+      // a full-screen map this redraw didn't rebuild (its name changed, or it has nothing new to show) stays open as it
+      // was, unless you went to another view (another customer, router, incident or tool)
+      queueMicrotask(() => { if (mapWas === was) mapWas = null; const f = fullMap(); if (f && !f.kept && f.viewSig !== viewSig()) dropFull(); });
       items = []; const parts = [];
       if (panel.classList.toggle("wide", view.mode === "bulk") !== panel.classList.contains("was-wide")) { panel.classList.toggle("was-wide"); place(); }
       if (view.mode === "bulk") { parts.push(bulkView()); body.replaceChildren(...parts); items = []; return bulkDraw(); }
@@ -281,7 +284,7 @@
     // the same map for a group of customers (a PON port, a router's offline customers): fitted to where they are,
     // isolir red, offline white, online green; a dot shows the name and opens the customer
     function areaMap(pts, label, about = {}) {
-      const key = about.what || label, old = mapWas?.get(key);
+      const key = about.key || about.what || label, old = mapWas?.get(key);
       if (old?.classList.contains("full")) { // open full screen: it stays, with the new data; this spot is where it goes back to
         const spot = el("span"); old.fullHome = spot; old.kept = true; old.setAttribute("aria-label", label);
         old.redraw = () => drawAreaMap(old, pts, about); old.redraw(); spot.redraw = () => old.redraw(); return spot;
