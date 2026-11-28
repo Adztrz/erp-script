@@ -29,7 +29,11 @@
     html.erp-mono .rounded-full.bg-gray-400 { background-color: #4a4d4f !important; }
     html.erp-mono .rounded-full.bg-gray-300 { background-color: #1f2223 !important; }
     /* "primary" is bone here, so white text on it (the MRTG report's header bar, banners) turns into the dark ink */
-    html.erp-mono .bg-primary.text-white, html.erp-mono .from-primary.text-white { color: hsl(var(--primary-foreground)) !important; }`;
+    html.erp-mono .bg-primary.text-white, html.erp-mono .from-primary.text-white { color: hsl(var(--primary-foreground)) !important; }
+    /* a white or near-white box the ERP gives no dark-mode colour (QR boxes, printed reports, 66 places in all) keeps its
+       light fill, so its text and the text inside it take dark ink instead of Monochrome's light text */
+    html.erp-mono :is(.bg-white, .bg-slate-50, .bg-gray-50, .bg-zinc-50, .bg-neutral-50, .bg-slate-100, .bg-gray-100):not([class*="dark:bg-"]) {
+      --foreground: 210 22% 8%; --card-foreground: 210 22% 8%; --muted-foreground: 20 3% 36%; color: hsl(210 22% 8%); }`;
   let monoSheet = null;
   const monoDone = new WeakSet();
   // a colour literal → its warm-grey twin, unless it is red, green or amber (those are only toned down a little)

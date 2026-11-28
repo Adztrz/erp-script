@@ -190,6 +190,8 @@ The half-circle button at the top of the Dock turns the whole ERP black and bone
 
 Status dots keep their meaning: in the LDN customer list's INET column (and its legend), green is online in RADIUS LDN, bone is online through the router only, dark grey is offline and near-black with a red ring is not monitored, so online reads bright and offline dim.
 
+Text stays readable where the ERP assumed its own colours: white text on the primary colour (MRTG report header, pricing badges, the assistant and welcome banners, 12 places) turns dark on the bone fill, and a white or near-white box without a dark-mode colour (QR boxes, printed reports) keeps dark ink inside.
+
 ## Review queue (Approvals)
 
 Goes through the waiting reports one after another from the keyboard. On Technical → Approvals press **Review queue** in the bar, pick a type if you like, and **Start**. Each report opens in the ERP's own review window, and the keys press that window's own controls:
