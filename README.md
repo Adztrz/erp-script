@@ -45,6 +45,8 @@ A floating button above the site's own corner button (or **Alt+K**, anywhere in 
 
 Apart from paying (the card's Pay and Bulk Lunas) and the outage radar, it never asks the server on its own: it reads what's kept in this browser. Open LDN Radius → Pelanggan once to fill the customer list (the first time takes about 2 minutes), and Invoices once for invoices. After that the customer list is read again every 5 minutes in the background (about 30 s, by one ERP tab at a time and only while it's on screen; the other tabs use its copy), so online/offline and isolir stay current.
 
+**Customers missing from RADIUS.** The customer list comes from LDN RADIUS, so a customer the ERP has but RADIUS doesn't was never found (about 200, some of them Aktif or Terisolir). Once every 12 hours the Dock reads the ERP's master customer list (only the fields it shows, about 6 MB) and keeps the ones missing from LDN, merged duplicates left out. A search finds them after every LDN match, marked "Not in LDN RADIUS · ERP: <status>" with an amber ring, and their card says so first: they can't log in until they're pushed back to LDN (LDN Radius → "SATU KLIK: dorong pelanggan ERP yang BELUM sinkron → LDN", or saving the customer again in Master). The line readings are left off their card, since they come from RADIUS.
+
 Colours everywhere in the Dock and on its maps: online green, isolir red, offline white; red also marks an alarm (critical signal, a port mostly down, stale data) and amber a warning.
 
 

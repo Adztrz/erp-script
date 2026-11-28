@@ -2,7 +2,7 @@
 // @name         ERP — Dock, fast search, faster Work Orders and Planning
 // @namespace    adztrz
 // @icon         https://raw.githubusercontent.com/Adztrz/erp-script/main/icons/dock.png
-// @version      3.35.0
+// @version      3.36.0
 // @description  Work Orders: loads the newest 500 of each list instead of 8,000 (1000 or All any time). Approvals: shows the first 50 waiting reports (100 or All any time), and a Review queue that goes through them from the keyboard on the ERP's own review window, or approves the ones you tick. Planning: reuses the 11 MB of network assets for 15 minutes, and a district picker keeps the cable route lists short so the form stops lagging; Bulk SPK makes one SPK per FDT → FAT route from a pasted message, or a set number of activation SPKs per technician ("Budi santoso 10 spk"), no form needed. LDN Radius → Pelanggan and Finance → Invoices: instant search as you type, any word order, spacing and punctuation ignored, forgiving of spelling (winna = wina).
 // @match        https://*/*
 // @run-at       document-start
@@ -1748,9 +1748,30 @@
     let customers = null, custAt = 0, invoices = null, invKey = "";
     const prep = (rows) => { for (const r of rows) { r._name = fold(r.nama); r._hay = ` ${r._name} ${fold(r.username)} ${fold(r.address)} ${fold(r.desa)} ${fold(r.kecamatanErp)} ${fold(r.router)} ${fold(r.paket)} ${digits(r.phone)} ${fold(r.ip)} ${fold(r.ontSerial)} `;
       r._words = [...new Set(r._hay.trim().split(" ").filter((x) => x.length > 1 && !/^\d+$/.test(x)).map(sound))]; r._sound = ` ${r._words.join(" ")} `; } return rows; };
+    // Customers the ERP has but LDN RADIUS doesn't (its master list, 215 on 28 Nov 2026: 40 of them Aktif): the
+    // customer list comes from LDN, so they were never found. Once per 12 hours the master list is read (only the
+    // fields shown here, ~6 MB) and those missing from LDN are kept, so a search still finds them, marked. Merged
+    // duplicates ("Digabung") are left out.
+    let outside = null, outsideAt = 0, outsideLoading = null;
+    const OUTSIDE_FIELDS = "id,name,desa,kecamatan,router,status,phone,noWa,address,pppoeUsername,radiusUsername,radiusRouter,radiusPlanName,ontSerialNumber,radiusSyncedAt";
+    const tsOf = (v) => (v?.seconds ? v.seconds * 1000 : v ? Date.parse(v) || 0 : 0);
+    function outsideRefresh() {
+      return (outsideLoading ||= (async () => {
+        if (!customers?.length) return;
+        const j = await api(`/api/pg-read/customers?limit=50000&fields=${OUTSIDE_FIELDS}`);
+        const ids = new Set(customers.map((r) => r.customerDocId).filter(Boolean)), us = new Set(customers.map((r) => lower(r.username)));
+        const rows = (j.data || []).filter((c) => c.status !== "Digabung" && !ids.has(c.id) && !us.has(lower(c.pppoeUsername || c.radiusUsername || "")))
+          .map((c) => ({ username: c.pppoeUsername || c.radiusUsername || "", nama: c.name || "", phone: c.phone || c.noWa || "", address: c.address || "", desa: c.desa || "",
+            kecamatanErp: c.kecamatan || "", router: c.radiusRouter || c.router || "", paket: c.radiusPlanName || "", ontSerial: c.ontSerialNumber || "", customerDocId: c.id,
+            isolir: c.status === "Terisolir", online: false, outside: c.status || "no status", syncedAt: tsOf(c.radiusSyncedAt) }));
+        const v = { at: Date.now(), rows }; await idbPut("outside", v); outside = prep(rows); outsideAt = v.at;
+      })().catch(() => {}).finally(() => { outsideLoading = null; }));
+    }
     async function data() {
       const kept = await idbGet("all");
       if (kept?.rows && kept.at !== custAt) { customers = prep(kept.rows); custAt = kept.at; }
+      if (!outside) { const o = await idbGet("outside"); if (o?.rows) { outside = prep(o.rows); outsideAt = o.at; } }
+      if (customers && Date.now() - outsideAt > 12 * 3600000 && !outsideLoading) outsideRefresh().then(() => { if (panel && view.q) drawBody(); });
       const now = new Date(), key = `inv-${now.getFullYear()}-${now.getMonth() + 1}`;
       if (key !== invKey || !invoices) { const k = await idbGet(key); if (k?.rows) { invoices = k.rows; invKey = key; } }
     }
@@ -1773,6 +1794,10 @@
         if (words.every((w, i) => r._hay.includes(w) || (w.length >= 4 && fuzzyHit(sounds[i], r._words, w.length >= 9 ? 2 : 1)))) out.push([4, r]);
       }
       if (full) findMemo = { words, num, rows: customers, all: out.map((x) => x[1]) }; else if (!narrowed) findMemo = null;
+      // then the ERP's customers missing from LDN (marked on the result), after every LDN match
+      if (out.length < max && outside?.length) for (const r of outside) {
+        if ((num.length >= 6 && r._hay.includes(num)) || words.every((w, i) => r._hay.includes(w) || (w.length >= 4 && r._sound.includes(" " + sounds[i])))) out.push([5, r]);
+      }
       return out.sort((a, b) => a[0] - b[0] || (a[1]._name < b[1]._name ? -1 : 1)).slice(0, max).map((x) => x[1]);
     }
     const pages = () => { const m = new Map(START); for (const [h, t] of Object.entries(ls.get(PAGES, {}))) m.set(h, t); return [...m]; };
@@ -1895,6 +1920,8 @@
       .erp-dock .dot.on { background: var(--green); box-shadow: 0 0 0 3px rgba(85,188,130,.15); }
       .erp-dock .dot.unk { background: transparent; box-shadow: inset 0 0 0 1.5px var(--muted); }
       .erp-dock .dot.iso, .erp-dock .dot.bad { background: var(--red); box-shadow: 0 0 0 3px rgba(241,38,20,.15); }
+      .erp-dock .dot.outside { background: transparent; box-shadow: inset 0 0 0 1.5px #e0b252; }
+      .erp-dock .outside-note { margin: 0 0 12px; padding: 8px 10px; border-radius: 6px; background: var(--raised); box-shadow: inset 3px 0 0 #e0b252; color: var(--paper); font-size: 13px; line-height: 1.5; }
       .erp-dock .dot.off { background: #efefed; } /* online green, isolir red, offline white, as on the maps */
       .erp-dock .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; padding: 0 6px; }
       .erp-dock .tile { display: grid; justify-items: start; gap: 8px; padding: 12px; border: 0; border-radius: 8px; background: var(--canvas); box-shadow: inset 0 0 0 1px var(--hair);
@@ -2264,7 +2291,8 @@
 
     function custItem(r, i) {
       const b = el("button", "item rise"); b.type = "button"; b.style.setProperty("--i", String(i));
-      b.append(el("span", `dot ${state(r)}`), el("span", "t", r.nama || r.username), el("span", "r", r.username), el("span", "s", [r.paket, r.desa, r.router].filter(Boolean).join(" · ")));
+      b.append(el("span", `dot ${r.outside ? "outside" : state(r)}`), el("span", "t", r.nama || r.username), el("span", "r", r.username),
+        el("span", "s", r.outside ? `Not in LDN RADIUS · ERP: ${r.outside}${r.desa ? ` · ${r.desa}` : ""}` : [r.paket, r.desa, r.router].filter(Boolean).join(" · ")));
       b.onclick = () => { view.card = r; view.sel = 0; remember(r); draw(); };
       return b;
     }
@@ -5062,7 +5090,7 @@
     function cardView(r) {
       const wrap = el("div", "card");
       const back = el("button", "back", "← Back"); back.type = "button"; back.onclick = () => { view.card = null; drawBody(); panel.querySelector("input")?.focus(); };
-      const who = el("div", "who rise"); const pill = el("span", "pill"); pill.append(el("span", `dot ${state(r)}`), r.isolir ? "Isolir" : stuckSince(r) ? `Unknown since ${hhmm(stuckSince(r))}` : r.online ? "Online" : "Offline");
+      const who = el("div", "who rise"); const pill = el("span", "pill"); pill.append(el("span", `dot ${r.outside ? "outside" : state(r)}`), r.outside ? "Not in RADIUS" : r.isolir ? "Isolir" : stuckSince(r) ? `Unknown since ${hhmm(stuckSince(r))}` : r.online ? "Online" : "Offline");
       if (!r.isolir && stuckSince(r)) pill.title = `${r.router} stopped reporting sessions at ${hhmm(stuckSince(r))}, so whether this customer is online isn't known (the ERP still says ${r.online ? "online" : "offline"}).`;
       who.append(el("h3", null, r.nama || r.username), pill);
       const facts = el("dl", "facts rise"); facts.style.setProperty("--i", "1");
@@ -5084,6 +5112,11 @@
       lb.title = !r.customerDocId ? "Needs the customer list refreshed (LDN → Pelanggan → Update)" : !digits(r.phone) ? "No phone number: the ERP needs one to send the link" : "Make the one-click login link and send it on WhatsApp, as Master Pelanggan does";
       lb.disabled = !r.customerDocId || !digits(r.phone); acts.append(lb);
       const bill = payBox(r); billDraw(bills.get(r.username));
+      if (r.outside) { // in the ERP, not in LDN RADIUS: say so first; the line readings come from RADIUS, so they're left out
+        const n = el("p", "outside-note rise");
+        n.append(el("b", null, "Not in LDN RADIUS. "), `The ERP has them as ${r.outside}${r.syncedAt ? `, last synced to RADIUS ${new Date(r.syncedAt).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" })}` : ", never synced to RADIUS"}, so they can't log in and there's no line data here. To put them back: LDN Radius → "SATU KLIK: dorong pelanggan ERP yang BELUM sinkron → LDN", or save the customer again in Master.`);
+        wrap.append(back, who, n, facts, tech, acts, link, bill, modemBox(`u:${r.username}`, r)); return wrap;
+      }
       wrap.append(back, who, facts, tech, acts, link, answerBox(r), forensicBox(r), trafficBox(r), pathBox(r), bill, modemBox(`u:${r.username}`, r), nearView(r));
       return wrap;
     }

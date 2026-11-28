@@ -62,6 +62,8 @@
       .erp-dock .dot.on { background: var(--green); box-shadow: 0 0 0 3px rgba(85,188,130,.15); }
       .erp-dock .dot.unk { background: transparent; box-shadow: inset 0 0 0 1.5px var(--muted); }
       .erp-dock .dot.iso, .erp-dock .dot.bad { background: var(--red); box-shadow: 0 0 0 3px rgba(241,38,20,.15); }
+      .erp-dock .dot.outside { background: transparent; box-shadow: inset 0 0 0 1.5px #e0b252; }
+      .erp-dock .outside-note { margin: 0 0 12px; padding: 8px 10px; border-radius: 6px; background: var(--raised); box-shadow: inset 3px 0 0 #e0b252; color: var(--paper); font-size: 13px; line-height: 1.5; }
       .erp-dock .dot.off { background: #efefed; } /* online green, isolir red, offline white, as on the maps */
       .erp-dock .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; padding: 0 6px; }
       .erp-dock .tile { display: grid; justify-items: start; gap: 8px; padding: 12px; border: 0; border-radius: 8px; background: var(--canvas); box-shadow: inset 0 0 0 1px var(--hair);
@@ -431,7 +433,8 @@
 
     function custItem(r, i) {
       const b = el("button", "item rise"); b.type = "button"; b.style.setProperty("--i", String(i));
-      b.append(el("span", `dot ${state(r)}`), el("span", "t", r.nama || r.username), el("span", "r", r.username), el("span", "s", [r.paket, r.desa, r.router].filter(Boolean).join(" · ")));
+      b.append(el("span", `dot ${r.outside ? "outside" : state(r)}`), el("span", "t", r.nama || r.username), el("span", "r", r.username),
+        el("span", "s", r.outside ? `Not in LDN RADIUS · ERP: ${r.outside}${r.desa ? ` · ${r.desa}` : ""}` : [r.paket, r.desa, r.router].filter(Boolean).join(" · ")));
       b.onclick = () => { view.card = r; view.sel = 0; remember(r); draw(); };
       return b;
     }

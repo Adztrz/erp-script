@@ -183,7 +183,7 @@
     function cardView(r) {
       const wrap = el("div", "card");
       const back = el("button", "back", "← Back"); back.type = "button"; back.onclick = () => { view.card = null; drawBody(); panel.querySelector("input")?.focus(); };
-      const who = el("div", "who rise"); const pill = el("span", "pill"); pill.append(el("span", `dot ${state(r)}`), r.isolir ? "Isolir" : stuckSince(r) ? `Unknown since ${hhmm(stuckSince(r))}` : r.online ? "Online" : "Offline");
+      const who = el("div", "who rise"); const pill = el("span", "pill"); pill.append(el("span", `dot ${r.outside ? "outside" : state(r)}`), r.outside ? "Not in RADIUS" : r.isolir ? "Isolir" : stuckSince(r) ? `Unknown since ${hhmm(stuckSince(r))}` : r.online ? "Online" : "Offline");
       if (!r.isolir && stuckSince(r)) pill.title = `${r.router} stopped reporting sessions at ${hhmm(stuckSince(r))}, so whether this customer is online isn't known (the ERP still says ${r.online ? "online" : "offline"}).`;
       who.append(el("h3", null, r.nama || r.username), pill);
       const facts = el("dl", "facts rise"); facts.style.setProperty("--i", "1");
@@ -205,6 +205,11 @@
       lb.title = !r.customerDocId ? "Needs the customer list refreshed (LDN → Pelanggan → Update)" : !digits(r.phone) ? "No phone number: the ERP needs one to send the link" : "Make the one-click login link and send it on WhatsApp, as Master Pelanggan does";
       lb.disabled = !r.customerDocId || !digits(r.phone); acts.append(lb);
       const bill = payBox(r); billDraw(bills.get(r.username));
+      if (r.outside) { // in the ERP, not in LDN RADIUS: say so first; the line readings come from RADIUS, so they're left out
+        const n = el("p", "outside-note rise");
+        n.append(el("b", null, "Not in LDN RADIUS. "), `The ERP has them as ${r.outside}${r.syncedAt ? `, last synced to RADIUS ${new Date(r.syncedAt).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" })}` : ", never synced to RADIUS"}, so they can't log in and there's no line data here. To put them back: LDN Radius → "SATU KLIK: dorong pelanggan ERP yang BELUM sinkron → LDN", or save the customer again in Master.`);
+        wrap.append(back, who, n, facts, tech, acts, link, bill, modemBox(`u:${r.username}`, r)); return wrap;
+      }
       wrap.append(back, who, facts, tech, acts, link, answerBox(r), forensicBox(r), trafficBox(r), pathBox(r), bill, modemBox(`u:${r.username}`, r), nearView(r));
       return wrap;
     }
